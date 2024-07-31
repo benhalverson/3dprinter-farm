@@ -13,7 +13,6 @@
 
 import { Hono } from 'hono';
 import { logger } from 'hono/logger';
-import { Bindings } from 'hono/types';
 
 const app = new Hono<{
 	Bindings: Bindings;
@@ -24,29 +23,9 @@ app.use(logger());
 app.get('/health', (c) => {
 	return c.json({ status: 'ok' });
 });
-app.get('/:username', async (c) => {
-	const username = c.req.param('username');
-
-	const response = await fetch(`https://api.github.com/users/${username}`, {
-		headers: {
-			'User-Agent': 'benhalverson',
-		},
-	});
-	// https://api.github.com/users/benhalverson
-
-	if (!response.ok) {
-		console.log('error', response);
-		return c.json({ error: 'Failed to fetch repositories', details: `${response.status}` }, 500);
-	}
-
-	const data: GitHubRepo[] = await response.json();
-	return c.json(data);
-});
 
 app.post('/upload', async (c) => {
 	const body = await c.req.parseBody();
-
-	console.log('body', body);
 
 	if (!body || !body.file) {
 		return c.json({ error: 'No file uploaded' }, 400);
@@ -69,15 +48,41 @@ app.post('/upload', async (c) => {
 	}
 });
 
+const baseUrl = 'https://www.slant3dapi.com/api/';
+app.post('/slice', async (c) => {
+	const fileURL = await c.req.json();
+	try {
+		const response = await fetch(`${baseUrl}slicer`, {
+			method: 'POST',
+			headers: {
+				'Content-Type': 'application/json',
+				'api-key': c.env.SLANT_API,
+			},
+			body: JSON.stringify(fileURL)
+		});
+
+		if (!response.ok) {
+			const error = await response.json();
+			return c.json({ error: 'Failed to slice file', details: error }, 500);
+		}
+
+		const result: SliceResponse = await response.json();
+		return c.json(result);
+	} catch (error: any) {
+		console.error('error', error);
+		return c.json({ error: 'Failed to slice file', details: error.message }, 500);
+	}
+});
 export default app;
 
 type Bindings = {
 	BUCKET: R2Bucket;
+	SLANT_API: string;
 };
 
-interface GitHubRepo {
-	id: number;
-	name: string;
-	full_name: string;
-	// Add other properties you need from the GitHub API response
+export interface SliceResponse {
+	message: string;
+	data: {
+		price: number;
+	};
 }
