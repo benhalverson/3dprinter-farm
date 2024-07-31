@@ -1,4 +1,3 @@
-
 import { Context } from 'hono';
 import { BASE_URL } from '../constants';
 
@@ -15,7 +14,7 @@ export const slice = async (c: Context) => {
 		});
 
 		if (!response.ok) {
-			const error = await response.json();
+			const error: ErrorResponse = await response.json();
 			return c.json({ error: 'Failed to slice file', details: error }, 500);
 		}
 
@@ -28,11 +27,26 @@ export const slice = async (c: Context) => {
 			500
 		);
 	}
-}
+};
 
 export interface SliceResponse {
 	message: string;
 	data: {
 		price: number;
 	};
+}
+
+export interface ErrorResponse {
+	error: string;
+	details: Details;
+}
+
+export interface Details {
+	error: Error;
+	url: string;
+}
+
+export interface Error {
+	message: string;
+	status: number;
 }

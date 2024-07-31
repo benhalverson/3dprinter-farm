@@ -11,7 +11,7 @@ export const colors = async (c: Context) => {
 	});
 
 	if (!response.ok) {
-		const error = await response.json();
+		const error: ErrorResponse = await response.json();
 		return c.json({ error: 'Failed to get colors', details: error }, 500);
 	}
 
@@ -29,4 +29,13 @@ interface Filament {
 	hexColor: string;
 	colorTag: string;
 	profile: string;
+}
+
+export interface ErrorResponse {
+    error:   string;
+    details: Details;
+}
+
+export interface Details {
+    error: string;
 }
