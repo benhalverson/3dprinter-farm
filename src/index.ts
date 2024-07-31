@@ -13,6 +13,8 @@
 
 import { Hono } from 'hono';
 import { logger } from 'hono/logger';
+import { colors } from './controllers/filament';
+import { slice } from './controllers/slice';
 
 const app = new Hono<{
 	Bindings: Bindings;
@@ -48,51 +50,9 @@ app.post('/upload', async (c) => {
 	}
 });
 
-const baseUrl = 'https://www.slant3dapi.com/api/';
-app.post('/slice', async (c) => {
-	const fileURL = await c.req.json();
-	try {
-		const response = await fetch(`${baseUrl}slicer`, {
-			method: 'POST',
-			headers: {
-				'Content-Type': 'application/json',
-				'api-key': c.env.SLANT_API,
-			},
-			body: JSON.stringify(fileURL),
-		});
+app.post('/slice', slice);
 
-		if (!response.ok) {
-			const error = await response.json();
-			return c.json({ error: 'Failed to slice file', details: error }, 500);
-		}
-
-		const result: SliceResponse = await response.json();
-		return c.json(result);
-	} catch (error: any) {
-		console.error('error', error);
-		return c.json(
-			{ error: 'Failed to slice file', details: error.message },
-			500
-		);
-	}
-});
-
-app.get('/colors', async (c) => {
-	const response = await fetch(`${baseUrl}filament`, {
-		headers: {
-			'context-type': 'application/json',
-			'api-key': c.env.SLANT_API,
-		},
-	});
-
-	if (!response.ok) {
-		const error = await response.json();
-		return c.json({ error: 'Failed to get colors', details: error }, 500);
-	}
-
-	const result: FilamentColorsReponse = await response.json();
-	return c.json(result);
-});
+app.get('/colors', colors);
 
 export default app;
 
@@ -101,20 +61,3 @@ type Bindings = {
 	SLANT_API: string;
 };
 
-export interface SliceResponse {
-	message: string;
-	data: {
-		price: number;
-	};
-}
-
-export interface FilamentColorsReponse {
-	filaments: Filament[];
-}
-
-export interface Filament {
-	filament: string;
-	hexColor: string;
-	colorTag: string;
-	profile: string;
-}
