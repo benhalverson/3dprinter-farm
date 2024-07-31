@@ -58,7 +58,7 @@ app.post('/slice', async (c) => {
 				'Content-Type': 'application/json',
 				'api-key': c.env.SLANT_API,
 			},
-			body: JSON.stringify(fileURL)
+			body: JSON.stringify(fileURL),
 		});
 
 		if (!response.ok) {
@@ -73,6 +73,24 @@ app.post('/slice', async (c) => {
 		return c.json({ error: 'Failed to slice file', details: error.message }, 500);
 	}
 });
+
+app.get('/colors', async (c) => {
+	const response = await fetch(`${baseUrl}filament`, {
+		headers: {
+			'context-type': 'application/json',
+			'api-key': c.env.SLANT_API,
+		},
+	});
+
+	if (!response.ok) {
+		const error = await response.json();
+		return c.json({ error: 'Failed to get colors', details: error }, 500);
+	}
+
+	const result: FilamentColorsReponse = await response.json();
+	return c.json(result);
+});
+
 export default app;
 
 type Bindings = {
@@ -85,4 +103,15 @@ export interface SliceResponse {
 	data: {
 		price: number;
 	};
+}
+
+export interface FilamentColorsReponse {
+    filaments: Filament[];
+}
+
+export interface Filament {
+    filament: string;
+    hexColor: string;
+    colorTag: string;
+    profile:  string;
 }
