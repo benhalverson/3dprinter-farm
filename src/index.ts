@@ -70,7 +70,10 @@ app.post('/slice', async (c) => {
 		return c.json(result);
 	} catch (error: any) {
 		console.error('error', error);
-		return c.json({ error: 'Failed to slice file', details: error.message }, 500);
+		return c.json(
+			{ error: 'Failed to slice file', details: error.message },
+			500
+		);
 	}
 });
 
@@ -106,12 +109,12 @@ export interface SliceResponse {
 }
 
 export interface FilamentColorsReponse {
-    filaments: Filament[];
+	filaments: Filament[];
 }
 
 export interface Filament {
-    filament: string;
-    hexColor: string;
-    colorTag: string;
-    profile:  string;
+	filament: string;
+	hexColor: string;
+	colorTag: string;
+	profile: string;
 }
