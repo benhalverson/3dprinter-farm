@@ -1,7 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { testClient } from 'hono/testing';
 import { Hono } from 'hono';
-import { upload } from '../src/controllers/upload';
 
 describe('API endpoints', () => {
 	it('GET /health', async () => {
