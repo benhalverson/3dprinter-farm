@@ -15,6 +15,7 @@ import { Hono } from 'hono';
 import { logger } from 'hono/logger';
 import { colors } from './controllers/filament';
 import { slice } from './controllers/slice';
+import { estimateOrder } from './controllers/estimate-order';
 
 const app = new Hono<{
 	Bindings: Bindings;
@@ -53,6 +54,8 @@ app.post('/upload', async (c) => {
 app.post('/slice', slice);
 
 app.get('/colors', colors);
+
+app.post('/estimate', estimateOrder);
 
 export default app;
 
