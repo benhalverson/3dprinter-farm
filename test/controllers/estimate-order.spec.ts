@@ -5,6 +5,7 @@ import { estimateOrder } from '../../src/controllers/estimate-order';
 const BASE_URL = 'https://example.com/';
 
 describe('estimateOrder function', () => {
+
   it('should return error if API call fails', async () => {
     global.fetch = vi.fn().mockResolvedValue({
       ok: false,
