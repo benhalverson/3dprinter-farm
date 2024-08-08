@@ -69,7 +69,8 @@ app.post('/slice', slice);
 
 app.get('/colors', colors);
 
-app.post('/estimate', zValidator('json', orderSchema),  estimateOrder);
+// app.post('/estimate', zValidator('json', orderSchema),  estimateOrder);
+app.post('/estimate',  estimateOrder);
 
 export default app;
 
