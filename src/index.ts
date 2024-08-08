@@ -15,12 +15,47 @@ import { Hono } from 'hono';
 import { logger } from 'hono/logger';
 import { colors } from './controllers/filament';
 import { slice } from './controllers/slice';
-import { estimateOrder } from './controllers/estimate-order';
+import { estimateOrder, OrderData, OrderDto } from './controllers/estimate-order';
 import { upload } from './controllers/upload';
+import { zValidator } from '@hono/zod-validator';
+import { z } from 'zod';
+import { BASE_URL } from './constants';
 
 const app = new Hono<{
 	Bindings: Bindings;
 }>();
+
+const orderSchema = z.object({
+  email: z.string().email(), // Assuming email should be a valid email string
+  phone: z.string(),
+  name: z.string(),
+  orderNumber: z.string(),
+  filename: z.string(),
+  fileURL: z.string().url(), // Assuming fileURL should be a valid URL
+  bill_to_street_1: z.string(),
+  bill_to_street_2: z.string(),
+  bill_to_street_3: z.string(),
+  bill_to_city: z.string(),
+  bill_to_state: z.string(),
+  bill_to_zip: z.string(),
+  bill_to_country_as_iso: z.string(),
+  bill_to_is_US_residential: z.string(),
+  ship_to_name: z.string(),
+  ship_to_street_1: z.string(),
+  ship_to_street_2: z.string(),
+  ship_to_street_3: z.string(),
+  ship_to_city: z.string(),
+  ship_to_state: z.string(),
+  ship_to_zip: z.string(),
+  ship_to_country_as_iso: z.string(),
+  ship_to_is_US_residential: z.string(),
+  order_item_name: z.string(),
+  order_quantity: z.string(),
+  order_image_url: z.string().url(), // Assuming order_image_url should be a valid URL
+  order_sku: z.string(),
+  order_item_color: z.string(),
+}).strict()
+
 
 app.use(logger());
 
@@ -34,7 +69,8 @@ app.post('/slice', slice);
 
 app.get('/colors', colors);
 
-app.post('/estimate', estimateOrder);
+// app.post('/estimate', zValidator('json', orderSchema),  estimateOrder);
+app.post('/estimate',  estimateOrder);
 
 export default app;
 
@@ -42,4 +78,3 @@ type Bindings = {
 	BUCKET: R2Bucket;
 	SLANT_API: string;
 };
-
