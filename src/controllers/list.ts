@@ -13,8 +13,9 @@ export const list = async (c: Context) => {
 	return c.json(data);
 }
 
-interface ListResponse {
-	key: string;
+export interface ListResponse {
+	stl: string;
+	key?: string;
 	size: number;
 	version: string;
 }

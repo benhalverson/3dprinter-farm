@@ -1,12 +1,20 @@
 import { describe, it, expect, vi } from 'vitest';
 import { Context } from 'hono';
-import { list } from '../../src/controllers/list';
+import { list, ListResponse } from '../../src/controllers/list';
 
 describe('list function', () => {
   it('should return a list of files', async () => {
-    const mockResponse = [
+    const mockResponse: ListResponse[] = [
       {
-        stl: 'name.stl',
+        key: 'name.stl',
+				stl: 'name.stl',
+        size: 18016084,
+        version: '7e6ecfad2b96dd228b4162ca07bd5232',
+      },
+
+      {
+				stl: 'name.stl',
+				key: 'name.stl',
         size: 18016084,
         version: '7e6ecfad2b96dd228b4162ca07bd5232',
       },
@@ -28,6 +36,7 @@ describe('list function', () => {
 
     await list(c);
 
+		expect(mockResponse.length).toBe(2);
     expect(c.json).toHaveBeenCalledWith(
       mockResponse.map((o) => ({
         stl: o.stl,
