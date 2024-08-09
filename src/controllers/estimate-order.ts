@@ -23,7 +23,7 @@ export const estimateOrder = async (c: Context) => {
 			return c.json({ error: 'Failed to estimate order', details: error }, 500);
 		}
 
-		const result: OrderResponse = await response.json();
+		const result = await response.json() as OrderResponse;
 		return c.json(result);
 
 	} catch (error) {

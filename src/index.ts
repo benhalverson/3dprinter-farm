@@ -81,6 +81,18 @@ app.get('/cancel', async (c) => {
 	return c.json({ status: 'Cancelled' });
 });
 
+app.get('/webhook', async (c) => {
+	const stripe = new Stripe(c.env.STRIPE_SECRET_KEY);
+	const rawBody = await c.req.raw.text();
+	const sig = c.req.header('stripe-signature');
+	if (!sig) {
+		return c.json({ error: 'No signature' }, 400);
+	}
+	const event = stripe.webhooks.constructEvent(rawBody, sig, c.env.STRIPE_WEBHOOK_SECRET);
+	return c.json(event);
+
+});
+
 app.get('/checkout', async (c) => {
 	const quantity = c.req.query('qty');
 
