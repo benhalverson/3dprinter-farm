@@ -18,7 +18,7 @@
   },
   "dependencies": {
     "@hono/zod-validator": "^0.2.2",
-    "hono": "^4.5.3",
+    "hono": "^4.5.8",
     "stripe": "^16.6.0",
     "zod": "^3.23.8"
   }
