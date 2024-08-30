@@ -11,7 +11,7 @@
  * Learn more at https://developers.cloudflare.com/workers/
  */
 
-import { Hono } from 'hono';
+import { Context, Hono } from 'hono';
 import { logger } from 'hono/logger';
 import { colors } from './controllers/filament';
 import { slice } from './controllers/slice';
@@ -19,7 +19,7 @@ import { estimateOrder } from './controllers/estimate-order';
 import { upload } from './controllers/upload';
 import { z } from 'zod';
 import { list } from './controllers/list';
-import Stripe from 'stripe';
+import { cancel, checkout, success } from './controllers/stripe';
 
 const app = new Hono<{
 	Bindings: Bindings;
@@ -73,39 +73,11 @@ app.post('/estimate', estimateOrder);
 
 app.get('/list', list);
 
-app.get('/success', async (c) => {
-	return c.json({ status: 'Success' });
-});
+app.get('/success', success);
 
-app.get('/cancel', async (c) => {
-	return c.json({ status: 'Cancelled' });
-});
+app.get('/cancel', cancel);
 
-app.get('/checkout', async (c) => {
-	const quantity = c.req.query('qty');
-
-	const stripe = new Stripe(c.env.STRIPE_SECRET_KEY);
-	try {
-		const session = await stripe.checkout.sessions.create({
-			payment_method_types: ['card'],
-			line_items: [
-				{
-					price: c.env.STRIPE_PRICE_ID,
-					quantity: 1
-				},
-			],
-			mode: 'payment',
-			success_url: `${c.env.DOMAIN}/success`,
-			cancel_url: `${c.env.DOMAIN}/cancel`,
-		});
-
-		return c.json(session);
-	} catch (error) {
-
-		return c.json({ status: 'Error', error });
-
-	}
-});
+app.get('/checkout', checkout);
 
 export default app;
 
