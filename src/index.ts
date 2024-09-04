@@ -20,6 +20,7 @@ import { upload } from './controllers/upload';
 import { z } from 'zod';
 import { list } from './controllers/list';
 import { cancel, checkout, success } from './controllers/stripe';
+import { cors } from 'hono/cors';
 
 const app = new Hono<{
 	Bindings: Bindings;
@@ -58,6 +59,10 @@ const orderSchema = z.object({
 
 
 app.use(logger());
+app.use(cors({
+	origin: '*'
+}));
+
 
 app.get('/', (c) => {
 	return c.text('Hello, world!');
