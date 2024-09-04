@@ -59,6 +59,9 @@ const orderSchema = z.object({
 
 app.use(logger());
 
+app.get('/', (c) => {
+	return c.text('Hello, world!');
+});
 app.get('/health', (c) => {
 	return c.json({ status: 'ok' });
 });
