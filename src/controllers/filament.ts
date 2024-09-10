@@ -11,11 +11,11 @@ export const colors = async (c: Context) => {
 	});
 
 	if (!response.ok) {
-		const error: ErrorResponse = await response.json();
+		const error = await response.json() as ErrorResponse;
 		return c.json({ error: 'Failed to get colors', details: error }, 500);
 	}
 
-	const result: FilamentColorsReponse = await response.json();
+	const result = await response.json() as FilamentColorsReponse;
 	return c.json(result);
 };
 
