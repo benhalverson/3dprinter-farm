@@ -21,6 +21,7 @@ import { z } from 'zod';
 import { list } from './controllers/list';
 import { cancel, checkout, success } from './controllers/stripe';
 import { cors } from 'hono/cors';
+import { createOrder, getPayPalAccessToken } from './controllers/paypal';
 
 const app = new Hono<{
 	Bindings: Bindings;
@@ -75,6 +76,11 @@ app.post('/upload', upload);
 
 app.post('/slice', slice);
 
+/**
+ * Lists the available colors for the filament
+ * @param filamentType The type of filament to list colors for (PLA or PETG)
+ * @returns The list of colors for the filament
+ */
 app.get('/colors', colors);
 
 app.post('/estimate', estimateOrder);
@@ -86,6 +92,12 @@ app.get('/success', success);
 app.get('/cancel', cancel);
 
 app.get('/checkout', checkout);
+app.post('/paypal', createOrder);
+app.get('/paypal-auth', async (c) => {
+	const auth_test = await getPayPalAccessToken(c);
+	console.log(auth_test);
+	return c.text('success');
+});
 
 export default app;
 
