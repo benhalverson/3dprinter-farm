@@ -10,14 +10,11 @@ const FilamentTypeSchema = z.enum(['PLA', 'PETG'], {
 
 
 export const colors = async (c: Context) => {
-	// Get the filamentType query
 	const query = c.req.query('filamentType');
 
-	// If query is provided, validate it using Zod
 	if (query) {
 		const validationResult = FilamentTypeSchema.safeParse(query);
 
-		// If validation fails, return an error response
 		if (!validationResult.success) {
 			return c.json({
 				error: 'Invalid filament type',
@@ -33,7 +30,6 @@ export const colors = async (c: Context) => {
 		},
 	});
 
-	// Handle error if the response is not OK
 	if (!response.ok) {
 		const error = await response.json() as ErrorResponse;
 		return c.json({ error: 'Failed to get colors', details: error }, 500);
@@ -41,7 +37,6 @@ export const colors = async (c: Context) => {
 
 	const result = await response.json() as FilamentColorsReponse;
 
-	// Filter filaments based on the query or return both PLA and PETG if no query
 	const filteredFilaments = result.filaments
 		.filter((filament) => !query || filament.profile === query) // Return all if no query, or filter by query
 		.map(({ filament, hexColor, colorTag }) => ({
@@ -58,7 +53,7 @@ interface FilamentColorsReponse {
 }
 
 interface Filament {
-	filament: string;
+	filament: FilamentType;
 	hexColor: string;
 	colorTag: string;
 	profile: string;
@@ -71,4 +66,9 @@ export interface ErrorResponse {
 
 export interface Details {
 	error: string;
+}
+
+enum FilamentType {
+	PLA = 'PLA',
+	PETG = 'PETG',
 }
