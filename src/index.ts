@@ -22,6 +22,8 @@ import { list } from './controllers/list';
 import { cancel, checkout, success } from './controllers/stripe';
 import { cors } from 'hono/cors';
 import { createOrder, getPayPalAccessToken } from './controllers/paypal';
+import { drizzle } from 'drizzle-orm/d1';
+import { products } from './db/schema';
 
 const app = new Hono<{
 	Bindings: Bindings;
@@ -65,8 +67,10 @@ app.use(cors({
 }));
 
 
-app.get('/', (c) => {
-	return c.text('Hello, world!');
+app.get('/products', async (c) => {
+	const db = drizzle(c.env.DB);
+	const response = await db.select().from(products).all();
+	return c.json(response);
 });
 app.get('/health', (c) => {
 	return c.json({ status: 'ok' });
@@ -109,4 +113,5 @@ type Bindings = {
 	STRIPE_WEBHOOK_SECRET: string;
 	STRIPE_PRICE_ID: string;
 	DOMAIN: string;
+	DB: D1Database;
 };
