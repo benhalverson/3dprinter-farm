@@ -72,6 +72,13 @@ app.get('/products', async (c) => {
 	const response = await db.select().from(products).all();
 	return c.json(response);
 });
+
+app.post('/add-product', async (c) => {
+	const db = drizzle(c.env.DB);
+	const {name, description, stl, price} = await c.req.json();
+	const product = await db.insert(products).values({name, description, stl, price}).returning();
+	return c.json(product);
+});
 app.get('/health', (c) => {
 	return c.json({ status: 'ok' });
 });
