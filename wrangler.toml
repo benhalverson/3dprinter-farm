@@ -113,4 +113,5 @@ bucket_name = "uploads"
 binding = "DB" # i.e. available in your Worker on env.DB
 database_name = "ecommerce"
 database_id = "ec1d6de0-2452-4506-8108-0aed31575e60"
+migrations_dir = "./drizzle/migrations"
 
