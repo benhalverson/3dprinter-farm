@@ -97,6 +97,11 @@ enabled = true
 binding = "BUCKET"
 bucket_name = "uploads"
 
+[[r2_buckets]]
+binding = "preview-BUCKET"
+bucket_name = "preview-uploads"
+
+
 # Bind another Worker service. Use this binding to call another Worker without network overhead.
 # Docs: https://developers.cloudflare.com/workers/wrangler/configuration/#service-bindings
 # [[services]]
@@ -115,3 +120,7 @@ database_name = "ecommerce"
 database_id = "ec1d6de0-2452-4506-8108-0aed31575e60"
 migrations_dir = "./drizzle/migrations"
 
+[[d1_databases]]
+binding = "preview-DB" # i.e. available in your Worker on env.DB
+database_name = "preview-ecommerce"
+database_id = "17ec320b-733b-4f77-9461-c2665f475c72"
