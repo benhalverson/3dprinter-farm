@@ -1,6 +1,7 @@
 import { integer, sqliteTable, text, real } from 'drizzle-orm/sqlite-core';
+import { z } from 'zod';
 
-export const products = sqliteTable('products', {
+export const productsTable = sqliteTable('products', {
   id: integer('id').primaryKey(),
   name: text('name').notNull(),
   description: text('description').notNull(),
@@ -9,6 +10,17 @@ export const products = sqliteTable('products', {
   price: real('price').default(0).notNull(),
   filamentType: text('filament_type').notNull().default('PLA'),
   color: text('color').default('#000000'),
+});
+
+export const ProductsDataSchema = z.object({
+	id: z.number(),
+	name: z.string(),
+	description: z.string(),
+	image: z.string(),
+	stl: z.string(),
+	price: z.number(),
+	filamentType: z.string(),
+	color: z.string(),
 });
 
 export const users = sqliteTable('users', {
@@ -22,7 +34,37 @@ export const users = sqliteTable('users', {
   role: text('role').default('user').notNull(),
 });
 
-export const orders = sqliteTable('orders', {
+const OrderDataSchema = z.object({
+  id: z.number(),
+  userId: z.number(),
+  orderNumber: z.string(),
+  filename: z.string().trim(),
+  fileURL: z.string(),
+
+  billToStreet1: z.string(),
+  billToStreet2: z.string().optional(),
+  billToStreet3: z.string().optional(),
+  billToCity: z.string(),
+  billToState: z.string(),
+  billToZip: z.string(),
+  billToCountryISO: z.string(),
+  billToIsUSResidential: z.number().optional(),
+
+  shipToName: z.string(),
+  shipToStreet1: z.string(),
+  shipToStreet2: z.string().optional(),
+  shipToStreet3: z.string().optional(),
+  shipToCity: z.string(),
+  shipToState: z.string().optional(),
+  shipToZip: z.string().optional(),
+  shipToCountryISO: z.string(),
+  shipToIsUSResidential: z.number().optional(),
+});
+
+export type OrderData = z.infer<typeof OrderDataSchema>;
+export type ProductData = z.infer<typeof ProductsDataSchema>;
+
+export const ordersTable = sqliteTable('orders', {
   id: integer('id').primaryKey(),
   userId: integer('user_id').references(() => users.id).notNull(),
   orderNumber: text('order_number').notNull().unique(),
@@ -48,3 +90,4 @@ export const orders = sqliteTable('orders', {
   shipToCountryISO: text('ship_to_country_as_iso').notNull(),
   shipToIsUSResidential: integer('ship_to_is_us_residential').default(0),
 });
+
