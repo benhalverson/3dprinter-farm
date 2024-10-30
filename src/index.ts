@@ -24,10 +24,15 @@ import { cors } from 'hono/cors';
 import { createOrder, getPayPalAccessToken } from './controllers/paypal';
 import { drizzle } from 'drizzle-orm/d1';
 import { ProductData, productsTable } from './db/schema';
+import { eq } from 'drizzle-orm';
 
 const app = new Hono<{
 	Bindings: Bindings;
 }>();
+
+const idSchema = z.object({
+  id: z.number().int(),
+});
 
 const orderSchema = z.object({
 	email: z.string().email(), // Assuming email should be a valid email string
@@ -91,9 +96,24 @@ app.post('/estimate', estimateOrder);
 app.post('/add-product', async (c) => {
 	const data = await c.req.json();
 	const parsedData: ProductData = addProductSchema.parse(data);
+	console.log('parsedData', parsedData);
+
 	const db = drizzle(c.env.DB);
 	const response = await db.insert(productsTable).values(parsedData).returning();
 	return c.json(response);
+});
+
+app.get('/product/:id', async (c) => {
+	const idParam = c.req.param('id');
+	const parsedData = idSchema.parse({ id: Number(idParam) });
+	const db = drizzle(c.env.DB);
+	const response = await db
+		.select()
+		.from(productsTable)
+		.where(eq(productsTable.id, parsedData.id));
+	const product = response[0];
+
+	return product ? c.json(product) : c.json({ error: 'Product not found' }, 404);
 });
 
 app.get('/list', list);
