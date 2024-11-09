@@ -146,7 +146,7 @@ type Bindings = {
 
 // Schema for adding a new product to the products table
 const addProductSchema = z.object({
-	id: z.number(),
+	id: z.number().optional(),
 	name: z.string(),
 	description: z.string(),
 	image: z.string(),
@@ -154,4 +154,4 @@ const addProductSchema = z.object({
 	price: z.number(),
 	filamentType: z.string(),
 	color: z.string(),
-}).strict();
+}).omit({ id: true });

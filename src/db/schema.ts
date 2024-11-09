@@ -13,7 +13,7 @@ export const productsTable = sqliteTable('products', {
 });
 
 export const ProductsDataSchema = z.object({
-	id: z.number(),
+	id: z.number().optional(),
 	name: z.string(),
 	description: z.string(),
 	image: z.string(),
@@ -21,7 +21,7 @@ export const ProductsDataSchema = z.object({
 	price: z.number(),
 	filamentType: z.string(),
 	color: z.string(),
-});
+}).omit({ id: true });
 
 export const users = sqliteTable('users', {
   id: integer('id').primaryKey(),
