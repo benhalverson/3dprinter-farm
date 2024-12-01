@@ -25,6 +25,9 @@ import { createOrder, getPayPalAccessToken } from './controllers/paypal';
 import { drizzle } from 'drizzle-orm/d1';
 import { ProductData, productsTable } from './db/schema';
 import { eq } from 'drizzle-orm';
+import { BASE_URL } from './constants';
+import { generateSkuNumber } from './utils/generateSkuNumber';
+import { generateOrderNumber } from './utils/generateOrderNumber';
 
 const app = new Hono<{
 	Bindings: Bindings;
@@ -97,10 +100,47 @@ app.post('/add-product', async (c) => {
 	const data = await c.req.json();
 	const parsedData: ProductData = addProductSchema.parse(data);
 	console.log('parsedData', parsedData);
+	const skuNumber = generateSkuNumber(parsedData.name, parsedData.color);
+	console.log('skuNumber', skuNumber);
 
-	const db = drizzle(c.env.DB);
-	const response = await db.insert(productsTable).values(parsedData).returning();
-	return c.json(response);
+	const slicingResponse = await fetch(`${BASE_URL}slicer`, {
+		method: 'POST',
+		headers: {
+			'Content-Type': 'application/json',
+			'api-key': c.env.SLANT_API,
+		},
+		body: JSON.stringify({ fileURL: parsedData.stl, sku_number: skuNumber }),
+	});
+
+	if (!slicingResponse.ok) {
+		const error = await slicingResponse.json() as Error;
+		console.log('Error slicing the file', error.message);
+		return c.json({ error: 'Failed to slice file', details: error.message }, 500);
+	}
+
+	const slicingResult = (await slicingResponse.json()) as any; //Type this properly
+	const basePrice = slicingResult.data.price;
+	console.log('basePrice', basePrice);
+	const markUpPrice = basePrice + (basePrice * (parsedData.price / 100));
+	console.log('markUpPrice', markUpPrice.toFixed(2));
+
+	const productDataToInsert = {
+		...parsedData,
+		price: markUpPrice.toFixed(2),
+		skuNumber: skuNumber,
+	};
+	try {
+		const db = drizzle(c.env.DB);
+		const response = await db
+			.insert(productsTable)
+			.values(productDataToInsert)
+			.returning();
+		return c.json(response);
+	} catch (error) {
+		console.error('Error adding product', error);
+	}
+
+	return c.json({ error: 'Failed to add product' }, 500);
 });
 
 app.get('/product/:id', async (c) => {
@@ -113,7 +153,9 @@ app.get('/product/:id', async (c) => {
 		.where(eq(productsTable.id, parsedData.id));
 	const product = response[0];
 
-	return product ? c.json(product) : c.json({ error: 'Product not found' }, 404);
+	return product
+		? c.json(product)
+		: c.json({ error: 'Product not found' }, 404);
 });
 
 app.get('/list', list);
@@ -143,15 +185,18 @@ type Bindings = {
 	DB: D1Database;
 };
 
-
 // Schema for adding a new product to the products table
-const addProductSchema = z.object({
-	id: z.number().optional(),
-	name: z.string(),
-	description: z.string(),
-	image: z.string(),
-	stl: z.string(),
-	price: z.number(),
-	filamentType: z.string(),
-	color: z.string(),
-}).omit({ id: true });
+const addProductSchema = z
+	.object({
+		id: z.number().optional(),
+		name: z.string(),
+		description: z.string(),
+		image: z.string(),
+		stl: z.string(),
+		price: z.number(),
+		filamentType: z.string(),
+		color: z.string(),
+		skuNumber: z.string(),
+	})
+	// .omit({ id: true });
+	.omit({ id: true, skuNumber: true });

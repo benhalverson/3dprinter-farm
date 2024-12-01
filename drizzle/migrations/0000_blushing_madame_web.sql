@@ -24,14 +24,16 @@ CREATE TABLE `orders` (
 	FOREIGN KEY (`user_id`) REFERENCES `users`(`id`) ON UPDATE no action ON DELETE no action
 );
 --> statement-breakpoint
+CREATE UNIQUE INDEX `orders_order_number_unique` ON `orders` (`order_number`);--> statement-breakpoint
 CREATE TABLE `products` (
-	`id` integer PRIMARY KEY NOT NULL,
+	`id` integer PRIMARY KEY AUTOINCREMENT NOT NULL,
 	`name` text NOT NULL,
 	`description` text NOT NULL,
 	`image` text DEFAULT '',
 	`stl` text NOT NULL,
 	`price` real DEFAULT 0 NOT NULL,
 	`filament_type` text DEFAULT 'PLA' NOT NULL,
+	`sku_number` text DEFAULT '',
 	`color` text DEFAULT '#000000'
 );
 --> statement-breakpoint
@@ -46,5 +48,4 @@ CREATE TABLE `users` (
 	`role` text DEFAULT 'user' NOT NULL
 );
 --> statement-breakpoint
-CREATE UNIQUE INDEX `orders_order_number_unique` ON `orders` (`order_number`);--> statement-breakpoint
 CREATE UNIQUE INDEX `users_email_unique` ON `users` (`email`);
