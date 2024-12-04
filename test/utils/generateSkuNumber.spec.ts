@@ -18,6 +18,7 @@ describe('Generate SKU number', () => {
 		expect(skuNumber2).toEqual('F1CHASSI-00000');
 		expect(skuNumber3).toEqual('WHITET-S-FFFFF');
 		expect(skuNumber4).toEqual('AT4A-4A#-FFFFF');
+		expect(skuNumber).not.toEqual('TESTPROD-00001');
 	});
 
 	it('should handle empty product name', () => {

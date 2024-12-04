@@ -14,66 +14,69 @@
 import { Context, Hono } from 'hono';
 import { logger } from 'hono/logger';
 import { colors } from './controllers/filament';
-import { slice } from './controllers/slice';
+import { slice, SliceResponse } from './controllers/slice';
 import { estimateOrder } from './controllers/estimate-order';
 import { upload } from './controllers/upload';
-import { z } from 'zod';
+import { z, ZodError } from 'zod';
 import { list } from './controllers/list';
 import { cancel, checkout, success } from './controllers/stripe';
 import { cors } from 'hono/cors';
 import { createOrder, getPayPalAccessToken } from './controllers/paypal';
 import { drizzle } from 'drizzle-orm/d1';
-import { ProductData, productsTable } from './db/schema';
+import { ProductData, ProductsDataSchema, productsTable } from './db/schema';
 import { eq } from 'drizzle-orm';
 import { BASE_URL } from './constants';
 import { generateSkuNumber } from './utils/generateSkuNumber';
 import { generateOrderNumber } from './utils/generateOrderNumber';
+import { calculateMarkupPrice } from './utils/calculateMarkupPrice';
 
 const app = new Hono<{
 	Bindings: Bindings;
 }>();
 
 const idSchema = z.object({
-  id: z.number().int(),
+	id: z.number().int(),
 });
 
-const orderSchema = z.object({
-	email: z.string().email(), // Assuming email should be a valid email string
-	phone: z.string(),
-	name: z.string(),
-	orderNumber: z.string(),
-	filename: z.string(),
-	fileURL: z.string().url(), // Assuming fileURL should be a valid URL
-	bill_to_street_1: z.string(),
-	bill_to_street_2: z.string(),
-	bill_to_street_3: z.string(),
-	bill_to_city: z.string(),
-	bill_to_state: z.string(),
-	bill_to_zip: z.string(),
-	bill_to_country_as_iso: z.string(),
-	bill_to_is_US_residential: z.string(),
-	ship_to_name: z.string(),
-	ship_to_street_1: z.string(),
-	ship_to_street_2: z.string(),
-	ship_to_street_3: z.string(),
-	ship_to_city: z.string(),
-	ship_to_state: z.string(),
-	ship_to_zip: z.string(),
-	ship_to_country_as_iso: z.string(),
-	ship_to_is_US_residential: z.string(),
-	order_item_name: z.string(),
-	order_quantity: z.string(),
-	order_image_url: z.string().url(), // Assuming order_image_url should be a valid URL
-	order_sku: z.string(),
-	order_item_color: z.string(),
-}).strict();
-
+const orderSchema = z
+	.object({
+		email: z.string().email(), // Assuming email should be a valid email string
+		phone: z.string(),
+		name: z.string(),
+		orderNumber: z.string(),
+		filename: z.string(),
+		fileURL: z.string().url(), // Assuming fileURL should be a valid URL
+		bill_to_street_1: z.string(),
+		bill_to_street_2: z.string(),
+		bill_to_street_3: z.string(),
+		bill_to_city: z.string(),
+		bill_to_state: z.string(),
+		bill_to_zip: z.string(),
+		bill_to_country_as_iso: z.string(),
+		bill_to_is_US_residential: z.string(),
+		ship_to_name: z.string(),
+		ship_to_street_1: z.string(),
+		ship_to_street_2: z.string(),
+		ship_to_street_3: z.string(),
+		ship_to_city: z.string(),
+		ship_to_state: z.string(),
+		ship_to_zip: z.string(),
+		ship_to_country_as_iso: z.string(),
+		ship_to_is_US_residential: z.string(),
+		order_item_name: z.string(),
+		order_quantity: z.string(),
+		order_image_url: z.string().url(), // Assuming order_image_url should be a valid URL
+		order_sku: z.string(),
+		order_item_color: z.string(),
+	})
+	.strict();
 
 app.use(logger());
-app.use(cors({
-	origin: '*'
-}));
-
+app.use(
+	cors({
+		origin: '*',
+	})
+);
 
 app.get('/products', async (c) => {
 	const db = drizzle(c.env.DB);
@@ -99,9 +102,7 @@ app.post('/estimate', estimateOrder);
 app.post('/add-product', async (c) => {
 	const data = await c.req.json();
 	const parsedData: ProductData = addProductSchema.parse(data);
-	console.log('parsedData', parsedData);
 	const skuNumber = generateSkuNumber(parsedData.name, parsedData.color);
-	console.log('skuNumber', skuNumber);
 
 	const slicingResponse = await fetch(`${BASE_URL}slicer`, {
 		method: 'POST',
@@ -113,20 +114,20 @@ app.post('/add-product', async (c) => {
 	});
 
 	if (!slicingResponse.ok) {
-		const error = await slicingResponse.json() as Error;
-		console.log('Error slicing the file', error.message);
-		return c.json({ error: 'Failed to slice file', details: error.message }, 500);
+		const error = (await slicingResponse.json()) as Error;
+		return c.json(
+			{ error: 'Failed to slice file', details: error.message },
+			500
+		);
 	}
 
-	const slicingResult = (await slicingResponse.json()) as any; //Type this properly
-	const basePrice = slicingResult.data.price;
-	console.log('basePrice', basePrice);
-	const markUpPrice = basePrice + (basePrice * (parsedData.price / 100));
-	console.log('markUpPrice', markUpPrice.toFixed(2));
+	const slicingResult = (await slicingResponse.json())
+	const basePrice = slicingResult.data.price as SliceResponse['data']['price'];
+	const markupPrice = calculateMarkupPrice(basePrice, parsedData.price);
 
 	const productDataToInsert = {
 		...parsedData,
-		price: markUpPrice.toFixed(2),
+		price: markupPrice,
 		skuNumber: skuNumber,
 	};
 	try {
@@ -156,6 +157,36 @@ app.get('/product/:id', async (c) => {
 	return product
 		? c.json(product)
 		: c.json({ error: 'Product not found' }, 404);
+});
+
+app.put('/update-product', async (c) => {
+	try {
+		const body = await c.req.json();
+		const parsedData = updateProductSchema.parse(body);
+		const db = drizzle(c.env.DB);
+
+		const updateResult = await db
+			.update(productsTable)
+			.set({
+				name: parsedData.name,
+				description: parsedData.description,
+				price: parsedData.price,
+				filamentType: parsedData.filamentType,
+				color: parsedData.color,
+			})
+			.where(eq(productsTable.id, parsedData.id));
+
+		if (updateResult.success) {
+			return c.json({ success: true, message: 'Product updated successfully' });
+		} else {
+			return c.json({ error: 'Product not found or update failed' }, 404);
+		}
+	} catch (error) {
+		if (error instanceof ZodError) {
+			return c.json({ error: 'Validation error', details: error.errors }, 400);
+		}
+		return c.json({ error: 'Internal Server Error' }, 500);
+	}
 });
 
 app.get('/list', list);
@@ -198,5 +229,18 @@ const addProductSchema = z
 		color: z.string(),
 		skuNumber: z.string(),
 	})
-	// .omit({ id: true });
 	.omit({ id: true, skuNumber: true });
+
+const updateProductSchema = z
+	.object({
+		id: z.number(),
+		name: z.string(),
+		description: z.string(),
+		image: z.string(),
+		stl: z.string(),
+		price: z.number(),
+		filamentType: z.string(),
+		color: z.string(),
+		skuNumber: z.string(),
+	});
+

@@ -78,6 +78,8 @@ export type OrderData = z.infer<typeof orderSchema>;
 
 export type OrderResponse = {
 	totalPrice: number;
+	shippingCost: number;
+	printingCost: number;
 };
 
 
