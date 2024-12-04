@@ -9,6 +9,7 @@ export const productsTable = sqliteTable('products', {
   stl: text('stl').notNull(),
   price: real('price').default(0).notNull(),
   filamentType: text('filament_type').notNull().default('PLA'),
+	skuNumber: text('sku_number').default(''),
   color: text('color').default('#000000'),
 });
 
@@ -21,7 +22,8 @@ export const ProductsDataSchema = z.object({
 	price: z.number(),
 	filamentType: z.string(),
 	color: z.string(),
-}).omit({ id: true });
+	skuNumber: z.string(),
+}).omit({ id: true, skuNumber: true });
 
 export const users = sqliteTable('users', {
   id: integer('id').primaryKey(),

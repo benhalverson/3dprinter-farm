@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "ecf35558-4952-40ea-92f5-88467cea8edd",
+  "id": "f2f79855-fad8-4f5f-9d71-50a9f551c058",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "tables": {
     "orders": {
@@ -189,7 +189,8 @@
         }
       },
       "compositePrimaryKeys": {},
-      "uniqueConstraints": {}
+      "uniqueConstraints": {},
+      "checkConstraints": {}
     },
     "products": {
       "name": "products",
@@ -199,7 +200,7 @@
           "type": "integer",
           "primaryKey": true,
           "notNull": true,
-          "autoincrement": false
+          "autoincrement": true
         },
         "name": {
           "name": "name",
@@ -246,6 +247,14 @@
           "autoincrement": false,
           "default": "'PLA'"
         },
+        "sku_number": {
+          "name": "sku_number",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false,
+          "default": "''"
+        },
         "color": {
           "name": "color",
           "type": "text",
@@ -258,7 +267,8 @@
       "indexes": {},
       "foreignKeys": {},
       "compositePrimaryKeys": {},
-      "uniqueConstraints": {}
+      "uniqueConstraints": {},
+      "checkConstraints": {}
     },
     "users": {
       "name": "users",
@@ -332,9 +342,11 @@
       },
       "foreignKeys": {},
       "compositePrimaryKeys": {},
-      "uniqueConstraints": {}
+      "uniqueConstraints": {},
+      "checkConstraints": {}
     }
   },
+  "views": {},
   "enums": {},
   "_meta": {
     "schemas": {},
