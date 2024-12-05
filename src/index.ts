@@ -121,8 +121,8 @@ app.post('/add-product', async (c) => {
 		);
 	}
 
-	const slicingResult = (await slicingResponse.json())
-	const basePrice = slicingResult.data.price as SliceResponse['data']['price'];
+	const slicingResult = (await slicingResponse.json()) as { data: { price: number } };
+	const basePrice = slicingResult.data.price;
 	const markupPrice = calculateMarkupPrice(basePrice, parsedData.price);
 
 	const productDataToInsert = {
