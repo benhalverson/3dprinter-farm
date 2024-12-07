@@ -121,7 +121,9 @@ app.post('/add-product', async (c) => {
 		);
 	}
 
-	const slicingResult = (await slicingResponse.json()) as { data: { price: number } };
+	const slicingResult = (await slicingResponse.json()) as {
+		data: { price: number };
+	};
 	const basePrice = slicingResult.data.price;
 	const markupPrice = calculateMarkupPrice(basePrice, parsedData.price);
 
@@ -232,16 +234,14 @@ const addProductSchema = z
 	})
 	.omit({ id: true, skuNumber: true });
 
-const updateProductSchema = z
-	.object({
-		id: z.number(),
-		name: z.string(),
-		description: z.string(),
-		image: z.string(),
-		stl: z.string(),
-		price: z.number(),
-		filamentType: z.string(),
-		color: z.string(),
-		skuNumber: z.string(),
-	});
-
+const updateProductSchema = z.object({
+	id: z.number(),
+	name: z.string(),
+	description: z.string(),
+	image: z.string(),
+	stl: z.string(),
+	price: z.number(),
+	filamentType: z.string(),
+	color: z.string(),
+	skuNumber: z.string(),
+});
