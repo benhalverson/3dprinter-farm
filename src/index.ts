@@ -214,6 +214,7 @@ type Bindings = {
 	STRIPE_PRICE_ID: string;
 	DOMAIN: string;
 	DB: D1Database;
+	COLOR_CACHE: Cache;
 };
 
 // Schema for adding a new product to the products table
