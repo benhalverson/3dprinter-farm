@@ -3,7 +3,7 @@ import { Context } from 'hono';
 import { colors } from '../../src/controllers/filament';
 
 describe('colors function', () => {
-  it('should return filtered and sorted colors if API call succeeds without a query', async () => {
+  it('should return filtered and sorted colors for PETG when queried', async () => {
     const mockResponse = {
       filaments: [
         {
@@ -30,42 +30,6 @@ describe('colors function', () => {
           colorTag: 'gray',
           profile: 'PLA',
         },
-        {
-          filament: 'PLA WHITE',
-          hexColor: 'ffffff',
-          colorTag: 'white',
-          profile: 'PLA',
-        },
-        {
-          filament: 'PLA YELLOW',
-          hexColor: 'f5c211',
-          colorTag: 'yellow',
-          profile: 'PLA',
-        },
-        {
-          filament: 'PLA RED',
-          hexColor: 'f91010',
-          colorTag: 'red',
-          profile: 'PLA',
-        },
-        {
-          filament: 'PLA GOLD',
-          hexColor: 'd5b510',
-          colorTag: 'gold',
-          profile: 'PLA',
-        },
-        {
-          filament: 'PLA LUNAR REGOLITH',
-          hexColor: '7d7e7e',
-          colorTag: 'lunarRegolith',
-          profile: 'PLA',
-        },
-        {
-          filament: 'PLA MATTE BLACK',
-          hexColor: '000000',
-          colorTag: 'matteBlack',
-          profile: 'PLA',
-        },
       ],
     };
 
@@ -82,7 +46,7 @@ describe('colors function', () => {
     // Mock the Hono Context
     const c = {
       req: {
-        query: vi.fn().mockReturnValue(undefined), // Simulating no query parameter
+        query: vi.fn().mockReturnValue('PETG'), // Simulating a query for PETG
       },
       env: {
         SLANT_API: 'fake-api-key',
@@ -105,53 +69,14 @@ describe('colors function', () => {
         hexColor: '000000',
         colorTag: 'petgBlack',
       },
-      {
-        filament: 'PLA BLACK',
-        hexColor: '000000',
-        colorTag: 'black',
-      },
-      {
-        filament: 'PLA GRAY',
-        hexColor: '666666',
-        colorTag: 'gray',
-      },
-      {
-        filament: 'PLA WHITE',
-        hexColor: 'ffffff',
-        colorTag: 'white',
-      },
-      {
-        filament: 'PLA YELLOW',
-        hexColor: 'f5c211',
-        colorTag: 'yellow',
-      },
-      {
-        filament: 'PLA RED',
-        hexColor: 'f91010',
-        colorTag: 'red',
-      },
-      {
-        filament: 'PLA GOLD',
-        hexColor: 'd5b510',
-        colorTag: 'gold',
-      },
-      {
-        filament: 'PLA LUNAR REGOLITH',
-        hexColor: '7d7e7e',
-        colorTag: 'lunarRegolith',
-      },
-      {
-        filament: 'PLA MATTE BLACK',
-        hexColor: '000000',
-        colorTag: 'matteBlack',
-      },
     ];
 
     // Assertions
+    const expectedCacheKey = '3dprinter-web-api-COLOR_CACHE:PETG'; // Updated key to include query
     expect(c.json).toHaveBeenCalledWith(expectedResult);
-    expect(kvGet).toHaveBeenCalledWith('3dprinter-web-api-COLOR_CACHE'); // Verify cache key lookup
+    expect(kvGet).toHaveBeenCalledWith(expectedCacheKey); // Verify cache key lookup
     expect(kvPut).toHaveBeenCalledWith(
-      '3dprinter-web-api-COLOR_CACHE',
+      expectedCacheKey,
       JSON.stringify(expectedResult),
       { expirationTtl: 604800 }
     ); // Verify cache storage

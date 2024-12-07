@@ -11,13 +11,16 @@ const FilamentTypeSchema = z.enum(['PLA', 'PETG'], {
 
 export const colors = async (c: Context) => {
 	const query = c.req.query('filamentType');
-	const cacheKey = `3dprinter-web-api-COLOR_CACHE`;
+	const normalizedQuery = query?.toUpperCase();
+	const cacheKey = `3dprinter-web-api-COLOR_CACHE:${normalizedQuery}`;
 
 	const cachedResponse = await c.env.COLOR_CACHE.get(cacheKey);
 
 	if (cachedResponse) {
+		console.log(`Cached Hit for key ${normalizedQuery}`);
 		return c.json(JSON.parse(cachedResponse));
 	}
+	console.log(`Cache Miss for key ${normalizedQuery}`);
 
 	if (query) {
 		const validationResult = FilamentTypeSchema.safeParse(query);
