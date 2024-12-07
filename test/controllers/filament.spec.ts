@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { Context } from 'hono';
 import { colors } from '../../src/controllers/filament';
+
 describe('colors function', () => {
   it('should return filtered and sorted colors if API call succeeds without a query', async () => {
     const mockResponse = {
@@ -68,21 +69,29 @@ describe('colors function', () => {
       ],
     };
 
+    // Mock the global fetch API
     global.fetch = vi.fn().mockResolvedValue({
       ok: true,
       json: vi.fn().mockResolvedValue(mockResponse),
     });
 
+    // Mock the KV store
+    const kvGet = vi.fn().mockResolvedValue(null); // Simulate no cached response
+    const kvPut = vi.fn(); // Mock KV put
+
+    // Mock the Hono Context
     const c = {
       req: {
         query: vi.fn().mockReturnValue(undefined), // Simulating no query parameter
       },
       env: {
         SLANT_API: 'fake-api-key',
+        COLOR_CACHE: { get: kvGet, put: kvPut }, // Mocked KV methods
       },
       json: vi.fn(),
     } as unknown as Context;
 
+    // Call the function
     await colors(c);
 
     const expectedResult = [
@@ -138,8 +147,13 @@ describe('colors function', () => {
       },
     ];
 
+    // Assertions
     expect(c.json).toHaveBeenCalledWith(expectedResult);
+    expect(kvGet).toHaveBeenCalledWith('3dprinter-web-api-COLOR_CACHE'); // Verify cache key lookup
+    expect(kvPut).toHaveBeenCalledWith(
+      '3dprinter-web-api-COLOR_CACHE',
+      JSON.stringify(expectedResult),
+      { expirationTtl: 604800 }
+    ); // Verify cache storage
   });
-
-  // You can also add tests for invalid queries and other scenarios if needed.
 });
