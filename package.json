@@ -18,11 +18,14 @@
     "wrangler": "^3.82.0"
   },
   "dependencies": {
+    "@clerk/backend": "^1.25.8",
+    "@clerk/clerk-sdk-node": "^5.1.6",
+    "@hono/clerk-auth": "^2.0.0",
     "@hono/zod-validator": "^0.2.2",
     "@paypal/checkout-server-sdk": "^1.0.3",
     "drizzle-kit": "^0.28.1",
     "drizzle-orm": "^0.36.4",
-    "hono": "^4.6.6",
+    "hono": "^4.6.13",
     "langchain": "^0.2.17",
     "openai": "^4.57.0",
     "stripe": "^16.6.0",

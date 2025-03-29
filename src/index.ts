@@ -1,16 +1,3 @@
-/**
- * Welcome to Cloudflare Workers! This is your first worker.
- *
- * - Run `npm run dev` in your terminal to start a development server
- * - Open a browser tab at http://localhost:8787/ to see your worker in action
- * - Run `npm run deploy` to publish your worker
- *
- * Bind resources to your worker in `wrangler.toml`. After adding bindings, a type definition for the
- * `Env` object can be regenerated with `npm run cf-typegen`.
- *
- * Learn more at https://developers.cloudflare.com/workers/
- */
-
 import { Context, Hono } from 'hono';
 import { logger } from 'hono/logger';
 import { colors } from './controllers/filament';
@@ -29,6 +16,10 @@ import { BASE_URL } from './constants';
 import { generateSkuNumber } from './utils/generateSkuNumber';
 import { generateOrderNumber } from './utils/generateOrderNumber';
 import { calculateMarkupPrice } from './utils/calculateMarkupPrice';
+import { clerkMiddleware, getAuth } from '@hono/clerk-auth';
+import { ClerkClient, createClerkClient, verifyToken } from '@clerk/backend';
+import { clerkClient } from '@clerk/clerk-sdk-node';
+
 
 const app = new Hono<{
 	Bindings: Bindings;
@@ -72,6 +63,8 @@ const orderSchema = z
 	.strict();
 
 app.use(logger());
+
+app.use('*', clerkMiddleware());
 app.use(
 	cors({
 		origin: '*',
@@ -80,6 +73,13 @@ app.use(
 
 app.get('/products', async (c) => {
 	const db = drizzle(c.env.DB);
+	const auth = getAuth(c);
+	const clerkClient = await c.get('clerk');
+	console.log('clerkClient', clerkClient);
+
+	if (!auth?.userId) {
+		return c.json({ error: 'User not authenticated' }, 401);
+	}
 	const response = await db.select().from(productsTable).all();
 	return c.json(response);
 });
@@ -125,6 +125,7 @@ app.post('/add-product', async (c) => {
 		data: { price: number };
 	};
 	const basePrice = slicingResult.data.price;
+	console.log('basePrice', basePrice);
 	const markupPrice = calculateMarkupPrice(basePrice, parsedData.price);
 
 	const productDataToInsert = {
@@ -192,7 +193,6 @@ app.put('/update-product', async (c) => {
 });
 
 app.get('/list', list);
-
 app.get('/success', success);
 
 app.get('/cancel', cancel);
@@ -205,7 +205,99 @@ app.get('/paypal-auth', async (c) => {
 	return c.text('success');
 });
 
+app.post('/signup', async (c) => {});
+app.post('/login', async (c) => {});
+
+/**
+ * Middleware for protecting authenticated routes
+ */
+app.use('/auth/*', clerkMiddleware());
+
+/**
+ * Protected route to fetch user info
+ */
+app.get('/auth/me', async (c) => {
+  try {
+    const user = c.req.validUser; // Automatically injected by ClerkMiddleware
+
+    if (!user) {
+      return c.json({ error: 'User not authenticated' }, 401);
+    }
+
+    return c.json({ user });
+  } catch (error) {
+    return c.json({ error: 'Failed to retrieve user info', details: error }, 500);
+  }
+});
+
+/**
+ * Public endpoint for initiating Google OAuth login
+ */
+app.get('/auth/google', async(c) => {
+  const { CLERK_FRONTEND_API, REDIRECT_URL } = c.env;
+	const clerkClient = createClerkClient({ secretKey: c.env.CLERK_SECRET_KEY })
+	const requestState = await clerkClient.authenticateRequest(new Request(c.req.url, c.req), { publishableKey: c.env.CLERK_PUBLISHABLE_KEY })
+
+	const claims = requestState.toAuth()?.sessionClaims
+
+	console.log('claims', claims)
+
+  if (!CLERK_FRONTEND_API) {
+    return c.json({ error: 'CLERK_FRONTEND_API not configured' }, 500);
+  }
+
+  const redirectUrl = `${CLERK_FRONTEND_API}/oauth/google/start?redirect_url=${encodeURIComponent(
+    // REDIRECT_URL
+		`http://localhost:8787/auth/callback`
+  )}`;
+
+  return c.json({ redirectUrl });
+});
+
+/**
+ * OAuth callback handler
+ */
+app.get('/auth/callback', async (c) => {
+  const { CLERK_API_KEY } = c.env;
+  const url = new URL(c.req.url);
+  const state = url.searchParams.get('state');
+  const code = url.searchParams.get('code');
+
+  if (!state || !code) {
+    return c.json({ error: 'Missing state or code parameters' }, 400);
+  }
+
+  try {
+    // Validate the state and code with Clerk's API
+    const response = await fetch('https://api.clerk.dev/v1/oauth/token', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${CLERK_API_KEY}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ state, code }),
+    });
+
+    if (!response.ok) {
+      const error = await response.json();
+      return c.json({ error: 'OAuth token validation failed', details: error }, 400);
+    }
+
+    const tokenData = await response.json();
+    return c.json({ message: 'OAuth successful', tokenData });
+  } catch (error) {
+    return c.json({ error: 'OAuth callback failed', details: error }, 500);
+  }
+});
+
+
 export default app;
+
+declare module 'hono' {
+  interface HonoRequest {
+    validUser?: UserResource; // Clerk injects the authenticated user here
+  }
+}
 
 type Bindings = {
 	BUCKET: R2Bucket;
@@ -217,6 +309,11 @@ type Bindings = {
 	DOMAIN: string;
 	DB: D1Database;
 	COLOR_CACHE: Cache;
+	CLERK_SECRET_KEY: string;
+	CLERK_PUBLISHABLE_KEY: string;
+	CLERK_FRONTEND_API: string;
+	CLERK_API_KEY: string;
+	REDIRECT_URL: string;
 };
 
 // Schema for adding a new product to the products table
