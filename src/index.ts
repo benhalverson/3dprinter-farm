@@ -1,16 +1,3 @@
-/**
- * Welcome to Cloudflare Workers! This is your first worker.
- *
- * - Run `npm run dev` in your terminal to start a development server
- * - Open a browser tab at http://localhost:8787/ to see your worker in action
- * - Run `npm run deploy` to publish your worker
- *
- * Bind resources to your worker in `wrangler.toml`. After adding bindings, a type definition for the
- * `Env` object can be regenerated with `npm run cf-typegen`.
- *
- * Learn more at https://developers.cloudflare.com/workers/
- */
-
 import { Context, Hono } from 'hono';
 import { logger } from 'hono/logger';
 import { colors } from './controllers/filament';
@@ -29,9 +16,19 @@ import { BASE_URL } from './constants';
 import { generateSkuNumber } from './utils/generateSkuNumber';
 import { generateOrderNumber } from './utils/generateOrderNumber';
 import { calculateMarkupPrice } from './utils/calculateMarkupPrice';
+import { createAuth } from './auth';
+import { Bindings, Variables } from './types';
+import { userSchema } from 'better-auth/db';
+import { auth } from './auth.config';
+import { APIError } from "better-auth/api";
+
 
 const app = new Hono<{
 	Bindings: Bindings;
+	Variables: {
+		user: typeof auth.$Infer.Session.user | null;
+		session: typeof auth.$Infer.Session.session | null;
+	};
 }>();
 
 const idSchema = z.object({
@@ -78,7 +75,112 @@ app.use(
 	})
 );
 
+
+app.use("*", async (c, next) => {
+	const session = await auth.api.getSession({ headers: c.req.raw.headers });
+	console.log('session', session);
+
+	if (!session) {
+		c.set("user", null);
+		c.set("session", null);
+		return next();
+	}
+
+	c.set("user", session.user);
+	c.set("session", session.session);
+	return next();
+});
+
+app.on(["POST", "GET"], "/api/auth/*", (c) => {
+	return auth.handler(c.req.raw);
+});
+
+app.get("/session", async (c) => {
+	const session = c.get("session");
+	const user = c.get("user");
+
+	if (!user) return c.body(null, 401);
+
+	return c.json({
+		session,
+		user
+	});
+});
+
+
+app.post('/signup', async (c) => {
+	const auth = createAuth(c.env);
+	const body = await c.req.json();
+	try {
+		const response = await auth.api.signInEmail({
+			body: {
+				email: body.email,
+				password: body.password,
+			},
+		});
+		console.log('response', response);
+		return c.json({
+		"message": "User created successfully",
+		"data": response
+		});
+	} catch (error) {
+		if (error instanceof APIError) {
+			console.log(error.message, error.status);
+		}
+	}
+});
+
+app.post('/signin', async (c) => {
+	const auth = createAuth(c.env);
+	const body = await c.req.json();
+	try {
+		const response = await auth.api.signInEmail({
+			body: {
+				email: body.email,
+				password: body.password,
+			},
+		});
+		console.log('response', response);
+		return c.json({
+			"message": "User created successfully",
+			"data": response
+		});
+	} catch (error) {
+		if (error instanceof APIError) {
+			console.log(error.message, error.status);
+		}
+	}
+
+});
+
+
+// // Register /auth/* routes
+// app.all('/auth/*', async (c) => {
+//   const auth = createAuth(c.env);
+
+// // 	console.log('Available auth routes:');
+// // Object.values(auth.api).forEach((fn: any) => {
+// //   console.log(fn.path);
+// // });
+// // console.log('auth', auth.api);
+
+//   return auth.handler(c.req.raw);
+// });
+
+
+app.post('/auth/signup', async (c) => {
+	const auth = createAuth(c.env);
+	const user = await auth.api.signInEmail(await c.req.json());
+	if (user) {
+		return c.json(user);
+	} else {
+		return c.json({ error: 'User already exists' }, 400);
+	}
+});
+
 app.get('/products', async (c) => {
+	const auth = c.get("auth");
+	console.log('auth', auth);
 	const db = drizzle(c.env.DB);
 	const response = await db.select().from(productsTable).all();
 	return c.json(response);
@@ -207,17 +309,7 @@ app.get('/paypal-auth', async (c) => {
 
 export default app;
 
-type Bindings = {
-	BUCKET: R2Bucket;
-	SLANT_API: string;
-	STRIPE_PUBLISHABLE_KEY: string;
-	STRIPE_SECRET_KEY: string;
-	STRIPE_WEBHOOK_SECRET: string;
-	STRIPE_PRICE_ID: string;
-	DOMAIN: string;
-	DB: D1Database;
-	COLOR_CACHE: Cache;
-};
+
 
 // Schema for adding a new product to the products table
 const addProductSchema = z

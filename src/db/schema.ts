@@ -1,5 +1,6 @@
 import { integer, sqliteTable, text, real } from 'drizzle-orm/sqlite-core';
 import { z } from 'zod';
+import { user as authUsers, session, verification } from '../../auth-schema';
 
 export const productsTable = sqliteTable('products', {
   id: integer('id').primaryKey({autoIncrement: true}),
