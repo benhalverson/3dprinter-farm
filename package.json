@@ -20,6 +20,7 @@
   "dependencies": {
     "@hono/zod-validator": "^0.2.2",
     "@paypal/checkout-server-sdk": "^1.0.3",
+    "better-auth": "^1.2.5",
     "drizzle-kit": "^0.28.1",
     "drizzle-orm": "^0.36.4",
     "hono": "^4.6.6",
