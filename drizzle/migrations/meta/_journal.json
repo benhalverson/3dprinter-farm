@@ -8,6 +8,13 @@
       "when": 1733026902627,
       "tag": "0000_blushing_madame_web",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1743981268921,
+      "tag": "0001_shallow_blob",
+      "breakpoints": true
     }
   ]
 }

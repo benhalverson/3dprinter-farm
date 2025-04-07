@@ -1,16 +1,3 @@
-/**
- * Welcome to Cloudflare Workers! This is your first worker.
- *
- * - Run `npm run dev` in your terminal to start a development server
- * - Open a browser tab at http://localhost:8787/ to see your worker in action
- * - Run `npm run deploy` to publish your worker
- *
- * Bind resources to your worker in `wrangler.toml`. After adding bindings, a type definition for the
- * `Env` object can be regenerated with `npm run cf-typegen`.
- *
- * Learn more at https://developers.cloudflare.com/workers/
- */
-
 import { Context, Hono } from 'hono';
 import { logger } from 'hono/logger';
 import { colors } from './controllers/filament';
@@ -23,12 +10,21 @@ import { cancel, checkout, success } from './controllers/stripe';
 import { cors } from 'hono/cors';
 import { createOrder, getPayPalAccessToken } from './controllers/paypal';
 import { drizzle } from 'drizzle-orm/d1';
-import { ProductData, ProductsDataSchema, productsTable } from './db/schema';
+import {
+	ProductData,
+	ProductsDataSchema,
+	productsTable,
+	users,
+	authenticators,
+	webauthnChallenges,
+} from './db/schema';
 import { eq } from 'drizzle-orm';
 import { BASE_URL } from './constants';
 import { generateSkuNumber } from './utils/generateSkuNumber';
 import { generateOrderNumber } from './utils/generateOrderNumber';
 import { calculateMarkupPrice } from './utils/calculateMarkupPrice';
+import { jwt } from 'hono/jwt';
+import { generateRegistrationOptions, verifyAuthenticationResponse } from '@simplewebauthn/server';
 
 const app = new Hono<{
 	Bindings: Bindings;
@@ -77,6 +73,144 @@ app.use(
 		origin: '*',
 	})
 );
+
+app.use('/webauthn/*', async (c, next) => {
+	const secret = c.env.JWT_SECRET;
+	console.log('secret', secret);
+	await jwt({
+		secret,
+		cookie: 'token',
+	})(c, next);
+});
+
+app.post('/webauthn/register/begin', async (c) => {
+	const db = drizzle(c.env.DB);
+
+	const user = c.get('jwtPayload');
+	if (!user?.id) {
+		return c.json({ error: 'User not found' }, 404);
+	}
+
+	const [existingUser] = await db
+		.select()
+		.from(users)
+		.where(eq(users.id, user.id));
+	if (!existingUser) {
+		return c.json({ error: 'User not found' }, 404);
+	}
+
+	const existingAuthenticators = await db
+		.select()
+		.from(authenticators)
+		.where(eq(authenticators.userId, user.id));
+
+	const excludeCredentials = existingAuthenticators.map((auth) => ({
+		id: auth.credentialId,
+		type: 'public-key',
+	}));
+
+	const options = generateRegistrationOptions({
+		rpName: c.env.RP_NAME,
+		rpID: c.env.RP_ID,
+		userID: user.id.toString(),
+		userName: existingUser.email,
+		excludeCredentials,
+	});
+	console.log('options', options);
+
+	try {
+		await db
+			.insert(webauthnChallenges)
+			.values({
+				userId: existingUser.id,
+				challenge: (await options).challenge,
+			})
+			.onConflictDoUpdate({
+				target: [webauthnChallenges.userId],
+				set: { challenge: (await options).challenge },
+			});
+
+		return c.json(options);
+	} catch (error) {
+		return c.json(
+			{
+				error: 'Failed to save challenge',
+				details: error,
+			},
+			500
+		);
+	}
+});
+
+
+app.post('/webauthn/auth/finish', async (c) => {
+  const db = drizzle(c.env.DB);
+  const body = await c.req.json();
+
+  const user = c.get('jwtPayload');
+  if (!user?.id) {
+    return c.json({ error: 'No user in JWT payload' }, 401);
+  }
+
+  const [existingUser] = await db
+    .select()
+    .from(users)
+    .where(eq(users.id, user.id));
+  if (!existingUser) {
+    return c.json({ error: 'User not found' }, 404);
+  }
+
+  const [challengeRow] = await db
+    .select()
+    .from(webauthnChallenges)
+    .where(eq(webauthnChallenges.userId, existingUser.id));
+  if (!challengeRow) {
+    return c.json({ error: 'No challenge found for user' }, 400);
+  }
+
+  const userAuthenticators = await db
+    .select()
+    .from(authenticators)
+    .where(eq(authenticators.userId, existingUser.id));
+
+  const authenticatorRecord = userAuthenticators.find((a) => a.credentialId === body.rawId);
+  if (!authenticatorRecord) {
+    return c.json({ error: 'No matching authenticator found' }, 400);
+  }
+
+  try {
+    const data = await verifyAuthenticationResponse({
+      response: body,
+      expectedChallenge: challengeRow.challenge,
+      expectedRPID: c.env.RP_ID,
+      expectedOrigin: `https://${c.env.RP_ID}`,
+	  credential: {
+		id: authenticatorRecord.credentialId,
+		publicKey: authenticatorRecord.credentialPublicKey,
+		counter: authenticatorRecord.counter,
+	  },
+    });
+
+    const { verified, authenticationInfo } = data;
+    if (!verified || !authenticationInfo) {
+      return c.json({ success: false, error: 'Verification failed' }, 400);
+    }
+
+    await db
+      .update(authenticators)
+      .set({ counter: authenticationInfo.newCounter })
+      .where(eq(authenticators.id, authenticatorRecord.id));
+
+    // Clear challenge
+    await db
+      .delete(webauthnChallenges)
+      .where(eq(webauthnChallenges.userId, existingUser.id));
+
+    return c.json({ success: true });
+  } catch (err) {
+    return c.json({ success: false, error: (err as Error).message }, 400);
+  }
+});
 
 app.get('/products', async (c) => {
 	const db = drizzle(c.env.DB);
@@ -217,6 +351,9 @@ type Bindings = {
 	DOMAIN: string;
 	DB: D1Database;
 	COLOR_CACHE: Cache;
+	JWT_SECRET: string;
+	RP_ID: string;
+	RP_NAME: string;
 };
 
 // Schema for adding a new product to the products table
