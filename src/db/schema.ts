@@ -29,6 +29,7 @@ export const users = sqliteTable('users', {
   id: integer('id').primaryKey(),
   email: text('email').notNull().unique(),
   passwordHash: text('password_hash').notNull(),
+	salt: text('salt').notNull(),
   firstName: text('first_name').notNull(),
   lastName: text('last_name').notNull(),
   shippingAddress: text('shipping_address').notNull(),
@@ -130,3 +131,14 @@ export const webauthnChallenges = sqliteTable(
 		};
 	}
 );
+
+export const signUpSchema = z.object({
+	email: z.string().email(),
+	password: z.string().min(8),
+});
+
+
+export const signInSchema = z.object({
+	email: z.string().email(),
+	password: z.string()
+})

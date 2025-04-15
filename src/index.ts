@@ -17,6 +17,8 @@ import {
 	users,
 	authenticators,
 	webauthnChallenges,
+	signUpSchema,
+	signInSchema,
 } from './db/schema';
 import { eq } from 'drizzle-orm';
 import { BASE_URL } from './constants';
@@ -24,7 +26,12 @@ import { generateSkuNumber } from './utils/generateSkuNumber';
 import { generateOrderNumber } from './utils/generateOrderNumber';
 import { calculateMarkupPrice } from './utils/calculateMarkupPrice';
 import { jwt } from 'hono/jwt';
-import { generateRegistrationOptions, verifyAuthenticationResponse } from '@simplewebauthn/server';
+import {
+	generateRegistrationOptions,
+	verifyAuthenticationResponse,
+} from '@simplewebauthn/server';
+import { hashPassword, signJWT, verifyPassword } from './utils/crypto';
+import { setSignedCookie } from 'hono/cookie';
 
 const app = new Hono<{
 	Bindings: Bindings;
@@ -73,6 +80,14 @@ app.use(
 		origin: '*',
 	})
 );
+
+// app.use('*', async (c, next) => {
+// 	const middleware = jwt({
+// 		secret: c.env.JWT_SECRET,
+// 		cookie: 'token',
+// 	});
+// 	return middleware(c, next);
+// });
 
 app.use('/webauthn/*', async (c, next) => {
 	const secret = c.env.JWT_SECRET;
@@ -142,74 +157,75 @@ app.post('/webauthn/register/begin', async (c) => {
 	}
 });
 
-
 app.post('/webauthn/auth/finish', async (c) => {
-  const db = drizzle(c.env.DB);
-  const body = await c.req.json();
+	const db = drizzle(c.env.DB);
+	const body = await c.req.json();
 
-  const user = c.get('jwtPayload');
-  if (!user?.id) {
-    return c.json({ error: 'No user in JWT payload' }, 401);
-  }
+	const user = c.get('jwtPayload');
+	if (!user?.id) {
+		return c.json({ error: 'No user in JWT payload' }, 401);
+	}
 
-  const [existingUser] = await db
-    .select()
-    .from(users)
-    .where(eq(users.id, user.id));
-  if (!existingUser) {
-    return c.json({ error: 'User not found' }, 404);
-  }
+	const [existingUser] = await db
+		.select()
+		.from(users)
+		.where(eq(users.id, user.id));
+	if (!existingUser) {
+		return c.json({ error: 'User not found' }, 404);
+	}
 
-  const [challengeRow] = await db
-    .select()
-    .from(webauthnChallenges)
-    .where(eq(webauthnChallenges.userId, existingUser.id));
-  if (!challengeRow) {
-    return c.json({ error: 'No challenge found for user' }, 400);
-  }
+	const [challengeRow] = await db
+		.select()
+		.from(webauthnChallenges)
+		.where(eq(webauthnChallenges.userId, existingUser.id));
+	if (!challengeRow) {
+		return c.json({ error: 'No challenge found for user' }, 400);
+	}
 
-  const userAuthenticators = await db
-    .select()
-    .from(authenticators)
-    .where(eq(authenticators.userId, existingUser.id));
+	const userAuthenticators = await db
+		.select()
+		.from(authenticators)
+		.where(eq(authenticators.userId, existingUser.id));
 
-  const authenticatorRecord = userAuthenticators.find((a) => a.credentialId === body.rawId);
-  if (!authenticatorRecord) {
-    return c.json({ error: 'No matching authenticator found' }, 400);
-  }
+	const authenticatorRecord = userAuthenticators.find(
+		(a) => a.credentialId === body.rawId
+	);
+	if (!authenticatorRecord) {
+		return c.json({ error: 'No matching authenticator found' }, 400);
+	}
 
-  try {
-    const data = await verifyAuthenticationResponse({
-      response: body,
-      expectedChallenge: challengeRow.challenge,
-      expectedRPID: c.env.RP_ID,
-      expectedOrigin: `https://${c.env.RP_ID}`,
-	  credential: {
-		id: authenticatorRecord.credentialId,
-		publicKey: authenticatorRecord.credentialPublicKey,
-		counter: authenticatorRecord.counter,
-	  },
-    });
+	try {
+		const data = await verifyAuthenticationResponse({
+			response: body,
+			expectedChallenge: challengeRow.challenge,
+			expectedRPID: c.env.RP_ID,
+			expectedOrigin: `https://${c.env.RP_ID}`,
+			credential: {
+				id: authenticatorRecord.credentialId,
+				publicKey: authenticatorRecord.credentialPublicKey,
+				counter: authenticatorRecord.counter,
+			},
+		});
 
-    const { verified, authenticationInfo } = data;
-    if (!verified || !authenticationInfo) {
-      return c.json({ success: false, error: 'Verification failed' }, 400);
-    }
+		const { verified, authenticationInfo } = data;
+		if (!verified || !authenticationInfo) {
+			return c.json({ success: false, error: 'Verification failed' }, 400);
+		}
 
-    await db
-      .update(authenticators)
-      .set({ counter: authenticationInfo.newCounter })
-      .where(eq(authenticators.id, authenticatorRecord.id));
+		await db
+			.update(authenticators)
+			.set({ counter: authenticationInfo.newCounter })
+			.where(eq(authenticators.id, authenticatorRecord.id));
 
-    // Clear challenge
-    await db
-      .delete(webauthnChallenges)
-      .where(eq(webauthnChallenges.userId, existingUser.id));
+		// Clear challenge
+		await db
+			.delete(webauthnChallenges)
+			.where(eq(webauthnChallenges.userId, existingUser.id));
 
-    return c.json({ success: true });
-  } catch (err) {
-    return c.json({ success: false, error: (err as Error).message }, 400);
-  }
+		return c.json({ success: true });
+	} catch (err) {
+		return c.json({ success: false, error: (err as Error).message }, 400);
+	}
 });
 
 app.get('/products', async (c) => {
@@ -337,6 +353,110 @@ app.get('/paypal-auth', async (c) => {
 	const auth_test = await getPayPalAccessToken(c);
 	console.log(auth_test);
 	return c.text('success');
+});
+
+app.post('/signup', async (c) => {
+	const db = drizzle(c.env.DB);
+	try {
+		const { email, password } = signUpSchema.parse(await c.req.json());
+		const [existingUser] = await db
+			.select()
+			.from(users)
+			.where(eq(users.email, email));
+		if (existingUser) {
+			return c.json({ error: 'User already exists' }, 409);
+		}
+
+		const { salt, hash } = await hashPassword(password);
+		const [insertedUser] = await db
+			.insert(users)
+			.values({
+				email,
+				passwordHash: hash,
+				salt,
+				firstName: '',
+				lastName: '',
+				shippingAddress: '',
+				billingAddress: '',
+			})
+			.returning();
+
+		const iat = Math.floor(Date.now() / 1000);
+		const exp = iat + 60 * 60 * 24; // Token expiration time (1 day)
+
+		const token = await signJWT({
+			payload: { id: insertedUser.id, email: insertedUser.email },
+			secret: c.env.JWT_SECRET,
+			iat,
+			exp,
+		});
+
+		await setSignedCookie(c, 'token', token, c.env.JWT_SECRET, {
+			httpOnly: true,
+			path: '/',
+			secure: true,
+			maxAge: 60 * 60 * 24, // 1 day
+		});
+
+		return c.json({
+			success: true,
+			message: 'User created successfully',
+			token,
+		});
+	} catch (error) {
+		if (error instanceof ZodError) {
+			return c.json({ error: 'Validation error', details: error.errors }, 400);
+		}
+		console.error('Error during signup:', error);
+		return c.json({ error: 'Internal Server Error' }, 500);
+	}
+});
+
+app.post('/signin', async (c) => {
+	const db = drizzle(c.env.DB);
+	try {
+		const { email, password } = signInSchema.parse(await c.req.json());
+		const [user] = await db.select().from(users).where(eq(users.email, email));
+		if (!user) {
+			return c.json({ error: 'User not found' }, 404);
+		}
+
+		const isValid = await verifyPassword(
+			password,
+			user.salt,
+			user.passwordHash
+		);
+		if (!isValid) {
+			return c.json({ error: 'Invalid credentials' }, 401);
+		}
+
+		const iat = Math.floor(Date.now() / 1000);
+		const exp = iat + 60 * 60 * 24;
+		const token = await signJWT({
+			payload: { email },
+			secret: c.env.JWT_SECRET,
+			iat,
+			exp,
+		});
+
+		await setSignedCookie(c, 'token', token, c.env.JWT_SECRET, {
+			httpOnly: true,
+			path: '/',
+			secure: true,
+			maxAge: 60 * 60 * 24,
+		});
+		console.log('token', token);
+		return c.json({ message: 'signin success' });
+	} catch (error) {
+		if (error instanceof ZodError) {
+			return c.json({ error: 'Validation error', details: error.errors }, 400);
+		}
+
+		return c.json(
+			{ error: 'Internal Server Error', details: (error as Error).message },
+			500
+		);
+	}
 });
 
 export default app;
