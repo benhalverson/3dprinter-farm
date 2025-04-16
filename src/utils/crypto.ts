@@ -12,11 +12,11 @@ const arrayBuffertoBase64 = (arrayBuffer: Uint8Array): string => {
 
 const base64ToArrayBuffer = (base64: string): ArrayBuffer => {
 	const binaryString = atob(base64);
-	const byptes = new Uint8Array(binaryString.length);
+	const bytes = new Uint8Array(binaryString.length);
 	for (let i = 0; i < binaryString.length; i++) {
-		byptes[i] = binaryString.charCodeAt(i);
+		bytes[i] = binaryString.charCodeAt(i);
 	}
-	return byptes.buffer;
+	return bytes.buffer;
 };
 export const hashPassword = async (password: string): Promise<Salt> => {
 	// Generate a random 16-byte salt
