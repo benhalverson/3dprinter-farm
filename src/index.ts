@@ -77,17 +77,20 @@ const orderSchema = z
 app.use(logger());
 app.use(
 	cors({
-		origin: '*',
+		origin: 'http://localhost:3000',
+		credentials: true,
+		allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
 	})
 );
 
-// app.use('*', async (c, next) => {
-// 	const middleware = jwt({
-// 		secret: c.env.JWT_SECRET,
-// 		cookie: 'token',
-// 	});
-// 	return middleware(c, next);
-// });
+app.use('/add-product', async (c, next) => {
+	const middleware = jwt({
+		secret: c.env.JWT_SECRET,
+		cookie: 'token',
+	});
+
+	return middleware(c, next);
+});
 
 app.use('/webauthn/*', async (c, next) => {
 	const secret = c.env.JWT_SECRET;
@@ -250,6 +253,10 @@ app.get('/colors', colors);
 
 app.post('/estimate', estimateOrder);
 app.post('/add-product', async (c) => {
+	const user = c.get('jwtPayload') as { id: number; email: string };
+	if (!user) {
+		return c.json({ error: 'Unauthorized' }, 401);
+	}
 	const data = await c.req.json();
 	const parsedData: ProductData = addProductSchema.parse(data);
 	const skuNumber = generateSkuNumber(parsedData.name, parsedData.color);
@@ -433,7 +440,7 @@ app.post('/signin', async (c) => {
 		const iat = Math.floor(Date.now() / 1000);
 		const exp = iat + 60 * 60 * 24;
 		const token = await signJWT({
-			payload: { email },
+			payload: { id: user.id, email: user.email},
 			secret: c.env.JWT_SECRET,
 			iat,
 			exp,
@@ -456,6 +463,38 @@ app.post('/signin', async (c) => {
 			{ error: 'Internal Server Error', details: (error as Error).message },
 			500
 		);
+	}
+});
+
+app.use('/profile', async (c, next) => {
+	const middleware = jwt({
+		secret: c.env.JWT_SECRET,
+		cookie: 'token',
+	});
+	return middleware(c, next);
+});
+
+app.get('/profile', async (c) => {
+	const user = c.get('jwtPayload') as { id: number; email: string };
+	console.log('user', user);
+	if (!user) {
+		return c.json({ error: 'Unauthorized' }, 401);
+	}
+
+	const db = drizzle(c.env.DB);
+	try {
+		const [userData] = await db.select().from(users).where(eq(users.id, user.id));
+	console.log('userData', userData);
+
+	if (!userData) {
+		return c.json({ error: 'User not found' }, 404);
+	}
+
+
+	return c.json(userData);
+	} catch (error: any) {
+		console.error('Error fetching user data:', error);
+		return c.json({ error: 'Internal Server Error', details: error.message }, 500);
 	}
 });
 
