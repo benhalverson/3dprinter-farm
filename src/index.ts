@@ -1,4 +1,4 @@
-import { Context, Hono } from 'hono';
+import { Context, Hono, Next } from 'hono';
 import { logger } from 'hono/logger';
 import { colors } from './controllers/filament';
 import { slice, SliceResponse } from './controllers/slice';
@@ -25,13 +25,13 @@ import { BASE_URL } from './constants';
 import { generateSkuNumber } from './utils/generateSkuNumber';
 import { generateOrderNumber } from './utils/generateOrderNumber';
 import { calculateMarkupPrice } from './utils/calculateMarkupPrice';
-import { jwt } from 'hono/jwt';
+import { jwt, verify } from 'hono/jwt';
 import {
 	generateRegistrationOptions,
 	verifyAuthenticationResponse,
 } from '@simplewebauthn/server';
 import { hashPassword, signJWT, verifyPassword } from './utils/crypto';
-import { setSignedCookie } from 'hono/cookie';
+import { getSignedCookie, setSignedCookie } from 'hono/cookie';
 
 const app = new Hono<{
 	Bindings: Bindings;
@@ -83,14 +83,22 @@ app.use(
 	})
 );
 
-app.use('/add-product', async (c, next) => {
-	const middleware = jwt({
-		secret: c.env.JWT_SECRET,
-		cookie: 'token',
-	});
+const authMiddleware =  async (c: Context, next: Next) => {
+	const signedToken = await getSignedCookie(c, c.env.JWT_SECRET, 'token')
 
-	return middleware(c, next);
-});
+	if (!signedToken) {
+		return c.json({ error: 'Unauthorized (no token)' }, 401)
+	}
+
+	try {
+		const payload = await verify(signedToken, c.env.JWT_SECRET)
+		c.set('jwtPayload', payload)
+		return next()
+	} catch (err) {
+		return c.json({ error: 'Invalid or expired token' }, 401)
+	}
+}
+
 
 app.use('/webauthn/*', async (c, next) => {
 	const secret = c.env.JWT_SECRET;
@@ -240,9 +248,9 @@ app.get('/health', (c) => {
 	return c.json({ status: 'ok' });
 });
 
-app.post('/upload', upload);
+app.post('/upload', authMiddleware, upload);
 
-app.post('/slice', slice);
+app.post('/slice', authMiddleware, slice);
 
 /**
  * Lists the available colors for the filament
@@ -251,8 +259,8 @@ app.post('/slice', slice);
  */
 app.get('/colors', colors);
 
-app.post('/estimate', estimateOrder);
-app.post('/add-product', async (c) => {
+app.post('/estimate', authMiddleware, estimateOrder);
+app.post('/add-product', authMiddleware, async (c) => {
 	const user = c.get('jwtPayload') as { id: number; email: string };
 	if (!user) {
 		return c.json({ error: 'Unauthorized' }, 401);
@@ -318,7 +326,7 @@ app.get('/product/:id', async (c) => {
 		: c.json({ error: 'Product not found' }, 404);
 });
 
-app.put('/update-product', async (c) => {
+app.put('/update-product', authMiddleware, async (c) => {
 	try {
 		const body = await c.req.json();
 		const parsedData = updateProductSchema.parse(body);
@@ -466,15 +474,7 @@ app.post('/signin', async (c) => {
 	}
 });
 
-app.use('/profile', async (c, next) => {
-	const middleware = jwt({
-		secret: c.env.JWT_SECRET,
-		cookie: 'token',
-	});
-	return middleware(c, next);
-});
-
-app.get('/profile', async (c) => {
+app.get('/profile', authMiddleware, async (c) => {
 	const user = c.get('jwtPayload') as { id: number; email: string };
 	console.log('user', user);
 	if (!user) {
