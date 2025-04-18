@@ -77,7 +77,7 @@ const orderSchema = z
 app.use(logger());
 app.use(
 	cors({
-		origin: 'http://localhost:3000',
+		origin: ['http://localhost:3000', 'http://localhost:4200'],
 		credentials: true,
 		allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
 	})
@@ -356,7 +356,7 @@ app.put('/update-product', authMiddleware, async (c) => {
 	}
 });
 
-app.get('/list', list);
+app.get('/list', authMiddleware, list);
 
 app.get('/success', success);
 
