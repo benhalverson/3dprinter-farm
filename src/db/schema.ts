@@ -1,4 +1,4 @@
-import { integer, sqliteTable, text, real } from 'drizzle-orm/sqlite-core';
+import { integer, sqliteTable, text, real, primaryKey, uniqueIndex, blob } from 'drizzle-orm/sqlite-core';
 import { z } from 'zod';
 
 export const productsTable = sqliteTable('products', {
@@ -29,6 +29,7 @@ export const users = sqliteTable('users', {
   id: integer('id').primaryKey(),
   email: text('email').notNull().unique(),
   passwordHash: text('password_hash').notNull(),
+	salt: text('salt').notNull(),
   firstName: text('first_name').notNull(),
   lastName: text('last_name').notNull(),
   shippingAddress: text('shipping_address').notNull(),
@@ -93,3 +94,51 @@ export const ordersTable = sqliteTable('orders', {
   shipToIsUSResidential: integer('ship_to_is_us_residential').default(0),
 });
 
+export const authenticators = sqliteTable(
+	'authenticators',
+	{
+		id: integer().primaryKey().notNull(),
+		userId: integer('user_id')
+			.notNull()
+			.references(() => users.id, { onDelete: 'cascade' }),
+		credentialId: text('credential_id').notNull(),
+		credentialPublicKey: blob('credential_public_key', {
+			mode: 'buffer',
+		}).notNull(),
+		counter: integer('counter').notNull().default(0),
+	},
+	(table) => {
+		return {
+			userCredUnique: uniqueIndex('authenticators_user_credential_unique').on(
+				table.userId,
+				table.credentialId
+			),
+		};
+	}
+);
+
+export const webauthnChallenges = sqliteTable(
+	'webauthn_challenges',
+	{
+		userId: integer('user_id')
+			.notNull()
+			.references(() => users.id, { onDelete: 'cascade' }),
+		challenge: text('challenge').notNull(),
+	},
+	(table) => {
+		return {
+			pk: primaryKey(table.userId),
+		};
+	}
+);
+
+export const signUpSchema = z.object({
+	email: z.string().email(),
+	password: z.string().min(8),
+});
+
+
+export const signInSchema = z.object({
+	email: z.string().email(),
+	password: z.string()
+})
