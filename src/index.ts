@@ -274,8 +274,8 @@ app.post('/webauthn/register/finish', authMiddleware, async (c) => {
 		verification = await verifyRegistrationResponse({
 			response: parsedCredential,
 			expectedChallenge: challengeRow.challenge,
-			expectedOrigin: c.env.DOMAIN,
-			expectedRPID: c.env.RP_ID,
+			expectedOrigin: 'https://rc-store.benhalverson.dev', // c.env.DOMAIN,
+			expectedRPID: 'rc-store.benhalverson.dev', // c.env.RP_ID,
 			requireUserVerification: false,
 		});
 	} catch (err) {
