@@ -274,7 +274,7 @@ app.post('/webauthn/register/finish', authMiddleware, async (c) => {
 		verification = await verifyRegistrationResponse({
 			response: parsedCredential,
 			expectedChallenge: challengeRow.challenge,
-			expectedOrigin: 'http://localhost:3000',
+			expectedOrigin: c.env.DOMAIN,
 			// expectedRPID: c.env.RP_ID,
 			requireUserVerification: false,
 		});
