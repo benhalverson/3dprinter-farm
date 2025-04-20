@@ -271,6 +271,11 @@ app.post('/webauthn/register/finish', authMiddleware, async (c) => {
 
 	let verification;
 	try {
+		console.log('verifyRegistrationResponse inputs:', {
+			challenge: challengeRow.challenge,
+			expectedOrigin: 'https://rc-store.benhalverson.dev',
+			expectedRPID: 'rc-store.benhalverson.dev',
+		});
 		verification = await verifyRegistrationResponse({
 			response: parsedCredential,
 			expectedChallenge: challengeRow.challenge,
