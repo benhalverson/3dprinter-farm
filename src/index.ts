@@ -574,7 +574,12 @@ app.get('/profile', authMiddleware, async (c) => {
 			return c.json({ error: 'User not found' }, 404);
 		}
 
-		return c.json(userData);
+		return c.json({
+			id: userData.id,
+			email: userData.email,
+			firstName: userData.firstName,
+			lastName: userData.lastName,
+		});
 	} catch (error: any) {
 		console.error('Error fetching user data:', error);
 		return c.json(
