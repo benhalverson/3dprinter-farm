@@ -146,6 +146,8 @@ app.delete('/webauthn/authenticators/:id', authMiddleware, async (c) => {
 app.post('/webauthn/register/begin', authMiddleware, async (c) => {
 	const db = drizzle(c.env.DB);
 	const user = c.get('jwtPayload') as { id: number; email: string };
+	console.log('RP_ID', c.env.RP_ID);
+	console.log('RP_NAME", c.env.RP_NAME);
 
 	const [existingUser] = await db
 		.select()
@@ -175,6 +177,7 @@ app.post('/webauthn/register/begin', authMiddleware, async (c) => {
 		},
 	});
 
+	console.log('options', options);
 	await db
 		.insert(webauthnChallenges)
 		.values({ userId: user.id, challenge: (await options).challenge })
