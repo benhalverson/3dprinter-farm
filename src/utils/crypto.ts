@@ -83,6 +83,7 @@ export const base64url = (input: Uint8Array | string): string => {
 		typeof input === 'string'
 			? btoa(input)
 			: btoa(String.fromCharCode(...input));
+	console.log('base64 function', input);
 	return str.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 };
 
@@ -135,6 +136,40 @@ export const signJWT = async ({
 	const encodedSignature = base64url(new Uint8Array(signature));
 
 	return `${data}.${encodedSignature}`;
+};
+
+export const base64urlToBuffer = (base64url: string): ArrayBuffer => {
+	const base64 = base64url.replace(/-/g, '+').replace(/_/g, '/');
+	const padLength = 4 - (base64.length % 4);
+	const padded = base64 + '='.repeat(padLength === 4 ? 0 : padLength);
+	const binary = atob(padded);
+	const buffer = new ArrayBuffer(binary.length);
+	const view = new Uint8Array(buffer);
+	for (let i = 0; i < binary.length; i++) {
+		view[i] = binary.charCodeAt(i);
+	}
+	return buffer;
+};
+
+export const base64urlToUint8Array = (base64url: string): Uint8Array => {
+	const base64 = base64url.replace(/-/g, '+').replace(/_/g, '/');
+	const pad = base64.length % 4;
+	const padded = base64 + (pad ? '='.repeat(4 - pad) : '');
+	const binary = atob(padded);
+	const bytes = new Uint8Array(binary.length);
+	for (let i = 0; i < binary.length; i++) {
+		bytes[i] = binary.charCodeAt(i);
+	}
+	return bytes;
+};
+
+export const bufferToBase64url = (buffer: Uint8Array | Buffer): string => {
+	console.log('bufferToBase64url', buffer.toString('base64'));
+	return Buffer.from(buffer)
+		.toString('base64')
+		.replace(/\+/g, '-')
+		.replace(/\//g, '_')
+		.replace(/=+$/, '');
 };
 
 interface Payload {

@@ -10,6 +10,8 @@ import { cancel, checkout, success } from './controllers/stripe';
 import { cors } from 'hono/cors';
 import { createOrder, getPayPalAccessToken } from './controllers/paypal';
 import { drizzle } from 'drizzle-orm/d1';
+import type { RegistrationCredential, RegistrationResponseJSON } from '@simplewebauthn/types';
+
 import {
 	ProductData,
 	ProductsDataSchema,
@@ -27,11 +29,13 @@ import { generateOrderNumber } from './utils/generateOrderNumber';
 import { calculateMarkupPrice } from './utils/calculateMarkupPrice';
 import { jwt, verify } from 'hono/jwt';
 import {
+	generateAuthenticationOptions,
 	generateRegistrationOptions,
 	verifyAuthenticationResponse,
+	verifyRegistrationResponse,
 } from '@simplewebauthn/server';
-import { hashPassword, signJWT, verifyPassword } from './utils/crypto';
-import { getSignedCookie, setSignedCookie } from 'hono/cookie';
+import { base64url, base64urlToUint8Array, bufferToBase64url, hashPassword, signJWT, verifyPassword } from './utils/crypto';
+import { deleteCookie, getSignedCookie, setSignedCookie } from 'hono/cookie';
 
 const app = new Hono<{
 	Bindings: Bindings;
@@ -83,47 +87,57 @@ app.use(
 	})
 );
 
-const authMiddleware =  async (c: Context, next: Next) => {
-	const signedToken = await getSignedCookie(c, c.env.JWT_SECRET, 'token')
+const authMiddleware = async (c: Context, next: Next) => {
+	const signedToken = await getSignedCookie(c, c.env.JWT_SECRET, 'token');
 
 	if (!signedToken) {
-		return c.json({ error: 'Unauthorized (no token)' }, 401)
+		return c.json({ error: 'Unauthorized (no token)' }, 401);
 	}
 
 	try {
-		const payload = await verify(signedToken, c.env.JWT_SECRET)
-		c.set('jwtPayload', payload)
-		return next()
+		const payload = await verify(signedToken, c.env.JWT_SECRET);
+		c.set('jwtPayload', payload);
+		return next();
 	} catch (err) {
-		return c.json({ error: 'Invalid or expired token' }, 401)
+		return c.json({ error: 'Invalid or expired token' }, 401);
 	}
-}
+};
 
-
-app.use('/webauthn/*', async (c, next) => {
-	const secret = c.env.JWT_SECRET;
-	console.log('secret', secret);
-	await jwt({
-		secret,
-		cookie: 'token',
-	})(c, next);
-});
-
-app.post('/webauthn/register/begin', async (c) => {
+app.get('/webauthn/authenticators', authMiddleware, async (c) => {
+	const user = c.get('jwtPayload') as { id: number };
 	const db = drizzle(c.env.DB);
 
-	const user = c.get('jwtPayload');
-	if (!user?.id) {
-		return c.json({ error: 'User not found' }, 404);
-	}
+	const authenticatorsList = await db
+		.select()
+		.from(authenticators)
+		.where(eq(authenticators.userId, user.id));
+
+	return c.json(authenticatorsList);
+});
+
+app.delete('/webauthn/authenticators/:id', authMiddleware, async (c) => {
+	const user = c.get('jwtPayload') as { id: number };
+	const credentialId = c.req.param('id');
+	const db = drizzle(c.env.DB);
+
+	await db
+		.delete(authenticators)
+		.where(eq(authenticators.credentialId, credentialId));
+	// optionally: .where(and(eq(userId, user.id), eq(credentialId, ...)))
+
+	return c.json({ success: true });
+});
+
+app.post('/webauthn/register/begin', authMiddleware, async (c) => {
+	const db = drizzle(c.env.DB);
+	const user = c.get('jwtPayload') as { id: number; email: string };
 
 	const [existingUser] = await db
 		.select()
 		.from(users)
 		.where(eq(users.id, user.id));
-	if (!existingUser) {
-		return c.json({ error: 'User not found' }, 404);
-	}
+
+	if (!existingUser) return c.json({ error: 'User not found' }, 404);
 
 	const existingAuthenticators = await db
 		.select()
@@ -132,112 +146,149 @@ app.post('/webauthn/register/begin', async (c) => {
 
 	const excludeCredentials = existingAuthenticators.map((auth) => ({
 		id: auth.credentialId,
-		type: 'public-key',
+		type: 'public-key' as const,
 	}));
 
-	const options = generateRegistrationOptions({
+	const options = await generateRegistrationOptions({
 		rpName: c.env.RP_NAME,
 		rpID: c.env.RP_ID,
-		userID: user.id.toString(),
+		userID: new TextEncoder().encode(user.id.toString()),
 		userName: existingUser.email,
-		excludeCredentials,
+		// excludeCredentials,
+		authenticatorSelection: {
+			userVerification: 'preferred',
+
+		},
 	});
-	console.log('options', options);
 
-	try {
-		await db
-			.insert(webauthnChallenges)
-			.values({
-				userId: existingUser.id,
-				challenge: (await options).challenge,
-			})
-			.onConflictDoUpdate({
-				target: [webauthnChallenges.userId],
-				set: { challenge: (await options).challenge },
-			});
+	await db
+		.insert(webauthnChallenges)
+		.values({ userId: user.id, challenge: (await options).challenge })
+		.onConflictDoUpdate({
+			target: [webauthnChallenges.userId],
+			set: { challenge: (await options).challenge },
+		});
 
-		return c.json(options);
-	} catch (error) {
-		return c.json(
-			{
-				error: 'Failed to save challenge',
-				details: error,
-			},
-			500
-		);
-	}
+	return c.json(options);
 });
 
-app.post('/webauthn/auth/finish', async (c) => {
+app.post('/webauthn/auth/begin', async (c) => {
 	const db = drizzle(c.env.DB);
-	const body = await c.req.json();
+	const { email } = await c.req.json();
 
-	const user = c.get('jwtPayload');
-	if (!user?.id) {
-		return c.json({ error: 'No user in JWT payload' }, 401);
-	}
+	const [user] = await db.select().from(users).where(eq(users.email, email));
+	if (!user) return c.json({ error: 'User not found' }, 404);
 
-	const [existingUser] = await db
+	const authenticatorsList = await db
 		.select()
-		.from(users)
-		.where(eq(users.id, user.id));
-	if (!existingUser) {
-		return c.json({ error: 'User not found' }, 404);
+		.from(authenticators)
+		.where(eq(authenticators.userId, user.id));
+
+	if (!authenticatorsList.length) {
+		return c.json({ error: 'No authenticators found' }, 404);
 	}
 
+	const options = await generateAuthenticationOptions({
+		rpID: c.env.RP_ID,
+		userVerification: 'preferred',
+		allowCredentials: authenticatorsList.map((auth) => ({
+			id: auth.credentialId,
+			type: 'public-key' as const,
+		})),
+	});
+
+
+	await db
+		.insert(webauthnChallenges)
+		.values({ userId: user.id, challenge: (await options).challenge })
+		.onConflictDoUpdate({
+			target: [webauthnChallenges.userId],
+			set: { challenge: (await options).challenge },
+		});
+
+	return c.json({ options, userId: user.id });
+});
+
+
+app.post('/webauthn/register/finish', authMiddleware, async (c) => {
+	const db = drizzle(c.env.DB);
+	const user = c.get('jwtPayload') as { id: number; email: string };
+	if (!user?.id) return c.json({ error: 'Unauthorized' }, 401);
+
+	let body: any;
+	try {
+		body = await c.req.json();
+	} catch {
+		return c.json({ error: 'Invalid JSON body' }, 400);
+	}
+
+	const { id, rawId, response: webauthnResponse } = body;
+
+	if (
+		!id ||
+		!rawId ||
+		!webauthnResponse?.clientDataJSON ||
+		!webauthnResponse?.attestationObject
+	) {
+		return c.json({ error: 'Missing credential fields' }, 400);
+	}
+
+	// Get stored challenge for this user
 	const [challengeRow] = await db
 		.select()
 		.from(webauthnChallenges)
-		.where(eq(webauthnChallenges.userId, existingUser.id));
+		.where(eq(webauthnChallenges.userId, user.id));
+
 	if (!challengeRow) {
-		return c.json({ error: 'No challenge found for user' }, 400);
+		return c.json({ error: 'Missing challenge' }, 400);
 	}
 
-	const userAuthenticators = await db
-		.select()
-		.from(authenticators)
-		.where(eq(authenticators.userId, existingUser.id));
+	const parsedCredential: RegistrationResponseJSON = {
+		id: base64url(base64urlToUint8Array(id)), // Ensure it's Base64URL-encoded
+		rawId: base64url(base64urlToUint8Array(rawId)), // Ensure it's Base64URL-encoded
+		type: 'public-key',
+		response: {
+			clientDataJSON: webauthnResponse.clientDataJSON, //base64urlToUint8Array(webauthnResponse.clientDataJSON),
+			attestationObject: webauthnResponse.attestationObject,
+		},
+		clientExtensionResults: {}
+	};
 
-	const authenticatorRecord = userAuthenticators.find(
-		(a) => a.credentialId === body.rawId
-	);
-	if (!authenticatorRecord) {
-		return c.json({ error: 'No matching authenticator found' }, 400);
-	}
 
+	let verification;
 	try {
-		const data = await verifyAuthenticationResponse({
-			response: body,
+		verification = await verifyRegistrationResponse({
+			response: parsedCredential,
 			expectedChallenge: challengeRow.challenge,
-			expectedRPID: c.env.RP_ID,
-			expectedOrigin: `https://${c.env.RP_ID}`,
-			credential: {
-				id: authenticatorRecord.credentialId,
-				publicKey: authenticatorRecord.credentialPublicKey,
-				counter: authenticatorRecord.counter,
-			},
+			expectedOrigin: 'http://localhost:3000',
+			// expectedRPID: c.env.RP_ID,
+			requireUserVerification: false,
 		});
 
-		const { verified, authenticationInfo } = data;
-		if (!verified || !authenticationInfo) {
-			return c.json({ success: false, error: 'Verification failed' }, 400);
-		}
-
-		await db
-			.update(authenticators)
-			.set({ counter: authenticationInfo.newCounter })
-			.where(eq(authenticators.id, authenticatorRecord.id));
-
-		// Clear challenge
-		await db
-			.delete(webauthnChallenges)
-			.where(eq(webauthnChallenges.userId, existingUser.id));
-
-		return c.json({ success: true });
 	} catch (err) {
-		return c.json({ success: false, error: (err as Error).message }, 400);
+		console.error('Verification error:', err);
+		return c.json({ error: 'Verification failed' }, 500);
 	}
+
+	if (!verification.verified) {
+		return c.json({ error: 'Verification failed' }, 400);
+	}
+
+	const {
+		credential: { id: credentialID, publicKey: credentialPublicKey },
+	} = verification.registrationInfo!;
+
+
+await db.insert(authenticators).values({
+	userId: user.id,
+	credentialId: verification.registrationInfo?.credential?.id,
+	credentialPublicKey,
+	counter: verification.registrationInfo?.credential.counter
 });
+
+	return c.json({ success: true });
+});
+
 
 app.get('/products', async (c) => {
 	const db = drizzle(c.env.DB);
@@ -366,7 +417,6 @@ app.get('/checkout', checkout);
 app.post('/paypal', createOrder);
 app.get('/paypal-auth', async (c) => {
 	const auth_test = await getPayPalAccessToken(c);
-	console.log(auth_test);
 	return c.text('success');
 });
 
@@ -448,7 +498,7 @@ app.post('/signin', async (c) => {
 		const iat = Math.floor(Date.now() / 1000);
 		const exp = iat + 60 * 60 * 24;
 		const token = await signJWT({
-			payload: { id: user.id, email: user.email},
+			payload: { id: user.id, email: user.email },
 			secret: c.env.JWT_SECRET,
 			iat,
 			exp,
@@ -460,7 +510,6 @@ app.post('/signin', async (c) => {
 			secure: true,
 			maxAge: 60 * 60 * 24,
 		});
-		console.log('token', token);
 		return c.json({ message: 'signin success' });
 	} catch (error) {
 		if (error instanceof ZodError) {
@@ -474,28 +523,135 @@ app.post('/signin', async (c) => {
 	}
 });
 
+app.get('/signout', async (c) => {
+	deleteCookie(c, 'token', {
+		path: '/',
+		secure: true,
+		httpOnly: true,
+	});
+
+	return c.json({ message: 'signout success' });
+});
+
 app.get('/profile', authMiddleware, async (c) => {
 	const user = c.get('jwtPayload') as { id: number; email: string };
-	console.log('user', user);
 	if (!user) {
 		return c.json({ error: 'Unauthorized' }, 401);
 	}
 
 	const db = drizzle(c.env.DB);
 	try {
-		const [userData] = await db.select().from(users).where(eq(users.id, user.id));
-	console.log('userData', userData);
+		const [userData] = await db
+			.select()
+			.from(users)
+			.where(eq(users.id, user.id));
 
-	if (!userData) {
-		return c.json({ error: 'User not found' }, 404);
-	}
+		if (!userData) {
+			return c.json({ error: 'User not found' }, 404);
+		}
 
-
-	return c.json(userData);
+		return c.json(userData);
 	} catch (error: any) {
 		console.error('Error fetching user data:', error);
-		return c.json({ error: 'Internal Server Error', details: error.message }, 500);
+		return c.json(
+			{ error: 'Internal Server Error', details: error.message },
+			500
+		);
 	}
+});
+app.post('/webauthn/auth/finish', async (c) => {
+	const db = drizzle(c.env.DB);
+	const body = await c.req.json();
+
+	const { userId, response } = body;
+	if (!userId || !response) {
+		return c.json({ error: 'Missing input' }, 400);
+	}
+
+	// Retrieve stored challenge for this user
+	const [challengeRow] = await db
+		.select()
+		.from(webauthnChallenges)
+		.where(eq(webauthnChallenges.userId, userId));
+
+	if (!challengeRow) {
+		return c.json({ error: 'No challenge found' }, 400);
+	}
+	const expectedChallenge = challengeRow.challenge;
+
+	// Get the authenticator for this user
+	const [authenticator] = await db
+		.select()
+		.from(authenticators)
+		.where(eq(authenticators.userId, userId))
+		.limit(1);
+
+	if (!authenticator) {
+		return c.json({ error: 'No authenticators found' }, 400);
+	}
+
+	const parsedCredential: AuthenticationResponseJSON = {
+		id: response.id,
+		rawId: response.rawId,
+		type: response.type,
+		response: {
+			clientDataJSON: atob(response.response.clientDataJSON),
+			authenticatorData: atob(response.response.authenticatorData),
+			signature: atob(response.response.signature),
+			userHandle: response.response.userHandle
+				? atob(response.response.userHandle)
+				: null,
+		},
+		clientExtensionResults: {},
+	};
+
+	let verification;
+	try {
+		verification = await verifyAuthenticationResponse({
+			response: parsedCredential,
+			expectedChallenge,
+			expectedOrigin: c.env.DOMAIN,
+			expectedRPID: c.env.RP_ID,
+			authenticator: {
+				credentialID: base64urlToUint8Array(authenticator.credentialId),
+				credentialPublicKey: authenticator.credentialPublicKey,
+				counter: authenticator.counter,
+			},
+		});
+	} catch (err) {
+		console.error('Auth verification failed:', err);
+		return c.json({ error: 'Verification failed' }, 401);
+	}
+
+	if (!verification.verified) {
+		return c.json({ error: 'Verification failed' }, 401);
+	}
+
+	// Update counter to prevent replay attacks
+	await db
+		.update(authenticators)
+		.set({ counter: verification.authenticationInfo.newCounter })
+		.where(eq(authenticators.credentialId, authenticator.credentialId));
+
+	// Issue session token
+	const iat = Math.floor(Date.now() / 1000);
+	const exp = iat + 60 * 60 * 24; // 1 day
+
+	const token = await signJWT({
+		payload: { id: userId },
+		secret: c.env.JWT_SECRET,
+		iat,
+		exp,
+	});
+
+	await setSignedCookie(c, 'token', token, c.env.JWT_SECRET, {
+		httpOnly: true,
+		path: '/',
+		secure: true,
+		maxAge: 60 * 60 * 24,
+	});
+
+	return c.json({ success: true });
 });
 
 export default app;
