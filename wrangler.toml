@@ -23,3 +23,6 @@ database_id = "ec1d6de0-2452-4506-8108-0aed31575e60"
 migrations_dir = "./drizzle/migrations"
 preview_database_id = "local-ecommerce-db"
 
+[env.production.vars]
+DOMAIN = "https://rc-store.benhalverson.dev"
+RP_ID = "rc-store.benhalverson.dev"
