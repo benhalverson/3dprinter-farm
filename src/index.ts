@@ -467,6 +467,7 @@ app.post('/signup', async (c) => {
 
 		await setSignedCookie(c, 'token', token, c.env.JWT_SECRET, {
 			httpOnly: true,
+			sameSite: 'None',
 			path: '/',
 			secure: true,
 			maxAge: 60 * 60 * 24, // 1 day
@@ -520,6 +521,7 @@ app.post('/signin', async (c) => {
 
 		await setSignedCookie(c, 'token', token, c.env.JWT_SECRET, {
 			httpOnly: true,
+			sameSite: 'None',
 			path: '/',
 			secure: true,
 			maxAge: 60 * 60 * 24,
@@ -665,6 +667,7 @@ app.post('/webauthn/auth/finish', async (c) => {
 
 	await setSignedCookie(c, 'token', token, c.env.JWT_SECRET, {
 		httpOnly: true,
+		sameSite: 'None',
 		path: '/',
 		secure: true,
 		maxAge: 60 * 60 * 24,
