@@ -81,7 +81,7 @@ const orderSchema = z
 app.use(logger());
 app.use(
 	cors({
-		origin: ['http://localhost:3000', 'http://localhost:4200'],
+		origin: ['http://localhost:3000', 'http://localhost:4200', 'https://3dprinter-web-api.benhalverson.workers.dev'],
 		credentials: true,
 		allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
 	})
