@@ -103,6 +103,7 @@ app.use(
 
 const authMiddleware = async (c: Context, next: Next) => {
 	const signedToken = await getSignedCookie(c, c.env.JWT_SECRET, 'token');
+	console.log('middleware auth', signedToken);
 
 	if (!signedToken) {
 		return c.json({ error: 'Unauthorized (no token)' }, 401);
@@ -428,6 +429,7 @@ app.get('/paypal-auth', async (c) => {
 });
 
 app.post('/signup', async (c) => {
+	console.log('signup', c.req.json());
 	const db = drizzle(c.env.DB);
 	try {
 		const { email, password } = signUpSchema.parse(await c.req.json());
@@ -462,6 +464,7 @@ app.post('/signup', async (c) => {
 			iat,
 			exp,
 		});
+		console.log('token', token);
 
 		await setSignedCookie(c, 'token', token, c.env.JWT_SECRET, {
 			httpOnly: true,
