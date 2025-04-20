@@ -275,7 +275,7 @@ app.post('/webauthn/register/finish', authMiddleware, async (c) => {
 			response: parsedCredential,
 			expectedChallenge: challengeRow.challenge,
 			expectedOrigin: c.env.DOMAIN,
-			// expectedRPID: c.env.RP_ID,
+			expectedRPID: c.env.RP_ID,
 			requireUserVerification: false,
 		});
 	} catch (err) {
