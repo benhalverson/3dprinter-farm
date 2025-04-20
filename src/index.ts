@@ -10,7 +10,10 @@ import { cancel, checkout, success } from './controllers/stripe';
 import { cors } from 'hono/cors';
 import { createOrder, getPayPalAccessToken } from './controllers/paypal';
 import { drizzle } from 'drizzle-orm/d1';
-import type { RegistrationCredential, RegistrationResponseJSON } from '@simplewebauthn/types';
+import type {
+	RegistrationCredential,
+	RegistrationResponseJSON,
+} from '@simplewebauthn/types';
 
 import {
 	ProductData,
@@ -34,7 +37,14 @@ import {
 	verifyAuthenticationResponse,
 	verifyRegistrationResponse,
 } from '@simplewebauthn/server';
-import { base64url, base64urlToUint8Array, bufferToBase64url, hashPassword, signJWT, verifyPassword } from './utils/crypto';
+import {
+	base64url,
+	base64urlToUint8Array,
+	bufferToBase64url,
+	hashPassword,
+	signJWT,
+	verifyPassword,
+} from './utils/crypto';
 import { deleteCookie, getSignedCookie, setSignedCookie } from 'hono/cookie';
 
 const app = new Hono<{
@@ -81,7 +91,11 @@ const orderSchema = z
 app.use(logger());
 app.use(
 	cors({
-		origin: ['http://localhost:3000', 'http://localhost:4200', 'https://3dprinter-web-api.benhalverson.workers.dev'],
+		origin: [
+			'http://localhost:3000',
+			'http://localhost:4200',
+			'https://rc-store.benhalverson.dev',
+		],
 		credentials: true,
 		allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
 	})
@@ -157,7 +171,6 @@ app.post('/webauthn/register/begin', authMiddleware, async (c) => {
 		// excludeCredentials,
 		authenticatorSelection: {
 			userVerification: 'preferred',
-
 		},
 	});
 
@@ -197,7 +210,6 @@ app.post('/webauthn/auth/begin', async (c) => {
 		})),
 	});
 
-
 	await db
 		.insert(webauthnChallenges)
 		.values({ userId: user.id, challenge: (await options).challenge })
@@ -208,7 +220,6 @@ app.post('/webauthn/auth/begin', async (c) => {
 
 	return c.json({ options, userId: user.id });
 });
-
 
 app.post('/webauthn/register/finish', authMiddleware, async (c) => {
 	const db = drizzle(c.env.DB);
@@ -251,9 +262,8 @@ app.post('/webauthn/register/finish', authMiddleware, async (c) => {
 			clientDataJSON: webauthnResponse.clientDataJSON, //base64urlToUint8Array(webauthnResponse.clientDataJSON),
 			attestationObject: webauthnResponse.attestationObject,
 		},
-		clientExtensionResults: {}
+		clientExtensionResults: {},
 	};
-
 
 	let verification;
 	try {
@@ -264,7 +274,6 @@ app.post('/webauthn/register/finish', authMiddleware, async (c) => {
 			// expectedRPID: c.env.RP_ID,
 			requireUserVerification: false,
 		});
-
 	} catch (err) {
 		console.error('Verification error:', err);
 		return c.json({ error: 'Verification failed' }, 500);
@@ -278,17 +287,15 @@ app.post('/webauthn/register/finish', authMiddleware, async (c) => {
 		credential: { id: credentialID, publicKey: credentialPublicKey },
 	} = verification.registrationInfo!;
 
-
-await db.insert(authenticators).values({
-	userId: user.id,
-	credentialId: verification.registrationInfo?.credential?.id,
-	credentialPublicKey,
-	counter: verification.registrationInfo?.credential.counter
-});
+	await db.insert(authenticators).values({
+		userId: user.id,
+		credentialId: verification.registrationInfo?.credential?.id,
+		credentialPublicKey,
+		counter: verification.registrationInfo?.credential.counter,
+	});
 
 	return c.json({ success: true });
 });
-
 
 app.get('/products', async (c) => {
 	const db = drizzle(c.env.DB);
