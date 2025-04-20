@@ -530,8 +530,10 @@ app.post('/signin', async (c) => {
 		return c.json({ message: 'signin success' });
 	} catch (error) {
 		if (error instanceof ZodError) {
+			console.log('Validation Error', error);
 			return c.json({ error: 'Validation error', details: error.errors }, 400);
 		}
+		console.log('General error', error);
 
 		return c.json(
 			{ error: 'Internal Server Error', details: (error as Error).message },
