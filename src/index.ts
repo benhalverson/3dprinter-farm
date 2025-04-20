@@ -95,6 +95,7 @@ app.use(
 			'http://localhost:3000',
 			'http://localhost:4200',
 			'https://rc-store.benhalverson.dev',
+			'https://rc-admin.pages.dev/',
 		],
 		credentials: true,
 		allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
@@ -273,15 +274,15 @@ app.post('/webauthn/register/finish', authMiddleware, async (c) => {
 	try {
 		console.log('verifyRegistrationResponse inputs:', {
 			challenge: challengeRow.challenge,
-			expectedOrigin: 'https://rc-store.benhalverson.dev',
-			expectedRPID: 'rc-store.benhalverson.dev',
+			// expectedOrigin: 'https://rc-store.benhalverson.dev',
+			// expectedRPID: 'rc-store.benhalverson.dev',
 		});
 		verification = await verifyRegistrationResponse({
 			response: parsedCredential,
 			expectedChallenge: challengeRow.challenge,
 			expectedOrigin: 'https://rc-store.benhalverson.dev', // c.env.DOMAIN,
 			expectedRPID: 'rc-store.benhalverson.dev', // c.env.RP_ID,
-			requireUserVerification: false,
+			requireUserVerification: true,
 		});
 	} catch (err) {
 		console.log('Verification error:', err);
