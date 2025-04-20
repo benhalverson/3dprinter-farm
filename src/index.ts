@@ -95,7 +95,7 @@ app.use(
 			'http://localhost:3000',
 			'http://localhost:4200',
 			'https://rc-store.benhalverson.dev',
-			'https://rc-admin.pages.dev/',
+			'https://rc-admin.pages.dev',
 		],
 		credentials: true,
 		allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
