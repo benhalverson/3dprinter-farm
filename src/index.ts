@@ -279,8 +279,8 @@ app.post('/webauthn/register/finish', authMiddleware, async (c) => {
 			requireUserVerification: false,
 		});
 	} catch (err) {
-		console.error('Verification error:', err);
-		return c.json({ error: 'Verification failed' }, 500);
+		console.log('Verification error:', err);
+		return c.json({ error: 'Verification failed', details: err }, 500);
 	}
 
 	if (!verification.verified) {
