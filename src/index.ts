@@ -464,7 +464,6 @@ app.post('/signup', async (c) => {
 			iat,
 			exp,
 		});
-		console.log('token', token);
 
 		await setSignedCookie(c, 'token', token, c.env.JWT_SECRET, {
 			httpOnly: true,
@@ -473,6 +472,9 @@ app.post('/signup', async (c) => {
 			maxAge: 60 * 60 * 24, // 1 day
 		});
 
+		console.log('token', token);
+		console.log('context', c);
+		console.log('JWT_SECRET', c.env.JWT_SECRET);
 		return c.json({
 			success: true,
 			message: 'User created successfully',
@@ -505,6 +507,8 @@ app.post('/signin', async (c) => {
 			return c.json({ error: 'Invalid credentials' }, 401);
 		}
 
+		console.log('isValid password', isValid);
+
 		const iat = Math.floor(Date.now() / 1000);
 		const exp = iat + 60 * 60 * 24;
 		const token = await signJWT({
@@ -520,6 +524,9 @@ app.post('/signin', async (c) => {
 			secure: true,
 			maxAge: 60 * 60 * 24,
 		});
+		console.log('token', token);
+		console.log('context', c);
+		console.log('JWT_SECRET', c.env.JWT_SECRET);
 		return c.json({ message: 'signin success' });
 	} catch (error) {
 		if (error instanceof ZodError) {
