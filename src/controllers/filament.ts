@@ -20,7 +20,6 @@ export const colors = async (c: Context) => {
 		console.log(`Cached Hit for key ${normalizedQuery}`);
 		return c.json(JSON.parse(cachedResponse));
 	}
-	console.log(`Cache Miss for key ${normalizedQuery}`);
 
 	if (query) {
 		const validationResult = FilamentTypeSchema.safeParse(query);
