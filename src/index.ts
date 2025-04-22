@@ -55,7 +55,7 @@ app.get('/list', authMiddleware, list);
 app.route('/checkout', paymentsRouter);
 app.route('/auth', auth);
 
-app.route('/product', product);
+app.route('/', product);
 app.route('/', passKeyAuth);
 app.route('/', userRouter)
 
