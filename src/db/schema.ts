@@ -142,3 +142,68 @@ export const signInSchema = z.object({
 	email: z.string().email(),
 	password: z.string()
 })
+
+export const idSchema = z.object({
+	id: z.number().int(),
+});
+
+
+export const orderSchema = z
+	.object({
+		email: z.string().email(), // Assuming email should be a valid email string
+		phone: z.string(),
+		name: z.string(),
+		orderNumber: z.string(),
+		filename: z.string(),
+		fileURL: z.string().url(), // Assuming fileURL should be a valid URL
+		bill_to_street_1: z.string(),
+		bill_to_street_2: z.string(),
+		bill_to_street_3: z.string(),
+		bill_to_city: z.string(),
+		bill_to_state: z.string(),
+		bill_to_zip: z.string(),
+		bill_to_country_as_iso: z.string(),
+		bill_to_is_US_residential: z.string(),
+		ship_to_name: z.string(),
+		ship_to_street_1: z.string(),
+		ship_to_street_2: z.string(),
+		ship_to_street_3: z.string(),
+		ship_to_city: z.string(),
+		ship_to_state: z.string(),
+		ship_to_zip: z.string(),
+		ship_to_country_as_iso: z.string(),
+		ship_to_is_US_residential: z.string(),
+		order_item_name: z.string(),
+		order_quantity: z.string(),
+		order_image_url: z.string().url(), // Assuming order_image_url should be a valid URL
+		order_sku: z.string(),
+		order_item_color: z.string(),
+	})
+	.strict();
+
+// Schema for adding a new product to the products table
+export const addProductSchema = z
+	.object({
+		id: z.number().optional(),
+		name: z.string(),
+		description: z.string(),
+		image: z.string(),
+		stl: z.string(),
+		price: z.number(),
+		filamentType: z.string(),
+		color: z.string(),
+		skuNumber: z.string(),
+	})
+	.omit({ id: true, skuNumber: true });
+
+export const updateProductSchema = z.object({
+	id: z.number(),
+	name: z.string(),
+	description: z.string(),
+	image: z.string(),
+	stl: z.string(),
+	price: z.number(),
+	filamentType: z.string(),
+	color: z.string(),
+	skuNumber: z.string(),
+});
