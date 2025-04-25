@@ -9,86 +9,78 @@ import { number, ZodError } from 'zod';
 import { eq } from 'drizzle-orm';
 import { rateLimit } from '../utils/rateLimit';
 
-
 const auth = new Hono<{ Bindings: Bindings }>();
 
-auth.post(
-	'/signup',
-	rateLimit({
-		windowSeconds: 60,
-		maxRequests: 3,
-		keyPrefix: 'signup',
-	}),
-	async (c) => {
-		const db = drizzle(c.env.DB);
-		try {
-			const { email, password } = signUpSchema.parse(await c.req.json());
-			const [existingUser] = await db
-				.select()
-				.from(users)
-				.where(eq(users.email, email));
-			if (existingUser) {
-				return c.json({ error: 'User already exists' }, 409);
+auth
+	.post(
+		'/signup',
+		rateLimit({
+			windowSeconds: 60,
+			maxRequests: 3,
+			keyPrefix: 'signup',
+		}),
+		async (c) => {
+			const db = drizzle(c.env.DB);
+			try {
+				const { email, password } = signUpSchema.parse(await c.req.json());
+				const [existingUser] = await db
+					.select()
+					.from(users)
+					.where(eq(users.email, email));
+				if (existingUser) {
+					return c.json({ error: 'User already exists' }, 409);
+				}
+
+				const { salt, hash } = await hashPassword(password);
+				const [insertedUser] = await db
+					.insert(users)
+					.values({
+						email,
+						passwordHash: hash,
+						salt,
+						firstName: '',
+						lastName: '',
+						shippingAddress: '',
+						billingAddress: '',
+					})
+					.returning();
+
+				const iat = Math.floor(Date.now() / 1000);
+				const exp = iat + 60 * 60 * 24; // Token expiration time (1 day)
+
+				const token = await signJWT({
+					payload: { id: insertedUser.id, email: insertedUser.email },
+					secret: c.env.JWT_SECRET,
+					iat,
+					exp,
+				});
+
+				await setSignedCookie(c, 'token', token, c.env.JWT_SECRET, {
+					httpOnly: true,
+					sameSite: 'None',
+					path: '/',
+					secure: true,
+					maxAge: 60 * 60 * 24, // 1 day
+				});
+
+				return c.json({
+					success: true,
+					message: 'User created successfully',
+					token,
+				});
+			} catch (error) {
+				if (error instanceof ZodError) {
+					return c.json(
+						{ error: 'Validation error', details: error.errors },
+						400
+					);
+				}
+				console.error('Error during signup:', error);
+				return c.json({ error: 'Internal Server Error' }, 500);
 			}
-
-			const { salt, hash } = await hashPassword(password);
-			const [insertedUser] = await db
-				.insert(users)
-				.values({
-					email,
-					passwordHash: hash,
-					salt,
-					firstName: '',
-					lastName: '',
-					shippingAddress: '',
-					billingAddress: '',
-				})
-				.returning();
-
-			const iat = Math.floor(Date.now() / 1000);
-			const exp = iat + 60 * 60 * 24; // Token expiration time (1 day)
-
-			const token = await signJWT({
-				payload: { id: insertedUser.id, email: insertedUser.email },
-				secret: c.env.JWT_SECRET,
-				iat,
-				exp,
-			});
-
-			await setSignedCookie(c, 'token', token, c.env.JWT_SECRET, {
-				httpOnly: true,
-				sameSite: 'None',
-				path: '/',
-				secure: true,
-				maxAge: 60 * 60 * 24, // 1 day
-			});
-
-			return c.json({
-				success: true,
-				message: 'User created successfully',
-				token,
-			});
-		} catch (error) {
-			if (error instanceof ZodError) {
-				return c.json(
-					{ error: 'Validation error', details: error.errors },
-					400
-				);
-			}
-			console.error('Error during signup:', error);
-			return c.json({ error: 'Internal Server Error' }, 500);
 		}
-	}
-);
-
-auth.post(
-	'/signin',
-	// rateLimit({
-	// 	windowSeconds: 60,
-	// 	maxRequests: 3,
-	// 	keyPrefix: 'signin',
-	// }),
-	async (c) => {
+	)
+	.post('/signin', async (c) => {
 		const db = drizzle(c.env.DB);
 		try {
 			const { email, password } = signInSchema.parse(await c.req.json());
@@ -97,7 +89,7 @@ auth.post(
 				.from(users)
 				.where(eq(users.email, email));
 			if (!user) {
-				return c.json({ error: 'User not found' }, 404);
+				return c.json({ error: 'Invalid Credentials' }, 401);
 			}
 
 			const isValid = await verifyPassword(
@@ -108,7 +100,6 @@ auth.post(
 			if (!isValid) {
 				return c.json({ error: 'Invalid credentials' }, 401);
 			}
-
 
 			const iat = Math.floor(Date.now() / 1000);
 			const exp = iat + 60 * 60 * 24;
@@ -140,17 +131,15 @@ auth.post(
 				500
 			);
 		}
-	}
-);
+	})
+	.get('/signout', async (c) => {
+		deleteCookie(c, 'token', {
+			path: '/',
+			secure: true,
+			httpOnly: true,
+		});
 
-auth.get('/signout', async (c) => {
-	deleteCookie(c, 'token', {
-		path: '/',
-		secure: true,
-		httpOnly: true,
+		return c.json({ message: 'signout success' });
 	});
-
-	return c.json({ message: 'signout success' });
-});
 
 export default auth;
