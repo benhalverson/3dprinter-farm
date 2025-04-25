@@ -39,8 +39,6 @@ passKeyAuth.delete('/webauthn/authenticators/:id', authMiddleware, async (c) => 
 passKeyAuth.post('/webauthn/register/begin', authMiddleware, async (c) => {
 	const db = drizzle(c.env.DB);
 	const user = c.get('jwtPayload') as { id: number; email: string };
-	console.log('RP_ID', c.env.RP_ID);
-	console.log('RP_NAME', c.env.RP_NAME);
 
 	const [existingUser] = await db
 		.select()
@@ -70,7 +68,6 @@ passKeyAuth.post('/webauthn/register/begin', authMiddleware, async (c) => {
 		},
 	});
 
-	console.log('options', options);
 	await db
 		.insert(webauthnChallenges)
 		.values({ userId: user.id, challenge: (await options).challenge })
@@ -164,11 +161,6 @@ passKeyAuth.post('/webauthn/register/finish', authMiddleware, async (c) => {
 
 	let verification;
 	try {
-		console.log('verifyRegistrationResponse inputs:', {
-			challenge: challengeRow.challenge,
-			// expectedOrigin: 'https://rc-store.benhalverson.dev',
-			// expectedRPID: 'rc-store.benhalverson.dev',
-		});
 		verification = await verifyRegistrationResponse({
 			response: parsedCredential,
 			expectedChallenge: challengeRow.challenge,
@@ -177,7 +169,6 @@ passKeyAuth.post('/webauthn/register/finish', authMiddleware, async (c) => {
 			requireUserVerification: false,
 		});
 	} catch (err) {
-		console.log('Verification error:', err);
 		return c.json({ error: 'Verification failed', details: err }, 500);
 	}
 

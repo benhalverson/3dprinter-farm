@@ -20,7 +20,6 @@ auth.post(
 		keyPrefix: 'signup',
 	}),
 	async (c) => {
-		console.log('signup', c.req.json());
 		const db = drizzle(c.env.DB);
 		try {
 			const { email, password } = signUpSchema.parse(await c.req.json());
@@ -130,13 +129,11 @@ auth.post(
 			return c.json({ message: 'signin success' });
 		} catch (error) {
 			if (error instanceof ZodError) {
-				console.log('Validation Error', error);
 				return c.json(
 					{ error: 'Validation error', details: error.errors },
 					400
 				);
 			}
-			console.log('General error', error);
 
 			return c.json(
 				{ error: 'Internal Server Error', details: (error as Error).message },

@@ -83,7 +83,6 @@ export const base64url = (input: Uint8Array | string): string => {
 		typeof input === 'string'
 			? btoa(input)
 			: btoa(String.fromCharCode(...input));
-	console.log('base64 function', input);
 	return str.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 };
 
@@ -164,7 +163,6 @@ export const base64urlToUint8Array = (base64url: string): Uint8Array => {
 };
 
 export const bufferToBase64url = (buffer: Uint8Array | Buffer): string => {
-	console.log('bufferToBase64url', buffer.toString('base64'));
 	return Buffer.from(buffer)
 		.toString('base64')
 		.replace(/\+/g, '-')

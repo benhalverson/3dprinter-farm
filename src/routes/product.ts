@@ -23,9 +23,7 @@ product
 		if (!user) {
 			return c.json({ error: 'Unauthorized' }, 401);
 		}
-		console.log('User ID:', user.id);
 		const data = await c.req.json();
-		console.log('Received data:', data);
 		const parsedData: ProductData = addProductSchema.parse(data);
 		const skuNumber = generateSkuNumber(parsedData.name, parsedData.color);
 
