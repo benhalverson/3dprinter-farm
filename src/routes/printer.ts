@@ -2,7 +2,7 @@ import { Context, Hono } from 'hono';
 import {
 	Bindings,
 	ErrorResponse,
-	FilamentColorsReponse,
+	FilamentColorsResponse,
 	ListResponse,
 	OrderData,
 	OrderResponse,
@@ -122,7 +122,7 @@ printer
 			return c.json({ error: 'Failed to get colors', details: error }, 500);
 		}
 
-		const result = (await response.json()) as FilamentColorsReponse;
+		const result = (await response.json()) as FilamentColorsResponse;
 
 		const filteredFilaments = result.filaments
 			.filter((filament) => !query || filament.profile === query) // Return all if no query, or filter by query

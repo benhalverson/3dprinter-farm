@@ -41,6 +41,7 @@ export interface Error {
 
 
 export interface FilamentColorsResponse {
+	filaments: Filament[];
 }
 
 export interface Filament {
