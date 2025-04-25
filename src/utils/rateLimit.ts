@@ -12,6 +12,8 @@ export const rateLimit = (options: {
 		const kv = c.env.RATE_LIMIT_KV as KVNamespace;
 		const currentCount = await kv.get(key);
 		const count = currentCount ? parseInt(currentCount) : 0;
+		console.log('currentCount', currentCount);
+		console.log('key', key);
 
 		if (count >= options.maxRequests) {
 			return c.json({ error: 'Too many requests' }, 429);
