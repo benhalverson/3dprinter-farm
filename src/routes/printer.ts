@@ -46,7 +46,7 @@ printer
 				httpMetadata: { contentType: file.type },
 			});
 
-			return c.json({ messsage: 'File uploaded', key });
+			return c.json({ message: 'File uploaded', key });
 		} catch (error) {
 			console.error('error', error);
 			return c.json({ error: 'Failed to upload file' }, 500);
