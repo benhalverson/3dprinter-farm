@@ -9,7 +9,7 @@ import {
 	SliceResponse,
 } from '../types';
 import { BASE_URL } from '../constants';
-import { authMiddleware } from '../utils/authMiddleware';
+import authMiddleware from '../utils/authMiddleware';
 import { orderSchema } from '../db/schema';
 import factory from '../factory';
 

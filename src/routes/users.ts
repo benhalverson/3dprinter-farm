@@ -1,5 +1,5 @@
 import { eq } from 'drizzle-orm';
-import { authMiddleware } from '../utils/authMiddleware';
+import authMiddleware from '../utils/authMiddleware';
 import { users } from '../db/schema';
 import factory from '../factory';
 

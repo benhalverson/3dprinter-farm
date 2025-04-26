@@ -3,7 +3,7 @@ import { generateAuthenticationOptions, generateRegistrationOptions, verifyAuthe
 import { drizzle } from 'drizzle-orm/d1';
 import { eq } from 'drizzle-orm';
 import { setSignedCookie } from 'hono/cookie';
-import { authMiddleware } from '../utils/authMiddleware';
+import authMiddleware from '../utils/authMiddleware';
 import { authenticators, users, webauthnChallenges } from '../db/schema';
 import { base64url, base64urlToUint8Array, signJWT } from '../utils/crypto';
 import factory from '../factory';

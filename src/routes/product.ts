@@ -1,6 +1,6 @@
 import { ZodError } from 'zod';
 import { eq } from 'drizzle-orm';
-import { authMiddleware } from '../utils/authMiddleware';
+import authMiddleware from '../utils/authMiddleware';
 import {
 	addProductSchema,
 	idSchema,
@@ -12,6 +12,7 @@ import { generateSkuNumber } from '../utils/generateSkuNumber';
 import { BASE_URL } from '../constants';
 import { calculateMarkupPrice } from '../utils/calculateMarkupPrice';
 import factory from '../factory';
+
 
 const product = factory.createApp()
 	.get('/products', async (c) => {

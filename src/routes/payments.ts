@@ -1,7 +1,7 @@
 import { Context } from 'hono';
 import Stripe from 'stripe';
 import { getPayPalAccessToken } from '../utils/payPalAccess';
-import { authMiddleware } from '../utils/authMiddleware';
+import authMiddleware from '../utils/authMiddleware';
 import factory from '../factory';
 
 const paymentsRouter = factory.createApp()
@@ -23,7 +23,7 @@ const paymentsRouter = factory.createApp()
 			});
 
 			return c.json(session);
-		} 
+		}
 		catch (error) {
 			return c.json({ status: 'Error', error });
 		}
