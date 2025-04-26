@@ -4,7 +4,6 @@ export const getPayPalAccessToken = async (c: Context) => {
 	const auth = Buffer.from(
 		`${c.env.PAYPAL_CLIENT_ID}:${c.env.PAYPAL_SECRET}`
 	).toString('base64');
-	console.log('auth', auth);
 
 	const payload = {
 		grant_type: 'client_credentials',

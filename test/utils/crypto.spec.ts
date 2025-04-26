@@ -1,7 +1,10 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeAll, vi } from 'vitest';
 import { hashPassword, verifyPassword, signJWT } from '../../src/utils/crypto';
 
 describe('Password hashing and vertification', () => {
+	beforeAll(() => {
+  vi.unmock('../../src/utils/crypto')
+})
 	const password = 'testPassword';
 
 	it('should return base64 encoded salt and has', async () => {
