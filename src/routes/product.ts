@@ -98,10 +98,13 @@ product
 					price: parsedData.price,
 					filamentType: parsedData.filamentType,
 					color: parsedData.color,
+					image: parsedData.image,
+					skuNumber: parsedData.skuNumber,
+					stl: parsedData.stl,
 				})
 				.where(eq(productsTable.id, parsedData.id));
 
-			if (updateResult.success) {
+			if (updateResult) {
 				return c.json({
 					success: true,
 					message: 'Product updated successfully',

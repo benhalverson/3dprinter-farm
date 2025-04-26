@@ -116,6 +116,7 @@ describe('Product Routes', () => {
 				name: 'Bad Product',
 				description: 'desc',
 				stl: 'url/to.stl',
+				image: 'url/to/image.jpg',
 				price: 15,
 				filamentType: 'PLA',
 				color: '#ffffff',
@@ -146,6 +147,8 @@ describe('Product Routes', () => {
 				image: 'url/to/image.jpg',
 				filamentType: 'PLA',
 				color: '#000000',
+				stl: 'url/to/updated.stl',
+				skuNumber: 'SKU123',
 			}),
 		});
 
