@@ -18,8 +18,16 @@ const product = new Hono<{
 	Bindings: Bindings;
 }>();
 
+	product.get('/products', async (c) => {
+		const db = drizzle(c.env.DB);
+		const response = await db.select().from(productsTable).all();
+		return c.json(response);
+	});
+
+product.use('/add-product', authMiddleware);
+product.use('/update-product', authMiddleware);
+
 product
-	.use('*', authMiddleware)
 	.post('/add-product', async (c) => {
 		const user = c.get('jwtPayload') as { id: number; email: string };
 		if (!user) {
@@ -99,8 +107,6 @@ product
 					filamentType: parsedData.filamentType,
 					color: parsedData.color,
 					image: parsedData.image,
-					skuNumber: parsedData.skuNumber,
-					stl: parsedData.stl,
 				})
 				.where(eq(productsTable.id, parsedData.id));
 
@@ -122,10 +128,5 @@ product
 			return c.json({ error: 'Internal Server Error' }, 500);
 		}
 	})
-	.get('/products', async (c) => {
-		const db = drizzle(c.env.DB);
-		const response = await db.select().from(productsTable).all();
-		return c.json(response);
-	});
 
 export default product;
