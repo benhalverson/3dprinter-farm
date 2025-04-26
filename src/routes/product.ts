@@ -14,10 +14,12 @@ import { calculateMarkupPrice } from '../utils/calculateMarkupPrice';
 import { drizzle } from 'drizzle-orm/d1';
 import { eq } from 'drizzle-orm';
 import { ZodError } from 'zod';
-const product = new Hono<{ Bindings: Bindings }>();
+const product = new Hono<{
+	Bindings: Bindings;
+}>();
 
-product.use('*', authMiddleware);
 product
+	.use('*', authMiddleware)
 	.post('/add-product', async (c) => {
 		const user = c.get('jwtPayload') as { id: number; email: string };
 		if (!user) {
