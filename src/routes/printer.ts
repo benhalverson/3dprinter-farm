@@ -15,7 +15,9 @@ import { orderSchema } from '../db/schema';
 
 const printer = new Hono<{ Bindings: Bindings }>();
 
-printer.use('*', authMiddleware);
+printer.use('/list', authMiddleware);
+printer.use('/estimate', authMiddleware);
+printer.use('/upload', authMiddleware);
 printer
 	.get('/list', async (c: Context) => {
 		const { BUCKET } = c.env;
