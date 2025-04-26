@@ -1,5 +1,5 @@
-import { Hono } from 'hono';
-import { Bindings } from '../types';
+import { ZodError } from 'zod';
+import { eq } from 'drizzle-orm';
 import { authMiddleware } from '../utils/authMiddleware';
 import {
 	addProductSchema,
@@ -11,28 +11,18 @@ import {
 import { generateSkuNumber } from '../utils/generateSkuNumber';
 import { BASE_URL } from '../constants';
 import { calculateMarkupPrice } from '../utils/calculateMarkupPrice';
-import { drizzle } from 'drizzle-orm/d1';
-import { eq } from 'drizzle-orm';
-import { ZodError } from 'zod';
-const product = new Hono<{
-	Bindings: Bindings;
-}>();
+import factory from '../factory';
 
-	product.get('/products', async (c) => {
-		const db = drizzle(c.env.DB);
-		const response = await db.select().from(productsTable).all();
+const product = factory.createApp()
+	.get('/products', async (c) => {
+		const response = await c.var.db.select().from(productsTable).all();
 		return c.json(response);
-	});
-
-product.use('/add-product', authMiddleware);
-product.use('/update-product', authMiddleware);
-
-product
+	})
+	.use('/add-product', authMiddleware)
+	.use('/update-product', authMiddleware)
 	.post('/add-product', async (c) => {
 		const user = c.get('jwtPayload') as { id: number; email: string };
-		if (!user) {
-			return c.json({ error: 'Unauthorized' }, 401);
-		}
+		if (!user) return c.json({ error: 'Unauthorized' }, 401);
 		const data = await c.req.json();
 		const parsedData: ProductData = addProductSchema.parse(data);
 		const skuNumber = generateSkuNumber(parsedData.name, parsedData.color);
@@ -48,10 +38,7 @@ product
 
 		if (!slicingResponse.ok) {
 			const error = (await slicingResponse.json()) as Error;
-			return c.json(
-				{ error: 'Failed to slice file', details: error.message },
-				500
-			);
+			return c.json({ error: 'Failed to slice file', details: error.message }, 500);
 		}
 
 		const slicingResult = (await slicingResponse.json()) as {
@@ -66,23 +53,20 @@ product
 			skuNumber: skuNumber,
 		};
 		try {
-			const db = drizzle(c.env.DB);
-			const response = await db
+			const response = await c.var.db
 				.insert(productsTable)
 				.values(productDataToInsert)
 				.returning();
 			return c.json(response);
 		} catch (error) {
 			console.error('Error adding product', error);
-
 			return c.json({ error: 'Failed to add product' }, 500);
 		}
 	})
 	.get('/product/:id', async (c) => {
 		const idParam = c.req.param('id');
 		const parsedData = idSchema.parse({ id: Number(idParam) });
-		const db = drizzle(c.env.DB);
-		const response = await db
+		const response = await c.var.db
 			.select()
 			.from(productsTable)
 			.where(eq(productsTable.id, parsedData.id));
@@ -96,9 +80,7 @@ product
 		try {
 			const body = await c.req.json();
 			const parsedData = updateProductSchema.parse(body);
-			const db = drizzle(c.env.DB);
-
-			const updateResult = await db
+			const updateResult = await c.var.db
 				.update(productsTable)
 				.set({
 					name: parsedData.name,

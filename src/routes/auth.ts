@@ -1,17 +1,12 @@
-import { Hono } from 'hono';
-import type { MiddlewareHandler } from 'hono';
-import { Bindings } from '../types';
-import { drizzle } from 'drizzle-orm/d1';
+import { eq } from 'drizzle-orm';
+import { deleteCookie, setSignedCookie } from 'hono/cookie';
+import { ZodError } from 'zod';
 import { signInSchema, signUpSchema, users } from '../db/schema';
 import { hashPassword, signJWT, verifyPassword } from '../utils/crypto';
-import { deleteCookie, setSignedCookie } from 'hono/cookie';
-import { number, ZodError } from 'zod';
-import { eq } from 'drizzle-orm';
 import { rateLimit } from '../utils/rateLimit';
+import factory from '../factory';
 
-const auth = new Hono<{ Bindings: Bindings }>();
-
-auth
+const auth = factory.createApp()
 	.post(
 		'/signup',
 		rateLimit({
@@ -20,7 +15,7 @@ auth
 			keyPrefix: 'signup',
 		}),
 		async (c) => {
-			const db = drizzle(c.env.DB);
+			const db = c.var.db
 			try {
 				const { email, password } = signUpSchema.parse(await c.req.json());
 				const [existingUser] = await db
@@ -81,10 +76,9 @@ auth
 		}
 	)
 	.post('/signin', async (c) => {
-		const db = drizzle(c.env.DB);
 		try {
 			const { email, password } = signInSchema.parse(await c.req.json());
-			const [user] = await db
+			const [user] = await c.var.db
 				.select()
 				.from(users)
 				.where(eq(users.email, email));
