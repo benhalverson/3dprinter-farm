@@ -2,7 +2,7 @@ import { getSignedCookie } from 'hono/cookie';
 import { verify } from 'hono/jwt';
 import factory from '../factory';
 
-const authMiddleware = factory.createMiddleware(async (c, next) => {
+export const authMiddleware = factory.createMiddleware(async (c, next) => {
 	const signedToken = await getSignedCookie(c, c.env.JWT_SECRET, 'token');
 
 	if (!signedToken) {
@@ -18,4 +18,3 @@ const authMiddleware = factory.createMiddleware(async (c, next) => {
 	}
 });
 
-export default authMiddleware;

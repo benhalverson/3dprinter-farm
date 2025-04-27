@@ -2,7 +2,7 @@ import { logger } from 'hono/logger';
 import { cors } from 'hono/cors';
 import { drizzle } from 'drizzle-orm/d1';
 import * as schema from './db/schema';
-import authMiddleware from './utils/authMiddleware';
+import { authMiddleware } from './utils/authMiddleware';
 import auth from './routes/auth';
 import product from './routes/product';
 import passKeyAuth from './routes/passKeyAuth';
