@@ -6,8 +6,6 @@ import { mockAuth } from '../mocks/auth';
 import { mockInsert, mockDrizzle, mockWhere, mockAll } from '../mocks/drizzle';
 import { mockGlobalFetch } from '../mocks/fetch';
 import type { Bindings } from '../../src/types';
-import { AuthenticationCredential } from '@simplewebauthn/types';
-
 declare global {
 	var env: Bindings;
 }
