@@ -3,9 +3,10 @@ import { describe, test, expect, beforeEach, vi } from 'vitest';
 import app from '../../src/index';
 import { mockEnv } from '../mocks/env';
 import { mockAuth } from '../mocks/auth';
-import { mockDrizzle, mockWhere, mockAll } from '../mocks/drizzle';
+import { mockInsert, mockDrizzle, mockWhere, mockAll } from '../mocks/drizzle';
 import { mockGlobalFetch } from '../mocks/fetch';
 import type { Bindings } from '../../src/types';
+import { AuthenticationCredential } from '@simplewebauthn/types';
 
 declare global {
 	var env: Bindings;
@@ -31,6 +32,16 @@ vi.mock('@simplewebauthn/server', async () => {
 			challenge: 'fake-challenge',
 			allowCredentials: [],
 		})),
+		verifyRegistrationResponse: vi.fn(async () => ({
+			verified: true,
+			registrationInfo: {
+				credential: {
+					id: 'credential-id-abc',
+					publicKey: 'fake-public-key',
+					counter: 0,
+				},
+			},
+		})),
 	};
 });
 
@@ -42,17 +53,15 @@ const env = mockEnv();
 globalThis.env = env;
 
 describe('PassKey Endpoint', () => {
-	const client = testClient(app, { env }); // 👈 pass env once globally
+	const client = testClient(app, { env });
 
 	beforeEach(() => {
 		vi.clearAllMocks();
 
-		// First db call: select user
 		mockWhere
 			.mockResolvedValueOnce([{ id: 1, email: 'test@example.com' }])
 			.mockResolvedValueOnce([{ credentialId: 'credential-id-abc' }]);
 
-		// Second db call: select authenticators
 		mockAll.mockResolvedValueOnce([{ credentialId: 'credential-id-abc' }]);
 	});
 
@@ -73,6 +82,7 @@ describe('PassKey Endpoint', () => {
 		expect(data).toHaveProperty('rp');
 		expect(data.rp.name).toBe(env.RP_NAME);
 	});
+
 	test('should authenticate a passkey', async () => {
 		const res = await client.webauthn.auth.begin.$post({
 			headers: {
@@ -85,13 +95,36 @@ describe('PassKey Endpoint', () => {
 
 		expect(res.status).toBe(200);
 
-		const data = await res.json();
-		console.log('data', data);
+		const data = (await res.json()) as AuthenticationOptionsResponse;
 
 		expect(data).toHaveProperty('options');
 		expect(data.options).toHaveProperty('challenge');
 		expect(Array.isArray(data.options.allowCredentials)).toBe(true);
 		expect(data).toHaveProperty('userId');
+	});
+
+	test('should finish registration successfully', async () => {
+		mockWhere.mockResolvedValueOnce([{ challenge: 'fake-challenge' }]);
+		mockInsert.mockResolvedValueOnce(undefined);
+
+		const res = await client.webauthn.register.finish.$post({
+			headers: {
+				Cookie: `token=mocked.jwt.token`,
+			},
+			json: {
+				id: 'Y3JlZGVudGlhbC1pZC1hYmM',
+				rawId: 'Y3JlZGVudGlhbC1yYXctaWQtYWJj',
+				response: {
+					clientDataJSON: 'client-data-json',
+					attestationObject: 'attestation-object',
+				},
+			},
+		});
+
+		expect(res.status).toBe(200);
+
+		const data = (await res.json()) as SuccessResponse;
+		expect(data).toEqual({ success: true });
 	});
 });
 
@@ -107,4 +140,16 @@ interface RegistrationOptionsResponse {
 	};
 	challenge: string;
 	pubKeyCredParams: any[];
+}
+
+interface AuthenticationOptionsResponse {
+	options: {
+		challenge: string;
+		allowCredentials: { id: string; type: 'public-key' }[];
+	};
+	userId: number;
+}
+
+interface SuccessResponse {
+	success: true;
 }

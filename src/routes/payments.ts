@@ -23,7 +23,7 @@ const paymentsRouter = factory.createApp()
 			});
 
 			return c.json(session);
-		} 
+		}
 		catch (error) {
 			return c.json({ status: 'Error', error });
 		}
@@ -63,7 +63,6 @@ const paymentsRouter = factory.createApp()
 		)
 
 	const data = (await response.json()) as any;
-	console.log(data);
 	return data;
 	})
 ;
