@@ -1,49 +1,66 @@
 import { testClient } from 'hono/testing';
-import { describe, test, expect, beforeEach, vi } from 'vitest'; // Or your preferred test runner
+import { describe, test, expect, beforeEach, vi } from 'vitest';
 import app from '../../src/index';
-
-import type { Bindings } from '../../src/types';
 import { mockEnv } from '../mocks/env';
+import { mockAuth } from '../mocks/auth';
+import { mockDrizzle, mockWhere, mockAll } from '../mocks/drizzle';
+import { mockGlobalFetch } from '../mocks/fetch';
+import type { Bindings } from '../../src/types';
 
 declare global {
-	var env: Bindings;
+  var env: Bindings;
 }
 
+vi.mock('@simplewebauthn/server', async () => {
+  const actual = await vi.importActual<typeof import('@simplewebauthn/server')>('@simplewebauthn/server');
+  return {
+    ...actual,
+    generateRegistrationOptions: vi.fn(async () => ({
+      rp: { id: 'example.com', name: 'ExampleApp' },
+      user: { id: 'user-id', name: 'test@example.com', displayName: 'Test User' },
+      challenge: 'fake-challenge',
+      pubKeyCredParams: [],
+    })),
+    generateAuthenticationOptions: vi.fn(async () => ({
+      challenge: 'fake-challenge',
+      allowCredentials: [],
+    })),
+  };
+});
+
+
+mockAuth();
+mockDrizzle();
+mockGlobalFetch();
+
 const env = mockEnv();
-
-env.DB = {'test': 'test'} as any;
-env.JWT_SECRET = 'secret';
-env.RP_NAME = 'RP_NAME';
-env.RP_ID = 'RP_ID';
-
 globalThis.env = env;
 
 describe('PassKey Endpoint', () => {
-	// Create the test client from the app instance
-	const client = testClient(app)
-	console.log('env', env);
-	console.log('globalThis.env', globalThis.env);
+  const client = testClient(app, { env }); // 👈 pass env once globally
 
-	beforeEach(() => {
-		vi.clearAllMocks();
-	});
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockWhere.mockResolvedValueOnce([{ id: 1, email: 'test@example.com' }]);
+    mockAll.mockResolvedValueOnce([]);
+  });
 
-	test('should register a passkey', async () => {
-		// Mock the environment variables
+  test.only('should register a passkey', async () => {
+    const res = await client.webauthn.register.begin.$post({
+      headers: {
+        Cookie: `token=mocked.jwt.token`,
+      },
+      json: {
+        email: 'test@example.com',
+      },
+    });
 
-		// console.log('client', client.webauthn.register);
-		// Call the endpoint using the typed client
-		// Notice the type safety for query parameters (if defined in the route)
-		// and the direct access via .$get()
-		const res = await client.webauthn.register.begin.$post({
-			email: 'test@test.com',
-		});
+    expect(res.status).toBe(200);
 
-		// Assertions
-		expect(res.status).toBe(200);
-		// expect(await res.json()).toEqual({
-		//   query: 'hono',
-		//   results: ['result1', 'result2'],
-		// })
-	});
+    const data = await res.json();
+    expect(data).toHaveProperty('challenge');
+    expect(data).toHaveProperty('rp');
+    expect(data.rp.name).toBe(env.RP_NAME);
+  });
 });
+

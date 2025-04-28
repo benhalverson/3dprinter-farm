@@ -17,6 +17,7 @@ export function mockDrizzle() {
 				}),
 				insert: () => ({
 					values: () => ({
+						onConflictDoUpdate: vi.fn().mockResolvedValueOnce(undefined),
 						returning: mockInsert,
 					}),
 				}),
