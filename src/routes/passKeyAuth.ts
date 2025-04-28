@@ -48,10 +48,10 @@ const passKeyAuth = factory.createApp()
 			.from(authenticators)
 			.where(eq(authenticators.userId, user.id));
 
-		const excludeCredentials = existingAuthenticators.map((auth) => ({
-			id: auth.credentialId,
-			type: 'public-key' as const,
-		}));
+		// const excludeCredentials = existingAuthenticators.map((auth) => ({
+		// 	id: auth.credentialId,
+		// 	type: 'public-key' as const,
+		// }));
 
 		const options = await generateRegistrationOptions({
 			rpName: c.env.RP_NAME,
