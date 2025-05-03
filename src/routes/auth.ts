@@ -1,6 +1,7 @@
 import { eq } from 'drizzle-orm';
 import { deleteCookie, setSignedCookie } from 'hono/cookie';
 import { ZodError } from 'zod';
+import { zValidator } from '@hono/zod-validator';
 import { signInSchema, signUpSchema, users } from '../db/schema';
 import { hashPassword, signJWT, verifyPassword } from '../utils/crypto';
 import { rateLimit } from '../utils/rateLimit';
@@ -14,10 +15,11 @@ const auth = factory.createApp()
 			maxRequests: 3,
 			keyPrefix: 'signup',
 		}),
+		zValidator('json', signUpSchema),
 		async (c) => {
 			const db = c.var.db
 			try {
-				const { email, password } = signUpSchema.parse(await c.req.json());
+				const { email, password } = c.req.valid('json');
 				const [existingUser] = await db
 					.select()
 					.from(users)

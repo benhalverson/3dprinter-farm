@@ -92,6 +92,7 @@ const passKeyAuth = factory
 	.post('/webauthn/auth/begin', async (c) => {
 		const db = drizzle(c.env.DB);
 		const { email } = await c.req.json();
+		console.log('Email:', email);
 
 		const [user] = await db.select().from(users).where(eq(users.email, email));
 		if (!user) return c.json({ error: 'User not found' }, 404);
@@ -108,10 +109,10 @@ const passKeyAuth = factory
 		const options = await generateAuthenticationOptions({
 			rpID: c.env.RP_ID,
 			userVerification: 'preferred',
-			allowCredentials: authenticatorsList.map((auth) => ({
-				id: auth.credentialId,
-				type: 'public-key' as const,
-			})),
+			// allowCredentials: authenticatorsList.map((auth) => ({
+			// 	id: auth.credentialId,
+			// 	type: 'public-key' as const,
+			// })),
 		});
 
 		await db
@@ -203,16 +204,33 @@ const passKeyAuth = factory
 		const db = c.var.db;
 		const body = await c.req.json();
 
-		const { userId, response } = body;
-		if (!userId || !response) {
+		const { email, response } = body;
+		if (!email ) {
 			return c.json({ error: 'Missing input' }, 400);
 		}
+
+		// const [emailId] = await db.select(schema).from(users).where(eq(users.email, email));
+		const [userData] = await c.var.db
+				.select()
+				.from(users)
+				.where(eq(email, email));
+
+			console.log('User data:', userData);
+
+
+
+
 
 		// Retrieve stored challenge for this user
 		const [challengeRow] = await db
 			.select()
 			.from(webauthnChallenges)
-			.where(eq(webauthnChallenges.userId, userId));
+			.where(eq(webauthnChallenges.userId, userData.id));
+
+
+	// first lookup by email
+	// then lookup by userid
+	// then get the challlenge
 
 		if (!challengeRow) {
 			return c.json({ error: 'No challenge found' }, 400);
@@ -223,15 +241,15 @@ const passKeyAuth = factory
 		const [authenticator] = await db
 			.select()
 			.from(authenticators)
-			.where(eq(authenticators.userId, userId))
+			.where(eq(authenticators.userId, userData.id))
 			.limit(1);
 
 		if (!authenticator) {
 			return c.json({ error: 'No authenticators found' }, 400);
 		}
 
-		const parsedCredential: AuthenticationResponseJSON = {
-			id: response.id,
+		const parsedCredential = {
+			id: base64url(response.id),
 			rawId: response.rawId,
 			type: response.type,
 			response: {
@@ -278,7 +296,7 @@ const passKeyAuth = factory
 		const exp = iat + 60 * 60 * 24; // 1 day
 
 		const token = await signJWT({
-			payload: { id: userId },
+			payload: { id: userData.id},
 			secret: c.env.JWT_SECRET,
 			iat,
 			exp,
