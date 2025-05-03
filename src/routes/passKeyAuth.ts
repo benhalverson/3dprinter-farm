@@ -1,5 +1,13 @@
-import type { AuthenticationResponseJSON, RegistrationResponseJSON } from '@simplewebauthn/types';
-import { generateAuthenticationOptions, generateRegistrationOptions, verifyAuthenticationResponse, verifyRegistrationResponse } from '@simplewebauthn/server';
+import type {
+	AuthenticationResponseJSON,
+	RegistrationResponseJSON,
+} from '@simplewebauthn/types';
+import {
+	generateAuthenticationOptions,
+	generateRegistrationOptions,
+	verifyAuthenticationResponse,
+	verifyRegistrationResponse,
+} from '@simplewebauthn/server';
 import { drizzle } from 'drizzle-orm/d1';
 import { eq } from 'drizzle-orm';
 import { setSignedCookie } from 'hono/cookie';
@@ -8,10 +16,11 @@ import { authenticators, users, webauthnChallenges } from '../db/schema';
 import { base64url, base64urlToUint8Array, signJWT } from '../utils/crypto';
 import factory from '../factory';
 
-const passKeyAuth = factory.createApp()
+const passKeyAuth = factory
+	.createApp()
 	.get('/webauthn/authenticators', authMiddleware, async (c) => {
 		const user = c.get('jwtPayload') as { id: number };
-		const db = c.var.db
+		const db = c.var.db;
 
 		const authenticatorsList = await db
 			.select()
@@ -23,7 +32,7 @@ const passKeyAuth = factory.createApp()
 	.delete('/webauthn/authenticators/:id', authMiddleware, async (c) => {
 		const user = c.get('jwtPayload') as { id: number };
 		const credentialId = c.req.param('id');
-		const db = c.var.db
+		const db = c.var.db;
 
 		await db
 			.delete(authenticators)
@@ -33,7 +42,7 @@ const passKeyAuth = factory.createApp()
 		return c.json({ success: true });
 	})
 	.post('/webauthn/register/begin', authMiddleware, async (c) => {
-		const db = c.var.db
+		const db = c.var.db;
 		const user = c.get('jwtPayload') as { id: number; email: string };
 
 		const [existingUser] = await db
@@ -43,35 +52,41 @@ const passKeyAuth = factory.createApp()
 
 		if (!existingUser) return c.json({ error: 'User not found' }, 404);
 
-		const existingAuthenticators = await db
+		await db
 			.select()
 			.from(authenticators)
 			.where(eq(authenticators.userId, user.id));
 
-		// const excludeCredentials = existingAuthenticators.map((auth) => ({
-		// 	id: auth.credentialId,
-		// 	type: 'public-key' as const,
-		// }));
-
-		const options = await generateRegistrationOptions({
-			rpName: c.env.RP_NAME,
-			rpID: c.env.RP_ID,
-			userID: new TextEncoder().encode(user.id.toString()),
-			userName: existingUser.email,
-			// excludeCredentials,
-			authenticatorSelection: {
-				userVerification: 'preferred',
-			},
-		});
-
-		await db
-			.insert(webauthnChallenges)
-			.values({ userId: user.id, challenge: (await options).challenge })
-			.onConflictDoUpdate({
-				target: [webauthnChallenges.userId],
-				set: { challenge: (await options).challenge },
+		let options;
+		try {
+			options = await generateRegistrationOptions({
+				rpName: c.env.RP_NAME,
+				rpID: c.env.RP_ID,
+				userID: new TextEncoder().encode(user.id.toString()),
+				userName: existingUser.email,
+				authenticatorSelection: {
+					userVerification: 'preferred',
+				},
 			});
-
+			console.log('Registration options:', options);
+		} catch (error) {
+			return c.json(
+				{ error: 'Failed to generate options', details: error },
+				500
+			);
+		}
+		try {
+			if (!options) return;
+			await db
+				.insert(webauthnChallenges)
+				.values({ userId: user.id, challenge: (await options).challenge })
+				.onConflictDoUpdate({
+					target: [webauthnChallenges.userId],
+					set: { challenge: (await options).challenge },
+				});
+		} catch (error) {
+			return c.json({ error: 'Failed', details: error }, 500);
+		}
 		return c.json(options);
 	})
 	.post('/webauthn/auth/begin', async (c) => {
@@ -110,7 +125,7 @@ const passKeyAuth = factory.createApp()
 		return c.json({ options, userId: user.id });
 	})
 	.post('/webauthn/register/finish', authMiddleware, async (c) => {
-		const db = c.var.db
+		const db = c.var.db;
 		const user = c.get('jwtPayload') as { id: number; email: string };
 		if (!user?.id) return c.json({ error: 'Unauthorized' }, 401);
 
@@ -158,10 +173,11 @@ const passKeyAuth = factory.createApp()
 			verification = await verifyRegistrationResponse({
 				response: parsedCredential,
 				expectedChallenge: challengeRow.challenge,
-				expectedOrigin: 'https://rc-store.benhalverson.dev', // c.env.DOMAIN,
+				// expectedOrigin: 'https://rc-store.benhalverson.dev', // c.env.DOMAIN,
+				expectedOrigin: c.env.DOMAIN,
 				// expectedRPID: 'rc-store.benhalverson.dev', // c.env.RP_ID,
 				requireUserVerification: false,
-			});
+			})
 		} catch (err) {
 			return c.json({ error: 'Verification failed', details: err }, 500);
 		}
@@ -184,7 +200,7 @@ const passKeyAuth = factory.createApp()
 		return c.json({ success: true });
 	})
 	.post('/webauthn/auth/finish', async (c) => {
-		const db = c.var.db
+		const db = c.var.db;
 		const body = await c.req.json();
 
 		const { userId, response } = body;
@@ -277,6 +293,6 @@ const passKeyAuth = factory.createApp()
 		});
 
 		return c.json({ success: true });
-	})
+	});
 
 export default passKeyAuth;

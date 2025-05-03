@@ -25,7 +25,14 @@ const userRouter = factory
 				email: userData.email,
 				firstName: userData.firstName,
 				lastName: userData.lastName,
+				address: userData.shippingAddress,
+				city: userData.city,
+				state: userData.state,
+				zipCode: userData.zipCode,
+				country: userData.country,
+				phone: userData.phone,
 			});
+			// return c.json(userData);
 		}
 		catch (error: any) {
 			console.error('Error fetching user data:', error);
