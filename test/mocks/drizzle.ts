@@ -24,7 +24,7 @@ export function mockDrizzle() {
 				update: () => ({
 					set: () => ({
 						where: () => ({
-							execute: mockUpdate,
+							returning: mockUpdate,
 						}),
 					}),
 				}),

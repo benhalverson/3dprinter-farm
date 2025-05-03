@@ -9,6 +9,11 @@ import {
 } from 'drizzle-orm/sqlite-core';
 import { z } from 'zod';
 
+export const usPhoneNumberSchema = z.string().regex(
+	/^\(?([0-9]{3})\)?[-.\s]?([0-9]{3})[-.\s]?([0-9]{4})$/,
+	'Invalid US phone number format'
+);
+
 export const productsTable = sqliteTable('products', {
 	id: integer('id').primaryKey({ autoIncrement: true }),
 	name: text('name').notNull(),
@@ -44,6 +49,11 @@ export const users = sqliteTable('users', {
 	lastName: text('last_name').notNull(),
 	shippingAddress: text('shipping_address').notNull(),
 	billingAddress: text('billing_address').notNull(),
+	city: text('city').notNull().default(''),
+	state: text('state').notNull().default(''),
+	zipCode: text('zip_code').notNull().default(''),
+	country: text('country').notNull().default(''),
+	phone: text('phone'), // Use Zod for validation elsewhere
 	role: text('role').default('user').notNull(),
 });
 
@@ -76,34 +86,33 @@ const OrderDataSchema = z.object({
 
 export type OrderData = z.infer<typeof OrderDataSchema>;
 export type ProductData = z.infer<typeof ProductsDataSchema>;
+export type ProfileData = z.infer<typeof ProfileDataSchema>;
 
 export const ordersTable = sqliteTable('orders', {
 	id: integer('id').primaryKey(),
 	userId: integer('user_id')
-		.references(() => users.id)
+		.references(() => users.id, { onDelete: 'cascade' }) // Establish relationship with users table
 		.notNull(),
 	orderNumber: text('order_number').notNull().unique(),
 	filename: text('filename'),
 	fileURL: text('file_url').notNull(),
 
-	billToStreet1: text('bill_to_street_1').notNull(),
-	billToStreet2: text('bill_to_street_2'),
-	billToStreet3: text('bill_to_street_3'),
-	billToCity: text('bill_to_city').notNull(),
-	billToState: text('bill_to_state').notNull(),
-	billToZip: text('bill_to_zip').notNull(),
-	billToCountryISO: text('bill_to_country_as_iso').notNull(),
-	billToIsUSResidential: integer('bill_to_is_us_residential').default(0),
-
+	// Shipping address fields specific to each order
 	shipToName: text('ship_to_name').notNull(),
 	shipToStreet1: text('ship_to_street_1').notNull(),
 	shipToStreet2: text('ship_to_street_2'),
-	shipToStreet3: text('ship_to_street_3'),
 	shipToCity: text('ship_to_city').notNull(),
 	shipToState: text('ship_to_state').notNull(),
 	shipToZip: text('ship_to_zip').notNull(),
-	shipToCountryISO: text('ship_to_country_as_iso').notNull(),
-	shipToIsUSResidential: integer('ship_to_is_us_residential').default(0),
+	shipToCountryISO: text('ship_to_country_iso').notNull(),
+
+	// Billing address fields (if needed)
+	billToStreet1: text('bill_to_street_1'),
+	billToStreet2: text('bill_to_street_2'),
+	billToCity: text('bill_to_city'),
+	billToState: text('bill_to_state'),
+	billToZip: text('bill_to_zip'),
+	billToCountryISO: text('bill_to_country_iso'),
 });
 
 export const authenticators = sqliteTable(
@@ -231,3 +240,16 @@ export const updateProductSchema = z.object({
 	color: z.string(),
 	image: z.string(),
 });
+
+export const ProfileDataSchema = z.object({
+	id: z.number().optional(),
+	firstName: z.string().min(1, 'First name is required'),
+	lastName: z.string().min(1, 'Last name is required'),
+	shippingAddress: z.string().trim().min(10, 'Shipping address is required'),
+	city: z.string().trim().min(1, 'City is required'),
+	state: z.string().trim().min(1, 'State is required').max(2),
+	zipCode: z.string().trim().min(1, 'Zip code is required').max(5),
+	country: z.string().trim().min(1, 'Country is required'),
+	phone: usPhoneNumberSchema
+});
+
