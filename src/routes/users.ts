@@ -39,7 +39,6 @@ const userRouter = factory
 		const userId = Number(c.req.param('id'));
 		const body = await c.req.json();
 		const validation = ProfileDataSchema.safeParse(body);
-		const phoneValidator = usPhoneNumberSchema.safeParse(body.phone);
 		if (!validation.success) {
 			return c.json({ error: 'Validation failed', details: validation.error.errors }, 400);
 		}

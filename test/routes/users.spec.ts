@@ -72,7 +72,6 @@ describe('Profile Endpoints', () => {
 
 	test('GET /profile', async () => {
 		const res = await client.profile.$get();
-		console.log('res:', res);
 		expect(res.status).toBe(200);
 	});
 
