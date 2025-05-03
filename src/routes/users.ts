@@ -1,6 +1,6 @@
 import { eq } from 'drizzle-orm';
 import { authMiddleware } from '../utils/authMiddleware';
-import { ProfileDataSchema, users, usPhoneNumberSchema } from '../db/schema';
+import { ProfileDataSchema, users } from '../db/schema';
 import factory from '../factory';
 
 
