@@ -10,6 +10,7 @@ import userRouter from './routes/users';
 import paymentsRouter from './routes/payments';
 import printer from './routes/printer';
 import factory from './factory';
+import email from './routes/email';
 
 const app = factory.createApp()
   .use(async (c, next) => {
@@ -37,6 +38,7 @@ const app = factory.createApp()
 	.route('/', passKeyAuth)
 	.route('/', userRouter)
 	.route('/', printer)
+	.route('/', email)
 ;
 
 export default app;
