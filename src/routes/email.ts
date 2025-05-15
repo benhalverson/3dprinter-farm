@@ -70,7 +70,7 @@ const email = factory
 	.post('/email/confirm', async (c) => {
 		try {
 			const payload = await c.req.json();
-			if (!email || payload.email !== 'subscribe') {
+			if (!payload.email || payload.email !== 'subscribe') {
 				return c.json({ status: 'error', message: 'Invalid request' }, 400);
 			}
 
