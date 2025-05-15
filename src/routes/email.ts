@@ -82,7 +82,10 @@ const email = factory
 					updatedAt: Date.now(),
 				})
 				.where(eq(leads.email, payload.email));
-		} catch (error) {}
+		} catch (error) {
+			console.error('Error confirming email:', error);
+			return c.json({ status: 'error', message: 'Internal Server Error' }, 500);
+		}
 	});
 
 export default email;
