@@ -30,6 +30,7 @@ const email = factory
 			const auth = `${c.env.MAILJET_API_KEY}:${c.env.MAILJET_API_SECRET}`;
 			const base64Auth = Buffer.from(auth).toString('base64');
 			const { name, email } = c.req.valid('json');
+			console.log('Received email:', name, email);
 
 			await c.var.db.insert(leads).values({
 				name,
@@ -39,7 +40,7 @@ const email = factory
 			});
 
 			const listId = c.env.MAILJET_CONTACT_LIST_ID;
-			await fetch(
+			const response = await fetch(
 				`https://api.mailjet.com/v3/REST/contactslist/${listId}/managecontact`,
 				{
 					method: 'POST',
@@ -57,6 +58,8 @@ const email = factory
 					}),
 				}
 			);
+
+			console.log('Mailjet response:', response.status, response.statusText);
 
 			return c.json(
 				{ message: 'Signup Successful. Please check your email' },
