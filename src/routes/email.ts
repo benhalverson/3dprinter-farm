@@ -28,6 +28,7 @@ const email = factory
 
 		try {
 			const auth = `${c.env.MAILJET_API_KEY}:${c.env.MAILJET_API_SECRET}`;
+			console.log('auth:', auth);
 			const base64Auth = Buffer.from(auth).toString('base64');
 			const { name, email } = c.req.valid('json');
 			console.log('Received email:', name, email);
