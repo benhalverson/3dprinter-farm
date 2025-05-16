@@ -28,10 +28,9 @@ const email = factory
 
 		try {
 			const auth = `${c.env.MAILJET_API_KEY}:${c.env.MAILJET_API_SECRET}`;
-			// console.log('Auth:', auth);
 			const base64Auth = Buffer.from(auth).toString('base64');
 			const { name, email } = c.req.valid('json');
-			// console.log('Received email:', name, email);
+			console.log('Received email:', name, email);
 
 			await c.var.db.insert(leads).values({
 				name,
@@ -41,6 +40,7 @@ const email = factory
 			});
 
 			const listId = c.env.MAILJET_CONTACT_LIST_ID;
+			console.log('listId:', listId);
 			const response = await fetch(
 				`https://api.mailjet.com/v3/REST/contactslist/${listId}/managecontact`,
 				{
@@ -68,12 +68,12 @@ const email = factory
 					200
 				);
 			} else {
-				const errorResponse = await response.json();
-				console.error('Mailjet error response:', errorResponse);
+				const errorResponse: any = await response.json();
+				console.error('Mailjet error response:', errorResponse.status, errorResponse.message);
 				return c.json({ status: 'error', message: 'Failed to subscribe' }, 500);
 			}
-		} catch (error) {
-			console.error('Error:', error);
+		} catch (error: any) {
+			console.error('Error:', error.message);
 			return c.json({ status: 'error', message: 'Internal Server Erro' }, 500);
 		}
 	})
