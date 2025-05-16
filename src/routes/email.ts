@@ -28,9 +28,10 @@ const email = factory
 
 		try {
 			const auth = `${c.env.MAILJET_API_KEY}:${c.env.MAILJET_API_SECRET}`;
-			const base64Auth = Buffer.from(auth, 'base64');
+			// console.log('Auth:', auth);
+			const base64Auth = Buffer.from(auth).toString('base64');
 			const { name, email } = c.req.valid('json');
-			console.log('Received email:', name, email);
+			// console.log('Received email:', name, email);
 
 			await c.var.db.insert(leads).values({
 				name,
@@ -59,12 +60,18 @@ const email = factory
 				}
 			);
 
-			console.log('Mailjet response:', response.status, response.statusText);
+			console.log('Mailjet response:', response);
 
-			return c.json(
-				{ message: 'Signup Successful. Please check your email' },
-				200
-			);
+			if (response.ok) {
+				return c.json(
+					{ message: 'Signup Successful. Please check your email' },
+					200
+				);
+			} else {
+				const errorResponse = await response.json();
+				console.error('Mailjet error response:', errorResponse);
+				return c.json({ status: 'error', message: 'Failed to subscribe' }, 500);
+			}
 		} catch (error) {
 			console.error('Error:', error);
 			return c.json({ status: 'error', message: 'Internal Server Erro' }, 500);
