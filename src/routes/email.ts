@@ -60,7 +60,7 @@ const email = factory
 				}
 			);
 
-			console.log('Mailjet response:', response);
+			console.log('Mailjet response:', response.status, response.statusText);
 
 			if (response.ok) {
 				return c.json(
