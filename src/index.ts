@@ -25,6 +25,7 @@ const app = factory.createApp()
   			'http://localhost:4200',
   			'https://rc-store.benhalverson.dev',
   			'https://rc-admin.pages.dev',
+				'https://race-forge.com'
   		],
   		credentials: true,
   		allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
