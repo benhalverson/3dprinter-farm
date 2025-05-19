@@ -2,82 +2,108 @@ import { zValidator } from '@hono/zod-validator';
 import factory from '../factory';
 import { leads, leadsSchema } from '../db/schema';
 import { eq } from 'drizzle-orm';
+import Mailjet from 'node-mailjet';
 
 const email = factory
 	.createApp()
-	.post('/email', zValidator('json', leadsSchema), async (c) => {
-		try {
-			// check if the email is already in the database
-			const { email } = c.req.valid('json');
-			const existing = await c.var.db
-				.select()
-				.from(leads)
-				.where(eq(leads.email, email))
-				.get();
+.post('/email', zValidator('json', leadsSchema), async (c) => {
+	try {
+		const { name, email } = c.req.valid('json');
 
-			if (existing) {
-				return c.json(
-					{ status: 'error', message: 'Email is already subscribed.' },
-					400
-				);
-			}
-		} catch (error) {
-			console.error('Error checking email:', error);
-			return c.json({ status: 'error', message: 'Internal Server Error' }, 500);
-		}
+		const existing = await c.var.db
+			.select()
+			.from(leads)
+			.where(eq(leads.email, email))
+			.get();
 
-		try {
-			const auth = `${c.env.MAILJET_API_KEY}:${c.env.MAILJET_API_SECRET}`;
-			console.log('auth:', auth);
-			const base64Auth = Buffer.from(auth).toString('base64');
-			const { name, email } = c.req.valid('json');
-			console.log('Received email:', name, email);
-
-			await c.var.db.insert(leads).values({
-				name,
-				email,
-				status: 'pending',
-				createdAt: Date.now(),
-			});
-
-			const listId = c.env.MAILJET_CONTACT_LIST_ID;
-			console.log('listId:', listId);
-			const response = await fetch(
-				`https://api.mailjet.com/v3/REST/contactslist/${listId}/managecontact`,
-				{
-					method: 'POST',
-					headers: {
-						Authorization: `Basic ${base64Auth}`,
-						'Content-Type': 'application/json',
-					},
-					body: JSON.stringify({
-						Email: email,
-						Name: name,
-						Action: 'addnoforce',
-						Properties: {
-							name,
-						},
-					}),
-				}
+		if (existing) {
+			return c.json(
+				{ status: 'error', message: 'Email is already subscribed.' },
+				400
 			);
-
-			console.log('Mailjet response:', response.status, response.statusText);
-
-			if (response.ok) {
-				return c.json(
-					{ message: 'Signup Successful. Please check your email' },
-					200
-				);
-			} else {
-				const errorResponse: any = await response.json();
-				console.error('Mailjet error response:', errorResponse.status, errorResponse.message);
-				return c.json({ status: 'error', message: 'Failed to subscribe' }, 500);
-			}
-		} catch (error: any) {
-			console.error('Error:', error.message);
-			return c.json({ status: 'error', message: 'Internal Server Erro' }, 500);
 		}
-	})
+
+		await c.var.db.insert(leads).values({
+			name,
+			email,
+			status: 'pending',
+			createdAt: Date.now(),
+		});
+
+		const auth = `${c.env.MAILJET_API_KEY}:${c.env.MAILJET_API_SECRET}`;
+		const base64Auth = Buffer.from(auth).toString('base64');
+		const listId = c.env.MAILJET_CONTACT_LIST_ID;
+
+		const manageContactRes = await fetch(
+			`https://api.mailjet.com/v3/REST/contactslist/${listId}/managecontact`,
+			{
+				method: 'POST',
+				headers: {
+					Authorization: `Basic ${base64Auth}`,
+					'Content-Type': 'application/json',
+				},
+				body: JSON.stringify({
+					Email: email,
+					Name: name,
+					Action: 'addnoforce',
+				}),
+			}
+		);
+
+		if (!manageContactRes.ok) {
+			const err = await manageContactRes.json();
+			console.error('Mailjet list error:', err);
+			return c.json({ status: 'error', message: 'Failed to add to contact list' }, 500);
+		}
+
+		const sendEmailRes = await fetch('https://api.mailjet.com/v3.1/send', {
+			method: 'POST',
+			headers: {
+				Authorization: `Basic ${base64Auth}`,
+				'Content-Type': 'application/json',
+			},
+			body: JSON.stringify({
+				Messages: [
+					{
+						From: {
+							Email: c.env.MAILJET_SENDER_EMAIL,
+							Name: c.env.MAILJET_SENDER_NAME,
+						},
+						To: [
+							{
+								Email: email,
+								Name: name,
+							},
+						],
+						TemplateID: parseInt(c.env.MAILJET_TEMPLATE_ID),
+						TemplateLanguage: true,
+						Subject: 'Please Confirm Your Subscription',
+						Variables: {
+							confirmation_url: `https://race-forge.com/confirm?email=${encodeURIComponent(email)}`
+						},
+					},
+				],
+			}),
+		});
+
+		const data: any = await sendEmailRes.json();
+		console.log('sendEmailRes', JSON.stringify(data.Messages));
+
+		if (!sendEmailRes.ok) {
+			const err = await sendEmailRes.json();
+			console.error('Mailjet send error:', err);
+			return c.json({ status: 'error', message: 'Failed to send confirmation email' }, 500);
+		}
+
+		return c.json(
+			{ message: 'Signup successful. Please check your email to confirm.' },
+			200
+		);
+	} catch (error: any) {
+		console.error('Unexpected error:', error);
+		return c.json({ status: 'error', message: 'Internal Server Error' }, 500);
+	}
+})
 	.post('/email/confirm', async (c) => {
 		try {
 			const payload = await c.req.json();
