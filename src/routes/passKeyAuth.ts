@@ -202,6 +202,7 @@ const passKeyAuth = factory
 	.post('/webauthn/auth/finish', async (c) => {
 		const db = c.var.db;
 		const body = await c.req.json();
+		console.log('Received body:', body);
 
 		const { userId, response } = body;
 		if (!userId || !response) {
@@ -230,17 +231,16 @@ const passKeyAuth = factory
 			return c.json({ error: 'No authenticators found' }, 400);
 		}
 
+		 // Pass the credential fields as base64url strings (not Uint8Array) as required by @simplewebauthn/server
 		const parsedCredential: AuthenticationResponseJSON = {
 			id: response.id,
 			rawId: response.rawId,
 			type: response.type,
 			response: {
-				clientDataJSON: atob(response.response.clientDataJSON),
-				authenticatorData: atob(response.response.authenticatorData),
-				signature: atob(response.response.signature),
-				userHandle: response.response.userHandle
-					? atob(response.response.userHandle)
-					: null,
+				clientDataJSON: response.response.clientDataJSON,
+				authenticatorData: response.response.authenticatorData,
+				signature: response.response.signature,
+				userHandle: response.response.userHandle ?? undefined,
 			},
 			clientExtensionResults: {},
 		};
@@ -252,9 +252,9 @@ const passKeyAuth = factory
 				expectedChallenge,
 				expectedOrigin: c.env.DOMAIN,
 				expectedRPID: c.env.RP_ID,
-				authenticator: {
-					credentialID: base64urlToUint8Array(authenticator.credentialId),
-					credentialPublicKey: authenticator.credentialPublicKey,
+				credential: {
+					id: authenticator.credentialId,
+					publicKey: authenticator.credentialPublicKey,
 					counter: authenticator.counter,
 				},
 			});
