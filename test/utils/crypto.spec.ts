@@ -46,7 +46,13 @@ describe('JWT signing', () => {
 			exp,
 		});
 
+		console.log('jwt', jwt);
 		const parts = jwt.split('.');
+
+		function base64urlDecode(str: string): string {
+			const base64 = str.replace(/-/g, '+').replace(/_/g, '/').padEnd(str.length + ((4 - (str.length % 4)) % 4), '=');
+			return Buffer.from(base64, 'base64').toString('utf-8');
+		}
 
 		const header = JSON.parse(base64urlDecode(parts[0]));
 		expect(typeof jwt).toBe('string');
@@ -117,12 +123,3 @@ describe('JWT signing - negative cases', () => {
 		).rejects.toThrow()
 	})
 })
-
-
-function base64urlDecode(str: string): string {
-	const base64 = str
-		.replace(/-/g, '+')
-		.replace(/_/g, '/')
-		.padEnd(str.length + ((4 - (str.length % 4)) % 4), '=');
-	return atob(base64);
-}
