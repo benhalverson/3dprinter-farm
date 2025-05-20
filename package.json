@@ -30,6 +30,7 @@
     "stripe": "^16.6.0",
     "zod": "^3.23.8"
   },
+  "packageManager": "pnpm@9.9.0",
   "pnpm": {
     "overrides": {
       "esbuild@<=0.24.2": ">=0.25.0",
