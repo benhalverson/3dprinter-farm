@@ -16,7 +16,7 @@ import factory from '../factory';
 const printer = factory.createApp()
   .use("/list", authMiddleware)
   .use("/estimate", authMiddleware)
-  .use("/upload", authMiddleware)
+  // .use("/upload", authMiddleware)
   .get("/list", async (c: Context) => {
     const list = await c.env.BUCKET.list()
     const data = list.objects.map((o: ListResponse) => {

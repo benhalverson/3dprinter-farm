@@ -15,6 +15,12 @@ export type Bindings = {
 	RP_ID: string;
 	RP_NAME: string;
 	RATE_LIMIT_KV: KVNamespace;
+	MAILJET_API_KEY: string;
+	MAILJET_API_SECRET: string;
+	MAILJET_CONTACT_LIST_ID: string;
+	MAILJET_TEMPLATE_ID: string;
+	MAILJET_SENDER_EMAIL: string;
+	MAILJET_SENDER_NAME: string;
 };
 
 export interface SliceResponse {
@@ -38,7 +44,6 @@ export interface Error {
 	message: string;
 	status: number;
 }
-
 
 export interface FilamentColorsResponse {
 	filaments: Filament[];
@@ -67,7 +72,6 @@ export interface ListResponse {
 	version: string;
 }
 
-
 export type OrderData = z.infer<typeof orderSchema>;
 
 export type OrderResponse = {
@@ -75,5 +79,3 @@ export type OrderResponse = {
 	shippingCost: number;
 	printingCost: number;
 };
-
-

@@ -79,10 +79,11 @@ export const verifyPassword = async (
 };
 
 export const base64url = (input: Uint8Array | string): string => {
+	console.log('base64url input', input);
 	const str =
 		typeof input === 'string'
 			? btoa(input)
-			: btoa(String.fromCharCode(...input));
+			: btoa(String.fromCharCode(input));
 	return str.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 };
 

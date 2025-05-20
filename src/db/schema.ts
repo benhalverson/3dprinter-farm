@@ -9,6 +9,16 @@ import {
 } from 'drizzle-orm/sqlite-core';
 import { z } from 'zod';
 
+export const leads = sqliteTable('leads', {
+  id: integer('id').primaryKey(),
+  email: text('email').unique(),
+  name: text('name').notNull(),
+  status: text('status'),
+  confirmedAt: integer('confirmed_at'),
+  createdAt: integer('created_at').notNull(),
+  updatedAt: integer('updated_at')
+});
+
 export const usPhoneNumberSchema = z.string().regex(
 	/^\(?([0-9]{3})\)?[-.\s]?([0-9]{3})[-.\s]?([0-9]{4})$/,
 	'Invalid US phone number format'
@@ -152,6 +162,11 @@ export const webauthnChallenges = sqliteTable(
 		};
 	}
 );
+export const leadsSchema = z.object({
+	email: z.string(),
+	name: z.string()
+});
+
 
 export const signUpSchema = z.object({
 	email: z.string().email(),
