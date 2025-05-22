@@ -109,7 +109,7 @@ const email = factory
 	})
 	.post('/email/confirm/:email', async (c) => {
 		try {
-			const email = await c.req.query('email');
+			const email = c.req.param('email');
 			if (!email) {
 				return c.json({ status: 'error', message: 'Invalid request' }, 400);
 			}
