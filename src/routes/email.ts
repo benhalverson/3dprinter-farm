@@ -7,8 +7,8 @@ const email = factory
 	.createApp()
 	.post('/email', zValidator('json', leadsSchema), async (c) => {
 		try {
-			// check if the email is already in the database
-			const { email } = c.req.valid('json');
+			const { name, email } = c.req.valid('json');
+
 			const existing = await c.var.db
 				.select()
 				.from(leads)
@@ -21,17 +21,6 @@ const email = factory
 					400
 				);
 			}
-		} catch (error) {
-			console.error('Error checking email:', error);
-			return c.json({ status: 'error', message: 'Internal Server Error' }, 500);
-		}
-
-		try {
-			const auth = `${c.env.MAILJET_API_KEY}:${c.env.MAILJET_API_SECRET}`;
-			console.log('auth:', auth);
-			const base64Auth = Buffer.from(auth).toString('base64');
-			const { name, email } = c.req.valid('json');
-			console.log('Received email:', name, email);
 
 			await c.var.db.insert(leads).values({
 				name,
@@ -40,9 +29,11 @@ const email = factory
 				createdAt: Date.now(),
 			});
 
+			const auth = `${c.env.MAILJET_API_KEY}:${c.env.MAILJET_API_SECRET}`;
+			const base64Auth = Buffer.from(auth).toString('base64');
 			const listId = c.env.MAILJET_CONTACT_LIST_ID;
-			console.log('listId:', listId);
-			const response = await fetch(
+
+			const manageContactRes = await fetch(
 				`https://api.mailjet.com/v3/REST/contactslist/${listId}/managecontact`,
 				{
 					method: 'POST',
@@ -54,34 +45,72 @@ const email = factory
 						Email: email,
 						Name: name,
 						Action: 'addnoforce',
-						Properties: {
-							name,
-						},
 					}),
 				}
 			);
 
-			console.log('Mailjet response:', response.status, response.statusText);
-
-			if (response.ok) {
+			if (!manageContactRes.ok) {
+				const err = await manageContactRes.json();
+				console.error('Mailjet list error:', err);
 				return c.json(
-					{ message: 'Signup Successful. Please check your email' },
-					200
+					{ status: 'error', message: 'Failed to add to contact list' },
+					500
 				);
-			} else {
-				const errorResponse: any = await response.json();
-				console.error('Mailjet error response:', errorResponse.status, errorResponse.message);
-				return c.json({ status: 'error', message: 'Failed to subscribe' }, 500);
+			}
+
+			try {
+				const confirmationLink = `http://localhost:8787/webhook/confirm?email=${encodeURIComponent(
+					email
+				)}`;
+
+				const sendEmailRes = await fetch('https://api.mailjet.com/v3.1/send', {
+					method: 'POST',
+					headers: {
+						Authorization: `Basic ${base64Auth}`,
+						'Content-Type': 'application/json',
+					},
+					body: JSON.stringify({
+						Messages: [
+							{
+								From: {
+									Email: c.env.MAILJET_SENDER_EMAIL,
+									Name: c.env.MAILJET_SENDER_NAME,
+								},
+								To: [
+									{
+										Email: email,
+										Name: name,
+									},
+								],
+								Subject: 'Thank you for joining the waitlist',
+								TemplateID: Number(c.env.MAILJET_TEMPLATE_ID),
+								TemplateLanguage: true,
+								Variables: {
+									confirmation_link: confirmationLink,
+								},
+							},
+						],
+					}),
+				});
+
+				const data = await sendEmailRes.json();
+				console.log('Mailjet send email response:', data);
+
+				return c.json(
+					"{ status: 'success', message: 'Email sent successfully' }"
+				);
+			} catch (error) {
+				return c.json({ error: 'Failed to send email', details: error }, 500);
 			}
 		} catch (error: any) {
-			console.error('Error:', error.message);
-			return c.json({ status: 'error', message: 'Internal Server Erro' }, 500);
+			console.error('Unexpected error:', error);
+			return c.json({ status: 'error', message: 'Internal Server Error' }, 500);
 		}
 	})
-	.post('/email/confirm', async (c) => {
+	.post('/email/confirm/:email', async (c) => {
 		try {
-			const payload = await c.req.json();
-			if (!payload.email || payload.email !== 'subscribe') {
+			const email = c.req.param('email');
+			if (!email) {
 				return c.json({ status: 'error', message: 'Invalid request' }, 400);
 			}
 
@@ -92,7 +121,7 @@ const email = factory
 					confirmedAt: Date.now(),
 					updatedAt: Date.now(),
 				})
-				.where(eq(leads.email, payload.email));
+				.where(eq(leads.email, email));
 		} catch (error) {
 			console.error('Error confirming email:', error);
 			return c.json({ status: 'error', message: 'Internal Server Error' }, 500);
