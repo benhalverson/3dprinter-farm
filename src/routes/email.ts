@@ -59,7 +59,11 @@ const email = factory
 			}
 
 			try {
-				 await fetch('https://api.mailjet.com/v3.1/send', {
+				const confirmationLink = `http://localhost:8787/webhook/confirm?email=${encodeURIComponent(
+					email
+				)}`;
+
+				const sendEmailRes = await fetch('https://api.mailjet.com/v3.1/send', {
 					method: 'POST',
 					headers: {
 						Authorization: `Basic ${base64Auth}`,
@@ -78,14 +82,23 @@ const email = factory
 										Name: name,
 									},
 								],
-								Subject: 'Please Confirm Your Subscription',
-								HTMLPart: 'Heyo',
+								Subject: 'Thank you for joining the waitlist',
+								TemplateID: Number(c.env.MAILJET_TEMPLATE_ID),
+								TemplateLanguage: true,
+								Variables: {
+									confirmation_link: confirmationLink,
+								},
 							},
 						],
 					}),
 				});
 
-				return c.json("{ status: 'success', message: 'Email sent successfully' }");
+				const data = await sendEmailRes.json();
+				console.log('Mailjet send email response:', data);
+
+				return c.json(
+					"{ status: 'success', message: 'Email sent successfully' }"
+				);
 			} catch (error) {
 				return c.json({ error: 'Failed to send email', details: error }, 500);
 			}
@@ -94,10 +107,10 @@ const email = factory
 			return c.json({ status: 'error', message: 'Internal Server Error' }, 500);
 		}
 	})
-	.post('/email/confirm', async (c) => {
+	.post('/email/confirm/:email', async (c) => {
 		try {
-			const payload = await c.req.json();
-			if (!payload.email || payload.email !== 'subscribe') {
+			const email = await c.req.query('email');
+			if (!email) {
 				return c.json({ status: 'error', message: 'Invalid request' }, 400);
 			}
 
@@ -108,7 +121,7 @@ const email = factory
 					confirmedAt: Date.now(),
 					updatedAt: Date.now(),
 				})
-				.where(eq(leads.email, payload.email));
+				.where(eq(leads.email, email));
 		} catch (error) {
 			console.error('Error confirming email:', error);
 			return c.json({ status: 'error', message: 'Internal Server Error' }, 500);
