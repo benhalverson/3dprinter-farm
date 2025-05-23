@@ -9,20 +9,31 @@ import {
 } from 'drizzle-orm/sqlite-core';
 import { z } from 'zod';
 
-export const leads = sqliteTable('leads', {
-  id: integer('id').primaryKey(),
-  email: text('email').unique(),
-  name: text('name').notNull(),
-  status: text('status'),
-  confirmedAt: integer('confirmed_at'),
-  createdAt: integer('created_at').notNull(),
-  updatedAt: integer('updated_at')
+export const cart = sqliteTable('cart', {
+	id: integer('id').primaryKey(),
+	cartId: integer('cart_id').notNull(),
+	skuNumber: text('sku_number').notNull(),
+	quantity: integer('quantity').default(1).notNull(),
+	color: text('color').default('#000000'),
+	filamentType: text('filament_type').notNull(),
 });
 
-export const usPhoneNumberSchema = z.string().regex(
-	/^\(?([0-9]{3})\)?[-.\s]?([0-9]{3})[-.\s]?([0-9]{4})$/,
-	'Invalid US phone number format'
-);
+export const leads = sqliteTable('leads', {
+	id: integer('id').primaryKey(),
+	email: text('email').unique(),
+	name: text('name').notNull(),
+	status: text('status'),
+	confirmedAt: integer('confirmed_at'),
+	createdAt: integer('created_at').notNull(),
+	updatedAt: integer('updated_at'),
+});
+
+export const usPhoneNumberSchema = z
+	.string()
+	.regex(
+		/^\(?([0-9]{3})\)?[-.\s]?([0-9]{3})[-.\s]?([0-9]{4})$/,
+		'Invalid US phone number format'
+	);
 
 export const productsTable = sqliteTable('products', {
 	id: integer('id').primaryKey({ autoIncrement: true }),
@@ -164,9 +175,8 @@ export const webauthnChallenges = sqliteTable(
 );
 export const leadsSchema = z.object({
 	email: z.string(),
-	name: z.string()
+	name: z.string(),
 });
-
 
 export const signUpSchema = z.object({
 	email: z.string().email(),
@@ -265,6 +275,13 @@ export const ProfileDataSchema = z.object({
 	state: z.string().trim().min(1, 'State is required').max(2),
 	zipCode: z.string().trim().min(1, 'Zip code is required').max(5),
 	country: z.string().trim().min(1, 'Country is required'),
-	phone: usPhoneNumberSchema
+	phone: usPhoneNumberSchema,
 });
 
+export const addCartItemSchema = z.object({
+	cartId: z.string().uuid(),
+	skuNumber: z.number().int(),
+	quantity: z.number().int().min(1).max(69),
+	color: z.string(),
+	filamentType: z.string(),
+})
