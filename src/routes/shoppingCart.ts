@@ -2,10 +2,37 @@ import { zValidator } from '@hono/zod-validator';
 import factory from '../factory';
 import { cart, addCartItemSchema } from '../db/schema';
 import { and, eq } from 'drizzle-orm';
+import { createRoute, OpenAPIHono } from '@hono/zod-openapi';
+import { describeRoute } from 'hono-openapi';
+
+import { z } from 'zod';
 
 const shoppingCart = factory
 	.createApp()
-	.get('/cart', async (c) => {})
+	.get(
+		'/cart',
+		describeRoute({
+			description: 'Get shopping cart items',
+			tags: ['Shopping Cart'],
+			responses: {
+				200: {
+					description: 'items',
+					content: {
+						'application/json': {
+							schema: {
+								type: 'object',
+							},
+						},
+					},
+				},
+			},
+		}),
+		async (c) => {
+			return c.json({
+				message: 'Get shopping cart items',
+			});
+		}
+	)
 	.post('/cart/add', zValidator('json', addCartItemSchema), async (c) => {
 		const { cartId, skuNumber, quantity, color, filamentType } =
 			c.req.valid('json');
@@ -31,8 +58,7 @@ const shoppingCart = factory
 				quantity,
 				color,
 				filamentType,
-
-			})
+			});
 		}
 
 		return c.json("message: 'Add cart item',");
