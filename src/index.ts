@@ -13,20 +13,19 @@ import factory from './factory';
 import email from './routes/email';
 import shoppingCart from './routes/shoppingCart';
 import { createRoute, OpenAPIHono } from '@hono/zod-openapi';
+import { openAPISpecs } from 'hono-openapi';
+import { Scalar } from '@scalar/hono-api-reference';
 
 const docs = new OpenAPIHono();
 const app = factory
 	.createApp()
-	.use(async (c, next) => {
-		c.set('db', drizzle(c.env.DB, { schema }));
-		await next();
-	})
 	.use(logger())
 	.use(
 		cors({
 			origin: [
 				'http://localhost:3000',
 				'http://localhost:4200',
+				'http://localhost:8787',
 				'https://rc-store.benhalverson.dev',
 				'https://rc-admin.pages.dev',
 				'https://race-forge.com',
@@ -46,37 +45,14 @@ const app = factory
 	.route('/', email)
 	.route('/', shoppingCart);
 
-const route = createRoute({
-	method: 'get',
-	path: '/health',
+app.get('/open-api', openAPISpecs(app));
+app.get(
+	'/docs',
+	Scalar({
+		url: '/open-api',
+		theme: 'elysiajs',
+	})
+);
 
-	responses: {
-		200: {
-			description: 'Successful response',
-			// content: {
-			// 	'application/json': {
-			// 		schema: {
-			// 			type: 'object',
-			// 			properties: {
-			// 				message: { type: 'string' },
-			// 			},
-			// 		},
-			// 	},
-			// },
-		},
-	},
-});
-
-docs.openapi(route, (c) => {
-	return c.json({ message: 'Hello, world!' });
-});
-
-docs.doc('/doc', {
-	openapi: '3.0.0',
-	info: {
-		version: '1.0.0',
-		title: 'My API',
-	},
-});
 export default app;
 export type App = typeof app;
