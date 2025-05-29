@@ -19,7 +19,7 @@ const auth = factory
 			description: 'User signup endpoint',
 			tags: ['Auth'],
 			responses: {
-				201: {
+				200: {
 					content: {
 						'application/json': {
 							schema: resolver(signInSchema),
@@ -93,7 +93,7 @@ const auth = factory
 						message: 'User created successfully',
 						token,
 					},
-					201
+					200
 				);
 			} catch (error) {
 				if (error instanceof ZodError) {
