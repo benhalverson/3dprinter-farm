@@ -32,11 +32,27 @@ const product = factory
 		describeRoute({
 			description: 'Add a new product',
 			tags: ['Products'],
+			requestBody: {
+				content: {
+					'application/json': {
+						schema: resolver(addProductSchema),
+					},
+				},
+				required: true,
+			},
 			responses: {
 				201: {
 					content: {
 						'application/json': {
 							schema: resolver(addProductSchema),
+							// schema: z.object({
+							// 	name: z.string().min(2).max(100),
+							// 	description: z.string().min(10).max(1000),
+							// 	price: z.number().min(0),
+							// 	filamentType: z.string().max(100),
+							// 	color: z.string().max(100),
+							// 	image: z.string().url(),
+							// })
 						},
 					},
 					description: 'The product was created successfully',
@@ -98,22 +114,23 @@ const product = factory
 			}
 		}
 	)
-	.get('/product/:id',
-
+	.get(
+		'/product/:id',
 
 		async (c) => {
-		const idParam = c.req.param('id');
-		const parsedData = idSchema.parse({ id: Number(idParam) });
-		const response = await c.var.db
-			.select()
-			.from(productsTable)
-			.where(eq(productsTable.id, parsedData.id));
-		const product = response[0];
+			const idParam = c.req.param('id');
+			const parsedData = idSchema.parse({ id: Number(idParam) });
+			const response = await c.var.db
+				.select()
+				.from(productsTable)
+				.where(eq(productsTable.id, parsedData.id));
+			const product = response[0];
 
-		return product
-			? c.json(product)
-			: c.json({ error: 'Product not found' }, 404);
-	})
+			return product
+				? c.json(product)
+				: c.json({ error: 'Product not found' }, 404);
+		}
+	)
 	.put('/update-product', async (c) => {
 		try {
 			const body = await c.req.json();

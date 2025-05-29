@@ -33,6 +33,7 @@ const auth = factory
 							schema: resolver(signInSchema),
 						},
 					},
+
 					description: 'Missing or invalid parameters',
 				},
 			},

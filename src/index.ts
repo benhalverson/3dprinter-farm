@@ -16,7 +16,6 @@ import { createRoute, OpenAPIHono } from '@hono/zod-openapi';
 import { openAPISpecs } from 'hono-openapi';
 import { Scalar } from '@scalar/hono-api-reference';
 
-const docs = new OpenAPIHono();
 const app = factory
 	.createApp()
 	.use(logger())
