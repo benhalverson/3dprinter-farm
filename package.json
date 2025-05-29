@@ -14,21 +14,26 @@
     "@cloudflare/workers-types": "^4.20240725.0",
     "@libsql/client": "^0.14.0",
     "@simplewebauthn/types": "^12.0.0",
+    "@typescript/native-preview": "7.0.0-dev.20250523.1",
     "drizzle-kit": "^0.31.0",
     "typescript": "^5.5.2",
     "vitest": "3.1.2",
     "wrangler": "^4.13.2"
   },
   "dependencies": {
+    "@hono/zod-openapi": "^0.19.7",
     "@hono/zod-validator": "^0.2.2",
     "@paypal/checkout-server-sdk": "^1.0.3",
+    "@scalar/hono-api-reference": "^0.9.1",
     "@simplewebauthn/server": "^13.1.1",
     "drizzle-orm": "^0.43.1",
     "hono": "^4.6.6",
+    "hono-openapi": "^0.4.8",
     "langchain": "^0.2.17",
     "openai": "^4.57.0",
     "stripe": "^16.6.0",
-    "zod": "^3.23.8"
+    "zod": "^3.23.8",
+    "zod-openapi": "^4.2.4"
   },
   "packageManager": "pnpm@10.11.0",
   "pnpm": {
