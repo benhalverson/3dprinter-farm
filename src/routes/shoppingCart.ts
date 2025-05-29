@@ -13,19 +13,19 @@ const shoppingCart = factory
 		'/cart',
 		describeRoute({
 			description: 'Get shopping cart items',
-			tags: ['Shopping Cart'],
-			responses: {
-				200: {
-					description: 'items',
-					content: {
-						'application/json': {
-							schema: {
-								type: 'object',
-							},
-						},
-					},
-				},
-			},
+			tags: ['Shopping Cart', ],
+		    responses: {
+        200: {
+            content: {
+                "application/json": {
+                    schema: z.object({
+                        foo: z.string(),
+                    }),
+                },
+            },
+            description: "foo response",
+        },
+    },
 		}),
 		async (c) => {
 			return c.json({

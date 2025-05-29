@@ -45,7 +45,7 @@ const app = factory
 	.route('/', email)
 	.route('/', shoppingCart);
 
-app.get('/open-api', openAPISpecs(app));
+app.get('/open-api', openAPISpecs(app, { title: 'My API' }));
 app.get(
 	'/docs',
 	Scalar({
