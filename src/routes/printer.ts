@@ -18,18 +18,54 @@ const printer = factory
 	.createApp()
 	.use('/list', authMiddleware)
 	.use('/estimate', authMiddleware)
-	// .use("/upload", authMiddleware)
-	.get('/list', async (c: Context) => {
-		const list = await c.env.BUCKET.list();
-		const data = list.objects.map((o: ListResponse) => {
-			return {
-				stl: o.key,
-				size: o.size,
-				version: o.version,
-			};
-		});
-		return c.json(data);
-	})
+	.use('/upload', authMiddleware)
+	.get(
+		'/list',
+		describeRoute({
+			summary: 'List all 3D models',
+			description: 'Retrieves a list of all 3D models available for printing.',
+			tags: ['Printer'],
+			responses: {
+				200: {
+					content: {
+						'application/json': {
+							schema: z.array(
+								z.object({
+									stl: z.string().describe('The STL file name'),
+									size: z
+										.number()
+										.describe('The size of the STL file in bytes'),
+									version: z.string().describe('The version of the STL file'),
+								})
+							),
+						},
+					},
+					description: 'List of 3D models',
+				},
+				500: {
+					content: {
+						'application/json': {
+							schema: z.object({
+								error: z.string(),
+							}),
+						},
+					},
+					description: 'Failed to retrieve list',
+				},
+			},
+		}),
+		async (c: Context) => {
+			const list = await c.env.BUCKET.list();
+			const data = list.objects.map((o: ListResponse) => {
+				return {
+					stl: o.key,
+					size: o.size,
+					version: o.version,
+				};
+			});
+			return c.json(data);
+		}
+	)
 	.post(
 		'/upload',
 		describeRoute({
@@ -135,61 +171,116 @@ const printer = factory
 			);
 		}
 	})
-	.get('/colors', async (c: Context) => {
-		const query = c.req.query('filamentType');
-		const normalizedQuery = query?.toUpperCase();
-		const cacheKey = `3dprinter-web-api-COLOR_CACHE:${normalizedQuery}`;
-
-		const cachedResponse = await c.env.COLOR_CACHE.get(cacheKey);
-
-		if (cachedResponse) {
-			console.log(`Cached Hit for key ${normalizedQuery}`);
-			return c.json(JSON.parse(cachedResponse));
-		}
-
-		if (query) {
-			const validationResult = FilamentTypeSchema.safeParse(query);
-
-			if (!validationResult.success) {
-				return c.json(
-					{
-						error: 'Invalid filament type',
-						message: validationResult.error.issues[0].message,
+	.get(
+		'/colors',
+		describeRoute({
+			summary: 'Get available filament colors',
+			description: 'Retrieves a list of available filament colors.',
+			tags: ['Printer'],
+			parameters: [
+				{
+					name: 'filamentType',
+					in: 'query',
+					required: false,
+					schema: FilamentTypeSchema,
+					description: 'Filter colors by filament type (PLA or PETG)',
+				},
+			],
+			responses: {
+				200: {
+					content: {
+						'application/json': {
+							schema: z.array(
+								z.object({
+									filament: z.string(),
+									hexColor: z.string(),
+									colorTag: z.string(),
+								})
+							),
+						},
 					},
-					400
-				);
-			}
-		}
-
-		const response = await fetch(`${BASE_URL}filament`, {
-			headers: {
-				'Content-Type': 'application/json',
-				'api-key': c.env.SLANT_API,
+					description: 'List of filament colors',
+				},
+				400: {
+					content: {
+						'application/json': {
+							schema: z.object({
+								error: z.string(),
+								message: z.string(),
+							}),
+						},
+					},
+					description: 'Invalid filament type',
+				},
+				500: {
+					content: {
+						'application/json': {
+							schema: z.object({
+								error: z.string(),
+								details: z.any(),
+							}),
+						},
+					},
+					description: 'Failed to retrieve colors',
+				},
 			},
-		});
+		}),
+		async (c: Context) => {
+			const query = c.req.query('filamentType');
+			const normalizedQuery = query?.toUpperCase();
+			const cacheKey = `3dprinter-web-api-COLOR_CACHE:${normalizedQuery}`;
 
-		if (!response.ok) {
-			const error = (await response.json()) as ErrorResponse;
-			return c.json({ error: 'Failed to get colors', details: error }, 500);
+			const cachedResponse = await c.env.COLOR_CACHE.get(cacheKey);
+
+			if (cachedResponse) {
+				console.log(`Cached Hit for key ${normalizedQuery}`);
+				return c.json(JSON.parse(cachedResponse));
+			}
+
+			if (query) {
+				const validationResult = FilamentTypeSchema.safeParse(query);
+
+				if (!validationResult.success) {
+					return c.json(
+						{
+							error: 'Invalid filament type',
+							message: validationResult.error.issues[0].message,
+						},
+						400
+					);
+				}
+			}
+
+			const response = await fetch(`${BASE_URL}filament`, {
+				headers: {
+					'Content-Type': 'application/json',
+					'api-key': c.env.SLANT_API,
+				},
+			});
+
+			if (!response.ok) {
+				const error = (await response.json()) as ErrorResponse;
+				return c.json({ error: 'Failed to get colors', details: error }, 500);
+			}
+
+			const result = (await response.json()) as FilamentColorsResponse;
+
+			const filteredFilaments = result.filaments
+				.filter((filament) => !query || filament.profile === query) // Return all if no query, or filter by query
+				.map(({ filament, hexColor, colorTag }) => ({
+					filament,
+					hexColor,
+					colorTag,
+				}))
+				.sort((a, b) => a.colorTag.localeCompare(b.hexColor));
+
+			await c.env.COLOR_CACHE.put(cacheKey, JSON.stringify(filteredFilaments), {
+				expirationTtl: 604800, // 1 week
+			});
+
+			return c.json(filteredFilaments);
 		}
-
-		const result = (await response.json()) as FilamentColorsResponse;
-
-		const filteredFilaments = result.filaments
-			.filter((filament) => !query || filament.profile === query) // Return all if no query, or filter by query
-			.map(({ filament, hexColor, colorTag }) => ({
-				filament,
-				hexColor,
-				colorTag,
-			}))
-			.sort((a, b) => a.colorTag.localeCompare(b.hexColor));
-
-		await c.env.COLOR_CACHE.put(cacheKey, JSON.stringify(filteredFilaments), {
-			expirationTtl: 604800, // 1 week
-		});
-
-		return c.json(filteredFilaments);
-	})
+	)
 	.post('/estimate', async (c: Context) => {
 		try {
 			const data = await c.req.json();
