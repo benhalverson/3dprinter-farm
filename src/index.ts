@@ -45,14 +45,29 @@ const app = factory
 	.route('/', email)
 	.route('/', shoppingCart);
 
-app.get('/open-api', openAPISpecs(app, { title: 'My API' }));
+app.get(
+	'/open-api',
+	openAPISpecs(app, {
+		documentation: {
+		components: {
+        securitySchemes: {
+          cookieAuth: {
+            type: 'apiKey',
+            in: 'cookie',
+            name: 'token',
+          },
+        },
+      },
+      security: [{ cookieAuth: [] }],
+			info: { title: 'Heyo', version: '1.0.0' } },
+	})
+);
 app.get(
 	'/docs',
 	Scalar({
 		url: '/open-api',
-		theme: 'elysiajs',
+		theme: 'fastify',
 	})
 );
-
 export default app;
 export type App = typeof app;
