@@ -6,23 +6,85 @@ const encode = (str: string): Uint8Array => {
 	return new TextEncoder().encode(str);
 };
 
+const decode = (buf: ArrayBuffer): string => {
+	return new TextDecoder().decode(buf);
+};
+
 const arrayBuffertoBase64 = (arrayBuffer: Uint8Array): string => {
 	return btoa(String.fromCharCode(...new Uint8Array(arrayBuffer.buffer)));
 };
 
 const base64ToArrayBuffer = (base64: string): ArrayBuffer => {
-	const binaryString = atob(base64);
+	const binaryString = Buffer.from(base64, 'base64').toString('binary');
+	console.log('binaryString', binaryString);
 	const bytes = new Uint8Array(binaryString.length);
 	for (let i = 0; i < binaryString.length; i++) {
 		bytes[i] = binaryString.charCodeAt(i);
 	}
 	return bytes.buffer;
 };
+
+export const deriveEncryptionKey = async (passphrase: string, salt: Uint8Array): Promise<CryptoKey> => {
+	const baseKey = await crypto.subtle.importKey(
+		'raw',
+		encode(passphrase),
+		{ name: 'PBKDF2' },
+		false,
+		['deriveKey']
+	);
+
+	return crypto.subtle.deriveKey(
+		{
+			name: 'PBKDF2',
+			salt,
+			iterations: ITERATIONS,
+			hash: HASH_ALGORITHM,
+		},
+		baseKey,
+		{ name: 'AES-GCM', length: 256 },
+		false,
+		['encrypt', 'decrypt']
+	);
+};
+
+export const encryptField = async (plaintext: string, passphrase: string): Promise<string> => {
+	const iv = crypto.getRandomValues(new Uint8Array(12));
+	const salt = crypto.getRandomValues(new Uint8Array(16));
+	const key = await deriveEncryptionKey(passphrase, salt);
+	const encoded = encode(plaintext);
+	console.log('encoded', encoded);
+
+	const ciphertext = await crypto.subtle.encrypt(
+		{ name: 'AES-GCM', iv },
+		key,
+		encoded
+	);
+
+	console.log('why are you empty?', ciphertext);
+	return `${arrayBuffertoBase64(salt)}:${arrayBuffertoBase64(iv)}:${arrayBuffertoBase64(new Uint8Array(ciphertext))}`;
+};
+
+export const decryptField = async (cipherTextCombined: string, passphrase: string): Promise<string> => {
+	const [saltStr, ivStr, cipherStr] = cipherTextCombined.split(':');
+	const salt = new Uint8Array(base64ToArrayBuffer(saltStr));
+	const iv = new Uint8Array(base64ToArrayBuffer(ivStr));
+	const ciphertext = base64ToArrayBuffer(cipherStr);
+	console.log('decryptField ciphertext', ciphertext);
+
+	const key = await deriveEncryptionKey(passphrase, salt);
+
+	const decrypted = await crypto.subtle.decrypt(
+		{ name: 'AES-GCM', iv },
+		key,
+		ciphertext
+	);
+
+	return decode(decrypted);
+};
+
 export const hashPassword = async (password: string): Promise<Salt> => {
-	// Generate a random 16-byte salt
 	const saltBytes = crypto.getRandomValues(new Uint8Array(16));
 
-	// Import the password as a raw key
 	const baseKey = await crypto.subtle.importKey(
 		'raw',
 		encode(password),
@@ -31,7 +93,6 @@ export const hashPassword = async (password: string): Promise<Salt> => {
 		['deriveBits']
 	);
 
-	// Derive bits with PBKDF2 + salt
 	const derivedBits = await crypto.subtle.deriveBits(
 		{
 			name: 'PBKDF2',
@@ -111,8 +172,6 @@ export const signJWT = async ({
 		alg: 'HS256',
 		typ: 'JWT',
 	};
-
-	const now = Math.floor(Date.now() / 1000);
 
 	payload.iat = iat;
 	payload.exp = exp;

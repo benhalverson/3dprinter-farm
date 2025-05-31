@@ -21,6 +21,7 @@ export type Bindings = {
 	MAILJET_TEMPLATE_ID: string;
 	MAILJET_SENDER_EMAIL: string;
 	MAILJET_SENDER_NAME: string;
+	ENCRYPTION_PASSPHRASE: string;
 };
 
 export interface SliceResponse {
