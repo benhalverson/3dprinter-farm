@@ -66,15 +66,15 @@ export const users = sqliteTable('users', {
 	email: text('email').notNull().unique(),
 	passwordHash: text('password_hash').notNull(),
 	salt: text('salt').notNull(),
-	firstName: text('first_name').notNull(),
-	lastName: text('last_name').notNull(),
-	shippingAddress: text('shipping_address').notNull(),
-	billingAddress: text('billing_address').notNull(),
+	firstName: text('first_name').default('').notNull(),
+	lastName: text('last_name').default('').notNull(),
+	shippingAddress: text('shipping_address').default('').notNull(),
+	billingAddress: text('billing_address').default('').notNull(),
 	city: text('city').notNull().default(''),
 	state: text('state').notNull().default(''),
 	zipCode: text('zip_code').notNull().default(''),
 	country: text('country').notNull().default(''),
-	phone: text('phone'), // Use Zod for validation elsewhere
+	phone: text('phone').notNull().default(''),
 	role: text('role').default('user').notNull(),
 });
 

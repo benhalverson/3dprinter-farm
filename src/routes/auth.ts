@@ -3,7 +3,12 @@ import { deleteCookie, setSignedCookie } from 'hono/cookie';
 import { ZodError } from 'zod';
 import { zValidator } from '@hono/zod-validator';
 import { signInSchema, signUpSchema, users } from '../db/schema';
-import { hashPassword, signJWT, verifyPassword } from '../utils/crypto';
+import {
+	encryptField,
+	hashPassword,
+	signJWT,
+	verifyPassword,
+} from '../utils/crypto';
 import { rateLimit } from '../utils/rateLimit';
 import factory from '../factory';
 import { describeRoute } from 'hono-openapi';
@@ -57,16 +62,22 @@ const auth = factory
 				}
 
 				const { salt, hash } = await hashPassword(password);
+				const passphrase = c.env.ENCRYPTION_PASSPHRASE;
 				const [insertedUser] = await db
 					.insert(users)
 					.values({
 						email,
 						passwordHash: hash,
 						salt,
-						firstName: '',
-						lastName: '',
-						shippingAddress: '',
-						billingAddress: '',
+						firstName: await encryptField('', passphrase),
+						lastName: await encryptField('', passphrase),
+						shippingAddress: await encryptField('', passphrase),
+						billingAddress: await encryptField('', passphrase),
+						city: await encryptField('', passphrase),
+						state: await encryptField('', passphrase),
+						zipCode: await encryptField('', passphrase),
+						country: await encryptField('', passphrase),
+						phone: await encryptField('', passphrase),
 					})
 					.returning();
 
