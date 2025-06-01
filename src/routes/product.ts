@@ -13,11 +13,9 @@ import { generateSkuNumber } from '../utils/generateSkuNumber';
 import { BASE_URL } from '../constants';
 import { calculateMarkupPrice } from '../utils/calculateMarkupPrice';
 import factory from '../factory';
-import { z } from 'zod';
-
 import { describeRoute } from 'hono-openapi';
-
 import { resolver } from 'hono-openapi/zod';
+import Stripe from 'stripe';
 
 const product = factory
 	.createApp()
@@ -45,14 +43,6 @@ const product = factory
 					content: {
 						'application/json': {
 							schema: resolver(addProductSchema),
-							// schema: z.object({
-							// 	name: z.string().min(2).max(100),
-							// 	description: z.string().min(10).max(1000),
-							// 	price: z.number().min(0),
-							// 	filamentType: z.string().max(100),
-							// 	color: z.string().max(100),
-							// 	image: z.string().url(),
-							// })
 						},
 					},
 					description: 'The product was created successfully',
@@ -69,10 +59,23 @@ const product = factory
 		}),
 		zValidator('json', addProductSchema),
 		async (c) => {
+			const stripe = new Stripe(c.env.STRIPE_SECRET_KEY, {
+				telemetry: false,
+			});
 			const user = c.get('jwtPayload') as { id: number; email: string };
 			if (!user) return c.json({ error: 'Unauthorized' }, 401);
 			const data = await c.req.valid('json');
 			const skuNumber = generateSkuNumber(data.name, data.color);
+
+			const stripeProduct = await stripe.products.create({
+				name: data.name,
+				description: data.description,
+				images: [data.image],
+				shippable: true,
+				metadata: {
+					sku_number: skuNumber,
+				},
+			});
 
 			const slicingResponse = await fetch(`${BASE_URL}slicer`, {
 				method: 'POST',
@@ -97,11 +100,24 @@ const product = factory
 			const basePrice = slicingResult.data.price;
 			const markupPrice = calculateMarkupPrice(basePrice, data.price);
 
+			let stripePriceId = null;
+			if (markupPrice) {
+				const price = await stripe.prices.create({
+					product: stripeProduct.id,
+					unit_amount: Math.round(markupPrice * 100), // Stripe expects the amount in cents
+					currency: 'usd',
+				});
+				stripePriceId = price.id;
+			}
+
 			const productDataToInsert = {
 				...data,
 				price: markupPrice,
 				skuNumber: skuNumber,
+				stripeProductId: stripeProduct.id,
+				stripePriceId: stripePriceId,
 			};
+
 			try {
 				const response = await c.var.db
 					.insert(productsTable)

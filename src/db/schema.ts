@@ -36,15 +36,17 @@ export const usPhoneNumberSchema = z
 	);
 
 export const productsTable = sqliteTable('products', {
-	id: integer('id').primaryKey({ autoIncrement: true }),
-	name: text('name').notNull(),
-	description: text('description').notNull(),
-	image: text('image').default(''),
-	stl: text('stl').notNull(),
-	price: real('price').default(0).notNull(),
-	filamentType: text('filament_type').notNull().default('PLA'),
-	skuNumber: text('sku_number').default(''),
-	color: text('color').default('#000000'),
+   id: integer('id').primaryKey({ autoIncrement: true }),
+   name: text('name').notNull(),
+   description: text('description').notNull(),
+   image: text('image').default(''),
+   stl: text('stl').notNull(),
+   price: real('price').default(0).notNull(),
+   filamentType: text('filament_type').notNull().default('PLA'),
+   skuNumber: text('sku_number').default(''),
+   color: text('color').default('#000000'),
+   stripeProductId: text('stripe_product_id'),
+   stripePriceId: text('stripe_price_id'),
 });
 
 export const ProductsDataSchema = z
@@ -63,7 +65,7 @@ export const ProductsDataSchema = z
 
 export const users = sqliteTable('users', {
 	id: integer('id').primaryKey(),
-	email: text('email').notNull().unique(),
+	email: text('email').notNull(),
 	passwordHash: text('password_hash').notNull(),
 	salt: text('salt').notNull(),
 	firstName: text('first_name').default('').notNull(),
@@ -109,7 +111,7 @@ export type OrderData = z.infer<typeof OrderDataSchema>;
 export type ProductData = z.infer<typeof ProductsDataSchema>;
 export type ProfileData = z.infer<typeof ProfileDataSchema>;
 
-export const ordersTable = sqliteTable('orders', {
+export const ordersTable = sqliteTable('ordersTable', {
 	id: integer('id').primaryKey(),
 	userId: integer('user_id')
 		.references(() => users.id, { onDelete: 'cascade' }) // Establish relationship with users table
