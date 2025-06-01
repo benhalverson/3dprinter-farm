@@ -11,7 +11,7 @@ const decode = (buf: ArrayBuffer): string => {
 };
 
 const arrayBuffertoBase64 = (arrayBuffer: Uint8Array): string => {
-	return btoa(String.fromCharCode(...new Uint8Array(arrayBuffer.buffer)));
+	return Buffer.from(arrayBuffer).toString('base64');
 };
 
 const base64ToArrayBuffer = (base64: string): ArrayBuffer => {
