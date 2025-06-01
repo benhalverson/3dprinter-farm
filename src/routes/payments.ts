@@ -3,28 +3,57 @@ import Stripe from 'stripe';
 import { getPayPalAccessToken } from '../utils/payPalAccess';
 import { authMiddleware } from '../utils/authMiddleware';
 import factory from '../factory';
+import { productsTable } from '../db/schema';
+import { eq } from 'drizzle-orm';
 
-const paymentsRouter = factory.createApp()
-	.get('/checkout', authMiddleware, async (c: Context) => {
-		const quantity = c.req.query('qty');
-		const stripe = new Stripe(c.env.STRIPE_SECRET_KEY);
+const paymentsRouter = factory
+	.createApp()
+	// .post('/stripe/checkout', authMiddleware, async (c: Context) => {
+	.post('/stripe/checkout',  async (c: Context) => {
+		const items = await c.req.json();
+		console.log('items type', Array.isArray(items));
+		if (!Array.isArray(items) || items.length === 0) {
+			return c.json({ error: 'No items provided' }, 400);
+		}
+		const line_items = [];
+
+		for (const item of items) {
+			const { productId, quantity } = item;
+			if (!productId || !quantity) {
+				return c.json({ error: 'Invalid item format' }, 400);
+			}
+			const [product] = await c.var.db
+				.select()
+				.from(productsTable)
+				.where(eq(productsTable.id, productId));
+			if (!product) {
+				return c.json({ error: `Product not found: ${productId}` }, 404);
+			}
+
+			const stripeClient = new Stripe(c.env.STRIPE_SECRET_KEY);
+			const prices = await stripeClient.prices.list({
+				product: product.stripeProductId,
+				active: true,
+			});
+			if (!prices.data.length) {
+				return c.json(
+					{ error: `No Stripe price found for product: ${productId}` },
+					500
+				);
+			}
+			line_items.push({ price: prices.data[0].id, quantity });
+		}
+		const stripeClient = new Stripe(c.env.STRIPE_SECRET_KEY);
 		try {
-			const session = await stripe.checkout.sessions.create({
+			const session = await stripeClient.checkout.sessions.create({
 				payment_method_types: ['card'],
-				line_items: [
-					{
-						price: c.env.STRIPE_PRICE_ID,
-						quantity: 1,
-					},
-				],
+				line_items,
 				mode: 'payment',
 				success_url: `${c.env.DOMAIN}/success`,
 				cancel_url: `${c.env.DOMAIN}/cancel`,
 			});
-
 			return c.json(session);
-		}
-		catch (error) {
+		} catch (error) {
 			return c.json({ status: 'Error', error });
 		}
 	})
@@ -60,11 +89,9 @@ const paymentsRouter = factory.createApp()
 					],
 				}),
 			}
-		)
+		);
 
-	const data = (await response.json()) as any;
-	return data;
-	})
-;
-
+		const data = (await response.json()) as any;
+		return data;
+	});
 export default paymentsRouter;

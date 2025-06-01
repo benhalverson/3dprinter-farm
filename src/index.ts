@@ -42,6 +42,7 @@ const app = factory
 	.route('/', userRouter)
 	.route('/', printer)
 	.route('/', email)
+	.route('/', paymentsRouter)
 	.route('/', shoppingCart);
 
 app.get(

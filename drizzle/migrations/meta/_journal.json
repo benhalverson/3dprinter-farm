@@ -5,43 +5,15 @@
     {
       "idx": 0,
       "version": "6",
-      "when": 1733026902627,
-      "tag": "0000_blushing_madame_web",
+      "when": 1748756434173,
+      "tag": "0000_sleepy_mariko_yashida",
       "breakpoints": true
     },
     {
       "idx": 1,
       "version": "6",
-      "when": 1743981268921,
-      "tag": "0001_shallow_blob",
-      "breakpoints": true
-    },
-    {
-      "idx": 2,
-      "version": "6",
-      "when": 1744705438646,
-      "tag": "0002_flawless_hellfire_club",
-      "breakpoints": true
-    },
-    {
-      "idx": 3,
-      "version": "6",
-      "when": 1746243820080,
-      "tag": "0003_cooing_vulcan",
-      "breakpoints": true
-    },
-    {
-      "idx": 4,
-      "version": "6",
-      "when": 1747292681111,
-      "tag": "0004_silky_shard",
-      "breakpoints": true
-    },
-    {
-      "idx": 5,
-      "version": "6",
-      "when": 1747302491413,
-      "tag": "0005_peaceful_wallop",
+      "when": 1748757501346,
+      "tag": "0001_round_millenium_guard",
       "breakpoints": true
     }
   ]
