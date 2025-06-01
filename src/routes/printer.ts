@@ -13,6 +13,11 @@ import { authMiddleware } from '../utils/authMiddleware';
 import { orderSchema } from '../db/schema';
 import factory from '../factory';
 import { describeRoute } from 'hono-openapi';
+const FilamentTypeSchema = z.enum(['PLA', 'PETG'], {
+	errorMap: () => ({
+		message: 'Accepted values are "PLA" and "PETG".',
+	}),
+});
 
 const printer = factory
 	.createApp()
@@ -315,8 +320,3 @@ const printer = factory
 
 export default printer;
 
-const FilamentTypeSchema = z.enum(['PLA', 'PETG'], {
-	errorMap: () => ({
-		message: 'Accepted values are "PLA" and "PETG".',
-	}),
-});
