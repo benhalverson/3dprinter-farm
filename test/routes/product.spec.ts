@@ -1,10 +1,25 @@
-import { describe, test, expect, beforeEach, vi } from 'vitest';
+import { describe, test, expect, beforeEach } from 'vitest';
 import app from '../../src/index';
+import { vi } from 'vitest';
 import { mockEnv } from '../mocks/env';
 import { mockWhere, mockAll, mockInsert, mockUpdate } from '../mocks/drizzle';
 
 // This cookie value matches what your mockAuth is expecting
 const fakeSignedCookie = 'token=s.mocked.signed.cookie';
+
+vi.mock('stripe', () => {
+  return {
+	default: vi.fn().mockImplementation(() => ({
+	  products: {
+		create: vi.fn().mockResolvedValue({ id: 'prod_123' }),
+	  },
+	  prices: {
+		create: vi.fn().mockResolvedValue({ id: 'price_123' }),
+	  },
+	})),
+  };
+});
+
 
 describe('Product Routes', () => {
 	beforeEach(() => {
