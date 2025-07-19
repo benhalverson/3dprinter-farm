@@ -92,7 +92,6 @@ const passKeyAuth = factory
 	.post('/webauthn/auth/begin', async (c) => {
 		const db = drizzle(c.env.DB);
 		const { email } = await c.req.json();
-		console.log('Email:', email);
 
 		const [user] = await db.select().from(users).where(eq(users.email, email));
 		if (!user) return c.json({ error: 'User not found' }, 404);
@@ -215,12 +214,6 @@ const passKeyAuth = factory
 				.select()
 				.from(users)
 				.where(eq(email, email));
-
-			console.log('User data:', userData);
-
-
-
-
 
 		// Retrieve stored challenge for this user
 		const [challengeRow] = await db

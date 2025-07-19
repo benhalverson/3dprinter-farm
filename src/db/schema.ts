@@ -16,6 +16,7 @@ export const cart = sqliteTable('cart', {
 	quantity: integer('quantity').default(1).notNull(),
 	color: text('color').default('#000000'),
 	filamentType: text('filament_type').notNull(),
+	createdOn: integer('created_on').notNull(),
 });
 
 export const leads = sqliteTable('leads', {

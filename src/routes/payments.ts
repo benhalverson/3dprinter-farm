@@ -24,7 +24,6 @@ const paymentsRouter = factory
 	.post('/checkout', zValidator('json', checkoutSchema), async (c) => {
 	// .post('/checkout',  async (c) => {
 		const items = c.req.valid('json');
-		// console.log('items type', Array.isArray(items));
 		if (!Array.isArray(items) || items.length === 0) {
 			return c.json({ error: 'No items provided' }, 400);
 		}

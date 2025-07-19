@@ -5,6 +5,7 @@ import { and, eq } from 'drizzle-orm';
 import { describeRoute } from 'hono-openapi';
 import Stripe from 'stripe';
 import { z } from 'zod';
+import { UserJWT } from './users';
 
 // Schemas
 const CartItemSchema = z.object({
@@ -17,7 +18,6 @@ const CartItemSchema = z.object({
 });
 
 const AddCartItemSchema = z.object({
-	cartId: z.string(),
 	skuNumber: z.string(),
 	quantity: z.number().min(1),
 	color: z.string(),
@@ -40,84 +40,82 @@ const RemoveCartItemSchema = z.object({
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!);
 
 const shoppingCart = factory.createApp()
-
-	// ✅ GET /cart
 	.get(
 		'/cart',
 		describeRoute({
-			method: 'get',
+			// method: 'get',
 			tags: ['Cart'],
 			description: 'Get all items in the cart',
-			query: z.object({ cartId: z.string() }),
+			// query: z.object({ cartId: z.string() }),
 			responses: {
 				200: {
 					description: 'List of cart items',
-					content: {
-						'application/json': {
-							schema: z.object({
-								items: z.array(CartItemSchema),
-							}),
-						},
-					},
+					// content: {
+					// 	'application/json': {
+					// 		schema: z.object({
+					// 			items: z.array(CartItemSchema),
+					// 		}),
+					// 	},
+					// },
 				},
 			},
 		}),
 		async (c) => {
-			const cartId = c.req.query('cartId');
-			const cartItems = await c.var.db.select().from(cart).where(eq(cart.cartId, Number(cartId)));
-			return c.json({ items: cartItems });
+			return c.json({ items: []});
 		}
 	)
 
-	// ✅ GET /cart/total
 	.get(
 		'/cart/total',
 		describeRoute({
-			method: 'get',
+			// method: 'get',
 			tags: ['Cart'],
 			description: 'Get subtotal and item count for a cart',
-			query: z.object({ cartId: z.string() }),
-			responses: {
-				200: {
-					description: 'Cart total',
-					content: {
-						'application/json': {
-							schema: z.object({
-								subtotal: z.number(),
-								itemCount: z.number(),
-							}),
-						},
-					},
-				},
-			},
+			// query: z.object({ cartId: z.string() }),
+			// responses: {
+			// 	200: {
+			// 		description: 'Cart total',
+			// 		content: {
+			// 			'application/json': {
+			// 				schema: z.object({
+			// 					subtotal: z.number(),
+			// 					itemCount: z.number(),
+			// 				}),
+			// 			},
+			// 		},
+			// 	},
+			// },
 		}),
 		async (c) => {
 			const cartId = c.req.query('cartId');
-			const cartItems = await c.var.db.select().from(cart).where(eq(cart.cartId, Number(cartId)));
+			const cartItems = await c.var.db
+				.select()
+				.from(cart)
+				.where(eq(cart.cartId, Number(cartId)));
 
 
-			let subtotal = 0;
-			for (const item of cartItems) {
-				const [product] = await c.var.db
-					.select({ price: productsTable.price })
-					.from(productsTable)
-					.where(eq(productsTable.skuNumber, item.skuNumber));
+			// let subtotal = 0;
+			// for (const item of cartItems) {
+			// 	const [product] = await c.var.db
+			// 		.select({ price: productsTable.price })
+			// 		.from(productsTable)
+			// 		.where(eq(productsTable.skuNumber, item.skuNumber));
 
-					console.log('Product:', product);
+			// 		console.log('Product:', product);
 
-				if (product?.price) {
-					subtotal += product.price * item.quantity;
-				}
-			}
+			// 	if (product?.price) {
+			// 		subtotal += product.price * item.quantity;
+			// 	}
+			// }
 
 			return c.json({
-				subtotal,
-				itemCount: cartItems.reduce((acc, i) => acc + i.quantity, 0),
+				"items": []
+				// subtotal,
+				// itemCount: cartItems.reduce((acc, i) => acc + i.quantity, 0),
 			});
 		}
 	)
 
-	// ✅ POST /cart/add
 	.post(
 		'/cart/add',
 		describeRoute({
@@ -144,11 +142,14 @@ const shoppingCart = factory.createApp()
 		}),
 		zValidator('json', AddCartItemSchema),
 		async (c) => {
-			const { cartId, skuNumber, quantity, color, filamentType } = c.req.valid('json');
+			const { skuNumber, quantity, color, filamentType } = c.req.valid('json');
+
+			// use the userid from the jwt cookie as the cartId
+			const cartId: UserJWT = c.get('jwtPayload')
 
 			const existing = await c.var.db.query.cart.findFirst({
 				where: and(
-					eq(cart.cartId, cartId),
+					eq(cart.cartId, cartId.id),
 					eq(cart.skuNumber, skuNumber),
 					eq(cart.color, color),
 				),
@@ -160,11 +161,12 @@ const shoppingCart = factory.createApp()
 				}).where(eq(cart.id, existing.id));
 			} else {
 				await c.var.db.insert(cart).values({
-					cartId,
+					cartId: cartId.id,
 					skuNumber,
 					quantity,
 					color,
 					filamentType,
+					createdOn: Date.now(),
 				});
 			}
 
@@ -172,7 +174,6 @@ const shoppingCart = factory.createApp()
 		}
 	)
 
-	// ✅ PUT /cart/update
 	.put(
 		'/cart/update',
 		describeRoute({
@@ -260,57 +261,61 @@ const shoppingCart = factory.createApp()
 		}
 	)
 
-	// ✅ POST /cart/checkout
-	.post(
-		'/cart/checkout',
-		describeRoute({
-			method: 'post',
-			tags: ['Cart'],
-			description: 'Create Stripe checkout session',
-			query: z.object({ cartId: z.string() }),
-			responses: {
-				200: {
-					description: 'Stripe session created',
-					content: {
-						'application/json': {
-							schema: z.object({
-								url: z.string(),
-								id: z.string(),
-							}),
-						},
-					},
-				},
-			},
-		}),
-		async (c) => {
-			const cartId = c.req.query('cartId');
-			if (!cartId) return c.json({ error: 'Missing cartId' }, 400);
+.post(
+  '/cart/checkout',
+  describeRoute({
+    method: 'post',
+    tags: ['Cart'],
+    description: 'Create Stripe payment intent for custom checkout UI',
+    query: z.object({ cartId: z.string() }),
+    responses: {
+      200: {
+        description: 'Stripe PaymentIntent client secret',
+        content: {
+          'application/json': {
+            schema: z.object({ clientSecret: z.string() }),
+          },
+        },
+      },
+    },
+  }),
+  async (c) => {
+    const cartId = c.req.query('cartId');
+    if (!cartId) return c.json({ error: 'Missing cartId' }, 400);
 
-			const cartItems = await c.var.db.select().from(cart).where(eq(cart.cartId, Number(cartId)));
-			if (!cartItems.length) return c.json({ error: 'Cart is empty' }, 400);
+    const cartItems = await c.var.db
+      .select()
+      .from(cart)
+      .where(eq(cart.cartId, Number(cartId)));
 
-			const line_items = [];
-			for (const item of cartItems) {
-				const [product] = await c.var.db
-					.select()
-					.from(productsTable)
-					.where(eq(productsTable.skuNumber, item.skuNumber));
-				if (!product?.stripePriceId) {
-					return c.json({ error: `No Stripe price for ${item.skuNumber}` }, 500);
-				}
-				line_items.push({ price: product.stripePriceId, quantity: item.quantity });
-			}
+    if (!cartItems.length) return c.json({ error: 'Cart is empty' }, 400);
 
-			const session = await stripe.checkout.sessions.create({
-				payment_method_types: ['card'],
-				line_items,
-				mode: 'payment',
-				success_url: `${c.env.DOMAIN}/success`,
-				cancel_url: `${c.env.DOMAIN}/cancel`,
-			});
+    let total = 0;
+    for (const item of cartItems) {
+      const [product] = await c.var.db
+        .select({ price: productsTable.price })
+        .from(productsTable)
+        .where(eq(productsTable.skuNumber, item.skuNumber));
 
-			return c.json({ url: session.url, id: session.id });
-		}
-	);
+      if (!product?.price) {
+        return c.json({ error: `Missing price for ${item.skuNumber}` }, 500);
+      }
+
+      total += product.price * item.quantity;
+    }
+
+    // Convert to cents
+    const amount = Math.round(total * 100);
+
+    const intent = await stripe.paymentIntents.create({
+      amount,
+      currency: 'usd',
+      automatic_payment_methods: { enabled: true },
+    });
+
+    return c.json({ clientSecret: intent.client_secret! });
+  }
+);
+
 
 export default shoppingCart;

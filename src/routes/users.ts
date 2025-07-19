@@ -8,7 +8,7 @@ const userRouter = factory
 	.createApp()
 
 	.get('/profile', authMiddleware, async (c) => {
-		const user = c.get('jwtPayload') as { id: number; email: string };
+		const user: UserJWT = c.get('jwtPayload');
 		if (!user) {
 			return c.json({ error: 'Unauthorized' }, 401);
 		}
@@ -107,3 +107,8 @@ const userRouter = factory
 	});
 
 export default userRouter;
+
+export interface UserJWT {
+	id: number;
+	email: string;
+}
