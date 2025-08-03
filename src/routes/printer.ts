@@ -18,7 +18,7 @@ const printer = factory
 	.createApp()
 	.use('/list', authMiddleware)
 	.use('/estimate', authMiddleware)
-	.use('/upload', authMiddleware)
+	// .use('/upload', authMiddleware)
 	.get(
 		'/list',
 		describeRoute({
