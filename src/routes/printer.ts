@@ -13,6 +13,7 @@ import { authMiddleware } from '../utils/authMiddleware';
 import { orderSchema } from '../db/schema';
 import factory from '../factory';
 import { describeRoute } from 'hono-openapi';
+import { dash } from '../utils/dash';
 
 const printer = factory
 	.createApp()
