@@ -125,13 +125,18 @@ const printer = factory
 			}
 
 			const file = body.file as File;
+			const mimeType = file.type === 'model/stl';
+			const acceptableExtension = file.name.toLowerCase().endsWith('.stl');
+			if(!mimeType && !acceptableExtension) {
+				return c.json({ error: 'Invalid file type or extension' }, 415);
+			}
 			const bucket = c.env.BUCKET;
 			const key = `${file.name}`;
 			const cleanKey = dash(key);
 
 			try {
 				await bucket.put(cleanKey, file.stream(), {
-					httpMetadata: { contentType: file.type },
+					httpMetadata: { contentType: 'model/stl' },
 				});
 
 				const base = c.env.R2_PUBLIC_BASE_URL || new URL(c.req.url).origin;
