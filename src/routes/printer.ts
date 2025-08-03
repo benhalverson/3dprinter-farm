@@ -88,6 +88,7 @@ const printer = factory
 							schema: z.object({
 								message: z.string(),
 								key: z.string(),
+								url: z.string(),
 							}),
 						},
 					},
@@ -123,16 +124,20 @@ const printer = factory
 			}
 
 			const file = body.file as File;
+			const bucket = c.env.BUCKET;
+			const key = `${file.name}`;
+			const cleanKey = dash(key);
 
 			try {
-				const bucket = c.env.BUCKET;
-				const key = `${file.name}`;
-
-				await bucket.put(key, file.stream(), {
+				await bucket.put(cleanKey, file.stream(), {
 					httpMetadata: { contentType: file.type },
 				});
 
-				return c.json({ message: 'File uploaded', key });
+				const base = c.env.R2_PUBLIC_BASE_URL || new URL(c.req.url).origin;
+				console.log('base', base);
+				const url = `${base}/${encodeURIComponent(cleanKey)}`;
+
+				return c.json({ message: 'File uploaded', key: cleanKey, url });
 			} catch (error) {
 				console.error('error', error);
 				return c.json({ error: 'Failed to upload file' }, 500);

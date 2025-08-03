@@ -36,3 +36,6 @@ preview_id = "c7d43c86ba9c4f5c9419970c12bb2fca"
 [env.production.vars]
 DOMAIN = "https://rc-store.benhalverson.dev"
 RP_ID = "rc-store.benhalverson.dev"
+
+[vars]
+R2_PUBLIC_BASE_URL = "https://uploads.benhalverson.dev"
