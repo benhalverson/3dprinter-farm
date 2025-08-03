@@ -13,7 +13,7 @@ import { authMiddleware } from '../utils/authMiddleware';
 import { orderSchema } from '../db/schema';
 import factory from '../factory';
 import { describeRoute } from 'hono-openapi';
-import { dash } from '../utils/dash';
+import { dashFilename } from '../utils/dash';
 
 const printer = factory
 	.createApp()
@@ -132,7 +132,7 @@ const printer = factory
 			}
 			const bucket = c.env.BUCKET;
 			const key = `${file.name}`;
-			const cleanKey = dash(key);
+			const cleanKey = dashFilename(key);
 
 			try {
 				await bucket.put(cleanKey, file.stream(), {

@@ -3,7 +3,7 @@
  * @param input The string to normalize.
  * @returns The normalized string.
  */
-export const dash = (input: string) => {
+export const dashFilename = (input: string) => {
   const dot = input.lastIndexOf('.');
   const name = dot === -1 ? input : input.slice(0, dot);
   const ext  = dot === -1 ? ''       : input.slice(dot);   // includes "."
