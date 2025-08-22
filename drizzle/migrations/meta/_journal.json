@@ -15,6 +15,13 @@
       "when": 1748757501346,
       "tag": "0001_round_millenium_guard",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1755835084711,
+      "tag": "0002_uneven_glorian",
+      "breakpoints": true
     }
   ]
 }

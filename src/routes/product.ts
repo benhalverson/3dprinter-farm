@@ -116,6 +116,7 @@ const product = factory
 				skuNumber: skuNumber,
 				stripeProductId: stripeProduct.id,
 				stripePriceId: stripePriceId,
+				imageGallery: data.imageGallery || [],
 			};
 
 			try {
@@ -160,6 +161,7 @@ const product = factory
 					filamentType: parsedData.filamentType,
 					color: parsedData.color,
 					image: parsedData.image,
+					imageGallery: parsedData.imageGallery || [],
 				})
 				.where(eq(productsTable.id, parsedData.id));
 

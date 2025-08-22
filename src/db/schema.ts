@@ -40,6 +40,7 @@ export const productsTable = sqliteTable('products', {
    name: text('name').notNull(),
    description: text('description').notNull(),
    image: text('image').default(''),
+   imageGallery: text('image_gallery', { mode: 'json' }).$type<string[]>(),
    stl: text('stl').notNull(),
    price: real('price').default(0).notNull(),
    filamentType: text('filament_type').notNull().default('PLA'),
@@ -55,6 +56,7 @@ export const ProductsDataSchema = z
 		name: z.string(),
 		description: z.string(),
 		image: z.string(),
+		imageGallery: z.array(z.string()).optional(),
 		stl: z.string(),
 		price: z.number(),
 		filamentType: z.string(),
@@ -256,6 +258,7 @@ export const addProductSchema = z.object({
 	filamentType: z.string(),
 	color: z.string(),
 	image: z.string(),
+	imageGallery: z.array(z.string()).min(1).optional(),
 });
 
 export const updateProductSchema = z.object({
@@ -266,6 +269,7 @@ export const updateProductSchema = z.object({
 	filamentType: z.string(),
 	color: z.string(),
 	image: z.string(),
+	imageGallery: z.array(z.string()).min(1).optional(),
 });
 
 export const ProfileDataSchema = z.object({
