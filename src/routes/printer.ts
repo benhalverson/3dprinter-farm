@@ -164,7 +164,7 @@ const printer = factory
 							httpMetadata: { contentType: 'image/png' },
 						});
 
-						const base = c.env.R2_PUBLIC_BASE_URL || new URL(c.req.url).origin;
+						const base = c.env.RS_PHOTO_BASE_URL || new URL(c.req.url).origin;
 						console.log('base', base);
 						const url = `${base}/${encodeURIComponent(cleanKey)}`;
 
