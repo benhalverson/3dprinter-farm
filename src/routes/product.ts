@@ -88,17 +88,41 @@ const product = factory
 			const pageParam = c.req.query('page');
 			const limitParam = c.req.query('limit');
 
-			// Parse pagination parameters
-			const page = pageParam ? Math.max(1, parseInt(pageParam, 10)) : 1;
-			const limit = limitParam ? Math.min(100, Math.max(1, parseInt(limitParam, 10))) : 10;
-			const offset = (page - 1) * limit;
-
-			// Validate pagination parameters
-			if (isNaN(page) || isNaN(limit)) {
-				return c.json({ error: 'Invalid pagination parameters. Page and limit must be numbers.' }, 400);
-			}
+			// Check if pagination is requested
+			const isPaginationRequested = pageParam || limitParam;
 
 			try {
+				if (!isPaginationRequested) {
+					// Return simple array for backward compatibility
+					const products = await c.var.db
+						.select({
+							id: productsTable.id,
+							name: productsTable.name,
+							description: productsTable.description,
+							image: productsTable.image,
+							imageGallery: productsTable.imageGallery,
+							stl: productsTable.stl,
+							price: productsTable.price,
+							filamentType: productsTable.filamentType,
+							skuNumber: productsTable.skuNumber,
+							color: productsTable.color,
+						})
+						.from(productsTable)
+						.all();
+
+					return c.json(products);
+				}
+
+				// Parse pagination parameters
+				const page = pageParam ? Math.max(1, parseInt(pageParam, 10)) : 1;
+				const limit = limitParam ? Math.min(100, Math.max(1, parseInt(limitParam, 10))) : 10;
+				const offset = (page - 1) * limit;
+
+				// Validate pagination parameters
+				if (isNaN(page) || isNaN(limit)) {
+					return c.json({ error: 'Invalid pagination parameters. Page and limit must be numbers.' }, 400);
+				}
+
 				// Get total count for pagination
 				const [totalCountResult] = await c.var.db
 					.select({ count: count() })
