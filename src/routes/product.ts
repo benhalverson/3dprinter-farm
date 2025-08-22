@@ -19,10 +19,123 @@ import Stripe from 'stripe';
 
 const product = factory
 	.createApp()
-	.get('/products', async (c) => {
-		const response = await c.var.db.select().from(productsTable).all();
-		return c.json(response);
-	})
+	.get(
+		'/products',
+		describeRoute({
+			description: 'Get all products with pagination',
+			tags: ['Products'],
+			responses: {
+				200: {
+					content: {
+						'application/json': {
+							schema: {
+								type: 'object',
+								properties: {
+									products: {
+										type: 'array',
+										items: {
+											type: 'object',
+											properties: {
+												id: { type: 'number' },
+												name: { type: 'string' },
+												description: { type: 'string' },
+												image: { type: 'string' },
+												imageGallery: {
+													type: 'array',
+													items: { type: 'string' }
+												},
+												stl: { type: 'string' },
+												price: { type: 'number' },
+												filamentType: { type: 'string' },
+												skuNumber: { type: 'string' },
+												color: { type: 'string' },
+												stripeProductId: { type: 'string' },
+												stripePriceId: { type: 'string' }
+											}
+										}
+									},
+									pagination: {
+										type: 'object',
+										properties: {
+											page: { type: 'number' },
+											limit: { type: 'number' },
+											totalItems: { type: 'number' },
+											totalPages: { type: 'number' },
+											hasNextPage: { type: 'boolean' },
+											hasPreviousPage: { type: 'boolean' }
+										}
+									}
+								}
+							}
+						},
+					},
+					description: 'Paginated list of all products',
+				},
+				400: {
+					content: {
+						'application/json': {
+							schema: {
+								type: 'object',
+								properties: {
+									error: { type: 'string' }
+								}
+							}
+						},
+					},
+					description: 'Invalid pagination parameters',
+				},
+			},
+		}),
+		async (c) => {
+			const pageParam = c.req.query('page');
+			const limitParam = c.req.query('limit');
+
+			// Parse pagination parameters
+			const page = pageParam ? Math.max(1, parseInt(pageParam, 10)) : 1;
+			const limit = limitParam ? Math.min(100, Math.max(1, parseInt(limitParam, 10))) : 10;
+			const offset = (page - 1) * limit;
+
+			// Validate pagination parameters
+			if (isNaN(page) || isNaN(limit)) {
+				return c.json({ error: 'Invalid pagination parameters. Page and limit must be numbers.' }, 400);
+			}
+
+			try {
+				// Get total count for pagination
+				const [totalCountResult] = await c.var.db
+					.select({ count: count() })
+					.from(productsTable);
+
+				const totalItems = totalCountResult.count;
+				const totalPages = Math.ceil(totalItems / limit);
+
+				// Get paginated results with all fields
+				const products = await c.var.db
+					.select()
+					.from(productsTable)
+					.limit(limit)
+					.offset(offset)
+					.all();
+
+				const pagination = {
+					page,
+					limit,
+					totalItems,
+					totalPages,
+					hasNextPage: page < totalPages,
+					hasPreviousPage: page > 1
+				};
+
+				return c.json({
+					products,
+					pagination
+				});
+			} catch (error) {
+				console.error('Error fetching products:', error);
+				return c.json({ error: 'Failed to fetch products' }, 500);
+			}
+		}
+	)
 	.use('/products/search', authMiddleware)
 	.get(
 		'/products/search',
