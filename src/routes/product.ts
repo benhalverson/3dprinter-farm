@@ -48,9 +48,7 @@ const product = factory
 												price: { type: 'number' },
 												filamentType: { type: 'string' },
 												skuNumber: { type: 'string' },
-												color: { type: 'string' },
-												stripeProductId: { type: 'string' },
-												stripePriceId: { type: 'string' }
+												color: { type: 'string' }
 											}
 										}
 									},
@@ -109,9 +107,20 @@ const product = factory
 				const totalItems = totalCountResult.count;
 				const totalPages = Math.ceil(totalItems / limit);
 
-				// Get paginated results with all fields
+				// Get paginated results without Stripe fields
 				const products = await c.var.db
-					.select()
+					.select({
+						id: productsTable.id,
+						name: productsTable.name,
+						description: productsTable.description,
+						image: productsTable.image,
+						imageGallery: productsTable.imageGallery,
+						stl: productsTable.stl,
+						price: productsTable.price,
+						filamentType: productsTable.filamentType,
+						skuNumber: productsTable.skuNumber,
+						color: productsTable.color,
+					})
 					.from(productsTable)
 					.limit(limit)
 					.offset(offset)
