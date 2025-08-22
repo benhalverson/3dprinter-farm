@@ -22,7 +22,6 @@ const userRouter = factory
 			if (!userData) return c.json({ error: 'User not found' }, 404);
 
 			const passphrase = c.env.ENCRYPTION_PASSPHRASE;
-			console.log('Fetching user data', userData);
 
 			return c.json({
 				id: userData.id,
@@ -38,7 +37,6 @@ const userRouter = factory
 			});
 		}
 		catch (error: any) {
-			console.error('Error fetching user data:', error);
 			return c.json(
 				{ error: 'Internal Server Error', details: error.message },
 				500
