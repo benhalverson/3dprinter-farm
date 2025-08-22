@@ -11,7 +11,6 @@ const paymentsRouter = factory
 	// .post('/stripe/checkout', authMiddleware, async (c: Context) => {
 	.post('/stripe/checkout',  async (c: Context) => {
 		const items = await c.req.json();
-		console.log('items type', Array.isArray(items));
 		if (!Array.isArray(items) || items.length === 0) {
 			return c.json({ error: 'No items provided' }, 400);
 		}

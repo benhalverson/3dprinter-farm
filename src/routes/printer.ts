@@ -119,14 +119,12 @@ const printer = factory
 		}),
 		async (c: Context) => {
 			const body = await c.req.parseBody();
-			console.log('body', body)
 
 			if (!body || !body.file) {
 				return c.json({ error: 'No file uploaded' }, 400);
 			}
 
 			const file = body.file as File;
-			console.log('file', file);
 			const mimeTypeStl = file.type === 'model/stl';
 			const mimeTypePng = file.type === 'image/png';
 
@@ -150,7 +148,6 @@ const printer = factory
 						});
 
 						const base = c.env.R2_PUBLIC_BASE_URL || new URL(c.req.url).origin;
-						console.log('base', base);
 						const url = `${base}/${encodeURIComponent(cleanKey)}`;
 
 						return c.json({ message: 'File uploaded', key: cleanKey, url });
@@ -165,7 +162,6 @@ const printer = factory
 						});
 
 						const base = c.env.R2_PHOTO_BASE_URL || new URL(c.req.url).origin;
-						console.log('base', base);
 						const url = `${base}/${encodeURIComponent(cleanKey)}`;
 
 						return c.json({ message: 'File uploaded', key: cleanKey, url });

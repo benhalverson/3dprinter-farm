@@ -216,12 +216,6 @@ const passKeyAuth = factory
 				.from(users)
 				.where(eq(email, email));
 
-			console.log('User data:', userData);
-
-
-
-
-
 		// Retrieve stored challenge for this user
 		const [challengeRow] = await db
 			.select()

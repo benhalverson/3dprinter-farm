@@ -16,7 +16,6 @@ const arrayBuffertoBase64 = (arrayBuffer: Uint8Array): string => {
 
 const base64ToArrayBuffer = (base64: string): ArrayBuffer => {
 	const binaryString = Buffer.from(base64, 'base64').toString('binary');
-	console.log('binaryString', binaryString);
 	const bytes = new Uint8Array(binaryString.length);
 	for (let i = 0; i < binaryString.length; i++) {
 		bytes[i] = binaryString.charCodeAt(i);
@@ -52,7 +51,6 @@ export const encryptField = async (plaintext: string, passphrase: string): Promi
 	const salt = crypto.getRandomValues(new Uint8Array(16));
 	const key = await deriveEncryptionKey(passphrase, salt);
 	const encoded = encode(plaintext);
-	console.log('encoded', encoded);
 
 	const ciphertext = await crypto.subtle.encrypt(
 		{ name: 'AES-GCM', iv },
@@ -60,7 +58,6 @@ export const encryptField = async (plaintext: string, passphrase: string): Promi
 		encoded
 	);
 
-	console.log('why are you empty?', ciphertext);
 	return `${arrayBuffertoBase64(salt)}:${arrayBuffertoBase64(iv)}:${arrayBuffertoBase64(new Uint8Array(ciphertext))}`;
 };
 
@@ -69,7 +66,6 @@ export const decryptField = async (cipherTextCombined: string, passphrase: strin
 	const salt = new Uint8Array(base64ToArrayBuffer(saltStr));
 	const iv = new Uint8Array(base64ToArrayBuffer(ivStr));
 	const ciphertext = base64ToArrayBuffer(cipherStr);
-	console.log('decryptField ciphertext', ciphertext);
 
 	const key = await deriveEncryptionKey(passphrase, salt);
 

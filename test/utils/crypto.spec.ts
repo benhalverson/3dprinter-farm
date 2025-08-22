@@ -46,7 +46,6 @@ describe('JWT signing', () => {
 			exp,
 		});
 
-		console.log('jwt', jwt);
 		const parts = jwt.split('.');
 
 		function base64urlDecode(str: string): string {
