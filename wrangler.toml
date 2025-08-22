@@ -44,3 +44,4 @@ RP_ID = "rc-store.benhalverson.dev"
 
 [vars]
 R2_PUBLIC_BASE_URL = "https://uploads.benhalverson.dev"
+R2_PHOTO_BASE_URL = "https://photos.benhalverson.dev"
