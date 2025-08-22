@@ -40,7 +40,7 @@ export const productsTable = sqliteTable('products', {
    name: text('name').notNull(),
    description: text('description').notNull(),
    image: text('image').default(''),
-   imageGallery: text('image_gallery', { mode: 'json' }).$type<string[]>(),
+   imageGallery: text('image_gallery'),
    stl: text('stl').notNull(),
    price: real('price').default(0).notNull(),
    filamentType: text('filament_type').notNull().default('PLA'),

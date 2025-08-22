@@ -17,6 +17,17 @@ import { describeRoute } from 'hono-openapi';
 import { resolver } from 'hono-openapi/zod';
 import Stripe from 'stripe';
 
+// Helper function to safely parse imageGallery JSON
+function parseImageGallery(imageGallery: string | null): string[] {
+	if (!imageGallery) return [];
+	try {
+		const parsed = JSON.parse(imageGallery);
+		return Array.isArray(parsed) ? parsed : [];
+	} catch {
+		return [];
+	}
+}
+
 const product = factory
 	.createApp()
 	.get(
@@ -94,7 +105,7 @@ const product = factory
 			try {
 				if (!isPaginationRequested) {
 					// Return simple array for backward compatibility
-					const products = await c.var.db
+					const rawProducts = await c.var.db
 						.select({
 							id: productsTable.id,
 							name: productsTable.name,
@@ -109,6 +120,12 @@ const product = factory
 						})
 						.from(productsTable)
 						.all();
+
+					// Parse imageGallery safely
+					const products = rawProducts.map(product => ({
+						...product,
+						imageGallery: parseImageGallery(product.imageGallery)
+					}));
 
 					return c.json(products);
 				}
@@ -132,7 +149,7 @@ const product = factory
 				const totalPages = Math.ceil(totalItems / limit);
 
 				// Get paginated results without Stripe fields
-				const products = await c.var.db
+				const rawProducts = await c.var.db
 					.select({
 						id: productsTable.id,
 						name: productsTable.name,
@@ -149,6 +166,12 @@ const product = factory
 					.limit(limit)
 					.offset(offset)
 					.all();
+
+				// Parse imageGallery safely
+				const products = rawProducts.map(product => ({
+					...product,
+					imageGallery: parseImageGallery(product.imageGallery)
+				}));
 
 				const pagination = {
 					page,
@@ -275,7 +298,7 @@ const product = factory
 				const totalPages = Math.ceil(totalItems / limit);
 
 				// Get paginated results
-				const products = await c.var.db
+				const rawProducts = await c.var.db
 					.select({
 						id: productsTable.id,
 						name: productsTable.name,
@@ -293,6 +316,12 @@ const product = factory
 					.limit(limit)
 					.offset(offset)
 					.all();
+
+				// Parse imageGallery safely
+				const products = rawProducts.map(product => ({
+					...product,
+					imageGallery: parseImageGallery(product.imageGallery)
+				}));
 
 				const pagination = {
 					page,
@@ -406,7 +435,7 @@ const product = factory
 				skuNumber: skuNumber,
 				stripeProductId: stripeProduct.id,
 				stripePriceId: stripePriceId,
-				imageGallery: data.imageGallery || [],
+				imageGallery: JSON.stringify(data.imageGallery || []),
 			};
 
 			try {
@@ -431,11 +460,19 @@ const product = factory
 				.select()
 				.from(productsTable)
 				.where(eq(productsTable.id, parsedData.id));
-			const product = response[0];
+			const rawProduct = response[0];
 
-			return product
-				? c.json(product)
-				: c.json({ error: 'Product not found' }, 404);
+			if (!rawProduct) {
+				return c.json({ error: 'Product not found' }, 404);
+			}
+
+			// Parse imageGallery safely for individual product
+			const product = {
+				...rawProduct,
+				imageGallery: parseImageGallery(rawProduct.imageGallery)
+			};
+
+			return c.json(product);
 		}
 	)
 	.put('/update-product', async (c) => {
@@ -451,7 +488,7 @@ const product = factory
 					filamentType: parsedData.filamentType,
 					color: parsedData.color,
 					image: parsedData.image,
-					imageGallery: parsedData.imageGallery || [],
+					imageGallery: JSON.stringify(parsedData.imageGallery || []),
 				})
 				.where(eq(productsTable.id, parsedData.id));
 
