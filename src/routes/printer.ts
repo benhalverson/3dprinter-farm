@@ -137,7 +137,7 @@ const printer = factory
 			// 	return c.json({ error: 'Invalid file type or extension' }, 415);
 			// }
 			const bucketSTL = c.env.BUCKET;
-			const bucketPNG = c.env.PHOTOS_BUCKET;
+			const bucketPNG = c.env.PHOTO_BUCKET;
 			const key = `${file.name}`;
 			const cleanKey = dashFilename(key);
 
