@@ -1,5 +1,5 @@
-import { ZodError } from 'zod';
-import { eq } from 'drizzle-orm';
+import { ZodError, z } from 'zod';
+import { eq, or, like, count } from 'drizzle-orm';
 import { zValidator } from '@hono/zod-validator';
 import { authMiddleware } from '../utils/authMiddleware';
 import {
@@ -23,6 +23,150 @@ const product = factory
 		const response = await c.var.db.select().from(productsTable).all();
 		return c.json(response);
 	})
+	.use('/products/search', authMiddleware)
+	.get(
+		'/products/search',
+		describeRoute({
+			description: 'Search products by name and description with pagination',
+			tags: ['Products'],
+			responses: {
+				200: {
+					content: {
+						'application/json': {
+							schema: {
+								type: 'object',
+								properties: {
+									products: {
+										type: 'array',
+										items: {
+											type: 'object',
+											properties: {
+												id: { type: 'number' },
+												name: { type: 'string' },
+												description: { type: 'string' },
+												image: { type: 'string' },
+												imageGallery: {
+													type: 'array',
+													items: { type: 'string' }
+												},
+												stl: { type: 'string' },
+												price: { type: 'number' },
+												filamentType: { type: 'string' },
+												skuNumber: { type: 'string' },
+												color: { type: 'string' }
+											}
+										}
+									},
+									pagination: {
+										type: 'object',
+										properties: {
+											page: { type: 'number' },
+											limit: { type: 'number' },
+											totalItems: { type: 'number' },
+											totalPages: { type: 'number' },
+											hasNextPage: { type: 'boolean' },
+											hasPreviousPage: { type: 'boolean' }
+										}
+									}
+								}
+							}
+						},
+					},
+					description: 'Paginated list of products matching the search query',
+				},
+				400: {
+					content: {
+						'application/json': {
+							schema: {
+								type: 'object',
+								properties: {
+									error: { type: 'string' }
+								}
+							}
+						},
+					},
+					description: 'Invalid search query or pagination parameters',
+				},
+			},
+		}),
+		async (c) => {
+			const query = c.req.query('q');
+			const pageParam = c.req.query('page');
+			const limitParam = c.req.query('limit');
+
+			if (!query) {
+				return c.json({ error: 'Search query is required' }, 400);
+			}
+
+			if (query.trim().length < 2) {
+				return c.json({ error: 'Search query must be at least 2 characters long' }, 400);
+			}
+
+			// Parse pagination parameters
+			const page = pageParam ? Math.max(1, parseInt(pageParam, 10)) : 1;
+			const limit = limitParam ? Math.min(100, Math.max(1, parseInt(limitParam, 10))) : 10;
+			const offset = (page - 1) * limit;
+
+			// Validate pagination parameters
+			if (isNaN(page) || isNaN(limit)) {
+				return c.json({ error: 'Invalid pagination parameters. Page and limit must be numbers.' }, 400);
+			}
+
+			try {
+				const searchTerm = `%${query.trim()}%`;
+				const whereClause = or(
+					like(productsTable.name, searchTerm),
+					like(productsTable.description, searchTerm)
+				);
+
+				// Get total count for pagination
+				const [totalCountResult] = await c.var.db
+					.select({ count: count() })
+					.from(productsTable)
+					.where(whereClause);
+
+				const totalItems = totalCountResult.count;
+				const totalPages = Math.ceil(totalItems / limit);
+
+				// Get paginated results
+				const products = await c.var.db
+					.select({
+						id: productsTable.id,
+						name: productsTable.name,
+						description: productsTable.description,
+						image: productsTable.image,
+						imageGallery: productsTable.imageGallery,
+						stl: productsTable.stl,
+						price: productsTable.price,
+						filamentType: productsTable.filamentType,
+						skuNumber: productsTable.skuNumber,
+						color: productsTable.color,
+					})
+					.from(productsTable)
+					.where(whereClause)
+					.limit(limit)
+					.offset(offset)
+					.all();
+
+				const pagination = {
+					page,
+					limit,
+					totalItems,
+					totalPages,
+					hasNextPage: page < totalPages,
+					hasPreviousPage: page > 1
+				};
+
+				return c.json({
+					products,
+					pagination
+				});
+			} catch (error) {
+				console.error('Error searching products:', error);
+				return c.json({ error: 'Failed to search products' }, 500);
+			}
+		}
+	)
 	.use('/add-product', authMiddleware)
 	.use('/update-product', authMiddleware)
 	.post(
