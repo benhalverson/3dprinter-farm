@@ -16,6 +16,11 @@ binding = "BUCKET"
 bucket_name = "uploads"
 preview_bucket_name = "preview-uploads"
 
+[[r2_buckets]]
+binding = "PHOTO_BUCKET"
+bucket_name = "photos"
+preview_bucket_name = "preview-photos"
+
 [[d1_databases]]
 binding = "DB"
 database_name = "ecommerce"

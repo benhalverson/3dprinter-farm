@@ -3,6 +3,7 @@ import { orderSchema } from './db/schema';
 
 export type Bindings = {
 	BUCKET: R2Bucket;
+	PHOTOS_BUCKET: R2Bucket;
 	SLANT_API: string;
 	STRIPE_PUBLISHABLE_KEY: string;
 	STRIPE_SECRET_KEY: string;

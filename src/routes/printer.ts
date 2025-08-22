@@ -119,35 +119,65 @@ const printer = factory
 		}),
 		async (c: Context) => {
 			const body = await c.req.parseBody();
+			console.log('body', body)
 
 			if (!body || !body.file) {
 				return c.json({ error: 'No file uploaded' }, 400);
 			}
 
 			const file = body.file as File;
-			const mimeType = file.type === 'model/stl';
-			const acceptableExtension = file.name.toLowerCase().endsWith('.stl');
-			if(!mimeType && !acceptableExtension) {
-				return c.json({ error: 'Invalid file type or extension' }, 415);
-			}
-			const bucket = c.env.BUCKET;
+			console.log('file', file);
+			const mimeTypeStl = file.type === 'model/stl';
+			const mimeTypePng = file.type === 'image/png';
+
+			const acceptableExtensionStl = file.name.toLowerCase().endsWith('.stl');
+			const acceptableExtensionPng = file.name.toLowerCase().endsWith('.png');
+
+			// if(!mimeTypeStl && !acceptableExtensionStl || !mimeTypePng && !acceptableExtensionPng) {
+			// 	return c.json({ error: 'Invalid file type or extension' }, 415);
+			// }
+			const bucketSTL = c.env.BUCKET;
+			const bucketPNG = c.env.PHOTO_BUCKET;
 			const key = `${file.name}`;
 			const cleanKey = dashFilename(key);
 
-			try {
-				await bucket.put(cleanKey, file.stream(), {
-					httpMetadata: { contentType: 'model/stl' },
-				});
 
-				const base = c.env.R2_PUBLIC_BASE_URL || new URL(c.req.url).origin;
-				console.log('base', base);
-				const url = `${base}/${encodeURIComponent(cleanKey)}`;
+			switch (acceptableExtensionPng || mimeTypePng || acceptableExtensionStl || mimeTypeStl) {
+				case mimeTypeStl || acceptableExtensionStl:
+					try {
+						await bucketSTL.put(cleanKey, file.stream(), {
+							httpMetadata: { contentType: 'model/stl' },
+						});
 
-				return c.json({ message: 'File uploaded', key: cleanKey, url });
-			} catch (error) {
-				console.error('error', error);
-				return c.json({ error: 'Failed to upload file' }, 500);
+						const base = c.env.R2_PUBLIC_BASE_URL || new URL(c.req.url).origin;
+						console.log('base', base);
+						const url = `${base}/${encodeURIComponent(cleanKey)}`;
+
+						return c.json({ message: 'File uploaded', key: cleanKey, url });
+					} catch (error) {
+						console.error('error', error);
+						return c.json({ error: 'Failed to upload file' }, 500);
+					}
+				case mimeTypePng || acceptableExtensionPng:
+					try {
+						await bucketPNG.put(cleanKey, file.stream(), {
+							httpMetadata: { contentType: 'image/png' },
+						});
+
+						const base = c.env.R2_PUBLIC_BASE_URL || new URL(c.req.url).origin;
+						console.log('base', base);
+						const url = `${base}/${encodeURIComponent(cleanKey)}`;
+
+						return c.json({ message: 'File uploaded', key: cleanKey, url });
+					} catch (error) {
+						console.error('error', error);
+						return c.json({ error: 'Failed to upload file' }, 500);
+					}
+					default:
+						return c.json({ error: 'Invalid file type or extension' }, 415);
+
 			}
+
 		}
 	)
 	/**
