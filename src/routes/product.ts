@@ -407,6 +407,7 @@ const product = factory
 
 			if (!slicingResponse.ok) {
 				const error = (await slicingResponse.json()) as Error;
+				console.log('slicing error', error);
 				return c.json(
 					{ error: 'Failed to slice file', details: error.message },
 					500
@@ -416,6 +417,7 @@ const product = factory
 			const slicingResult = (await slicingResponse.json()) as {
 				data: { price: number };
 			};
+			console.log('slicing result', slicingResult);
 			const basePrice = slicingResult.data.price;
 			const markupPrice = calculateMarkupPrice(basePrice, data.price);
 
@@ -429,6 +431,7 @@ const product = factory
 				stripePriceId = price.id;
 			}
 
+			console.log('data.imageGallery before insertion', data.imageGallery);
 			const productDataToInsert = {
 				...data,
 				price: markupPrice,
@@ -438,11 +441,14 @@ const product = factory
 				imageGallery: JSON.stringify(data.imageGallery || []),
 			};
 
+			console.log('Inserting product:', productDataToInsert);
+
 			try {
 				const response = await c.var.db
 					.insert(productsTable)
 					.values(productDataToInsert)
 					.returning();
+				console.log('response', response);
 				return c.json(response);
 			} catch (error) {
 				console.error('Error adding product', error);
@@ -502,6 +508,7 @@ const product = factory
 			}
 		} catch (error) {
 			if (error instanceof ZodError) {
+				console.log('error', error);
 				return c.json(
 					{ error: 'Validation error', details: error.errors },
 					400
