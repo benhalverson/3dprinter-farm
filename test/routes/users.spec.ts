@@ -39,6 +39,29 @@ vi.mock('@simplewebauthn/server', async () => {
 	};
 });
 
+// Mock crypto functions
+vi.mock('../../src/utils/crypto', async () => {
+	const actual = await vi.importActual<typeof import('../../src/utils/crypto')>('../../src/utils/crypto');
+	return {
+		...actual,
+		decryptField: vi.fn().mockImplementation(async (encryptedData: string) => {
+			// Return mock decrypted data based on the field
+			if (encryptedData === 'encrypted-test') return 'Test';
+			if (encryptedData === 'encrypted-user') return 'User';
+			if (encryptedData === 'encrypted-123-main-st') return '123 Main St';
+			if (encryptedData === 'encrypted-testville') return 'Testville';
+			if (encryptedData === 'encrypted-ts') return 'TS';
+			if (encryptedData === 'encrypted-12345') return '12345';
+			if (encryptedData === 'encrypted-usa') return 'USA';
+			if (encryptedData === 'encrypted-123-456-7890') return '123-456-7890';
+			return 'decrypted-value';
+		}),
+		encryptField: vi.fn().mockImplementation(async (plaintext: string) => {
+			return `encrypted-${plaintext.toLowerCase().replace(/\s+/g, '-')}`;
+		}),
+	};
+});
+
 mockAuth();
 mockDrizzle();
 mockGlobalFetch();
@@ -51,7 +74,18 @@ describe('Profile Endpoints', () => {
 		vi.clearAllMocks();
 
 		mockWhere
-			.mockResolvedValueOnce([{ id: 1, email: 'test@example.com' }])
+			.mockResolvedValueOnce([{
+				id: 1,
+				email: 'test@example.com',
+				firstName: 'encrypted-test',
+				lastName: 'encrypted-user',
+				shippingAddress: 'encrypted-123-main-st',
+				city: 'encrypted-testville',
+				state: 'encrypted-ts',
+				zipCode: 'encrypted-12345',
+				country: 'encrypted-usa',
+				phone: 'encrypted-123-456-7890'
+			}])
 			.mockResolvedValueOnce([{ credentialId: 'credential-id-abc' }]);
 
 		// Mock the update for the profile update endpoint
@@ -71,7 +105,15 @@ describe('Profile Endpoints', () => {
 	});
 
 	test('GET /profile', async () => {
-		const res = await client.profile.$get();
+		const res = await app.fetch(
+			new Request('http://localhost/profile', {
+				method: 'GET',
+				headers: {
+					Cookie: 'token=s.mocked.signed.cookie',
+				},
+			}),
+			env
+		);
 		expect(res.status).toBe(200);
 	});
 
