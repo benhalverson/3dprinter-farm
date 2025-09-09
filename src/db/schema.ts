@@ -11,7 +11,7 @@ import { z } from 'zod';
 
 export const cart = sqliteTable('cart', {
 	id: integer('id').primaryKey(),
-	cartId: integer('cart_id').notNull(),
+	cartId: text('cart_id').notNull(),
 	skuNumber: text('sku_number').notNull(),
 	quantity: integer('quantity').default(1).notNull(),
 	color: text('color').default('#000000'),
@@ -286,7 +286,7 @@ export const ProfileDataSchema = z.object({
 
 export const addCartItemSchema = z.object({
 	cartId: z.string().uuid(),
-	skuNumber: z.number().int(),
+	skuNumber: z.string(),
 	quantity: z.number().int().min(1).max(69),
 	color: z.string(),
 	filamentType: z.string(),
