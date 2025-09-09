@@ -15,6 +15,12 @@ import factory from '../factory';
 import { describeRoute } from 'hono-openapi';
 import { dashFilename } from '../utils/dash';
 
+const FilamentTypeSchema = z.enum(['PLA', 'PETG'], {
+	errorMap: () => ({
+		message: 'Accepted values are "PLA" and "PETG".',
+	}),
+});
+
 const printer = factory
 	.createApp()
 	.use('/list', authMiddleware)
@@ -351,9 +357,3 @@ const printer = factory
 	});
 
 export default printer;
-
-const FilamentTypeSchema = z.enum(['PLA', 'PETG'], {
-	errorMap: () => ({
-		message: 'Accepted values are "PLA" and "PETG".',
-	}),
-});
