@@ -257,12 +257,6 @@ describe('Shopping Cart Routes', () => {
 
 			const res = await app.fetch(request, env);
 
-			// Debug: log the actual response
-			if (res.status !== 200) {
-				const errorText = await res.text();
-				console.log('Error response:', res.status, errorText);
-			}
-
 			expect(res.status).toBe(200);
 			const data = await res.json() as any;
 			expect(data).toHaveProperty('shippingCost', 15.99);
