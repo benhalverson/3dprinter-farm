@@ -77,8 +77,7 @@ const shoppingCart = factory
 				const [userRow] = await c.var.db
 					.select()
 					.from(users)
-					.where(eq(users.id, userId))
-					.limit(1);
+					.where(eq(users.id, userId));
 				if (!userRow) return c.json({ error: 'User not found' }, 404);
 
 				const passphrase = c.env.ENCRYPTION_PASSPHRASE;
@@ -164,7 +163,7 @@ const shoppingCart = factory
 
 				const orderDataArray = cartItems.map((cart) => {
 					// Derive filename: use product STL last path segment or fallback.
-					const stlPath = cart.stl
+					const stlPath = cart.stl;
 					console.log('stlPath:', stlPath);
 					const filenameCandidate = stlPath?.split('/').pop();
 					const normalizedColor = normalizeColor(cart.color);
