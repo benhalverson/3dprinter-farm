@@ -21,9 +21,6 @@ vi.mock('../../src/utils/generateOrderNumber', () => ({
 	generateOrderNumber: vi.fn(() => 'ORDER-123456'),
 }));
 
-// Initialize mocks
-mockDrizzle();
-
 const mockCartId = 'a1b2c3d4-e5f6-7890-abcd-ef1234567890';
 const mockUserId = 1;
 
