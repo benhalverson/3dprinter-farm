@@ -34,7 +34,6 @@ const app = factory
 		})
 	)
 	.get('/health', (c) => c.json({ status: 'ok' }))
-	.route('/checkout', paymentsRouter)
 	.route('/auth', auth)
 	.use('/product', authMiddleware)
 	.route('/', product)
