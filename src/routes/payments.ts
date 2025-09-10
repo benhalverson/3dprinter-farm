@@ -11,6 +11,7 @@ import { BASE_URL } from '../constants';
 import { describeRoute } from 'hono-openapi';
 import { z } from 'zod';
 import { zValidator } from '@hono/zod-validator';
+import { PayPalOrderResponse, CartItemWithProduct, Slant3DOrderData, Slant3DOrderResponse } from '../types';
 
 // Schemas
 const stripeCheckoutSchema = z.object({
@@ -148,8 +149,8 @@ const paymentsRouter = factory
 			}
 		);
 
-		const data = (await response.json()) as any;
-		return data;
+		const data = await response.json() as PayPalOrderResponse;
+		return c.json(data);
 	})
 	.post(
 		'/webhook/stripe',
@@ -264,7 +265,7 @@ const paymentsRouter = factory
 
 				// Decrypt user information
 				const passphrase = c.env.ENCRYPTION_PASSPHRASE;
-				const email = await decryptField(userRow.email, passphrase).catch(() => userRow.email);
+				const email = userRow.email; // Email is not encrypted
 				const firstName = await decryptField(userRow.firstName, passphrase);
 				const lastName = await decryptField(userRow.lastName, passphrase);
 				const shippingAddress = await decryptField(userRow.shippingAddress, passphrase);
@@ -289,7 +290,7 @@ const paymentsRouter = factory
 					return 'black';
 				};
 
-				const orderDataArray = cartItems.map((item: any) => {
+				const orderDataArray: Slant3DOrderData[] = cartItems.map((item: CartItemWithProduct): Slant3DOrderData => {
 					const stlPath = item.stl;
 					const filenameCandidate = stlPath?.split('/').pop();
 					const normalizedColor = normalizeColor(item.color);
@@ -344,7 +345,7 @@ const paymentsRouter = factory
 						return c.json({ error: 'Order creation failed' }, 502);
 					}
 
-					const orderResponse = await response.json() as any;
+					const orderResponse = await response.json() as Slant3DOrderResponse;
 					console.log('Slant3D order created successfully:', orderResponse);
 
 					// Clear the cart after successful order

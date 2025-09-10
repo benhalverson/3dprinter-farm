@@ -3,6 +3,7 @@ import app from '../../src/index';
 import { mockEnv } from '../mocks/env';
 import { mockAuth } from '../mocks/auth';
 import { mockDrizzle, mockWhere, mockAll, mockInsert, mockUpdate, mockQuery } from '../mocks/drizzle';
+import { PaymentStatusResponse, PayPalOrderResponse, StripeWebhookResponse } from '../../src/types';
 
 mockAuth();
 mockDrizzle();
@@ -72,7 +73,7 @@ describe('Payments Routes', () => {
 			);
 
 			expect(res.status).toBe(200);
-			const data = await res.json() as any;
+			const data = await res.json() as PaymentStatusResponse;
 			expect(data).toEqual({ status: 'Success' });
 		});
 
@@ -85,7 +86,7 @@ describe('Payments Routes', () => {
 			);
 
 			expect(res.status).toBe(200);
-			const data = await res.json() as any;
+			const data = await res.json() as PaymentStatusResponse;
 			expect(data).toEqual({ status: 'Success' });
 		});
 	});
@@ -100,7 +101,7 @@ describe('Payments Routes', () => {
 			);
 
 			expect(res.status).toBe(200);
-			const data = await res.json() as any;
+			const data = await res.json() as PaymentStatusResponse;
 			expect(data).toEqual({ status: 'Cancelled' });
 		});
 	});
@@ -119,10 +120,10 @@ describe('Payments Routes', () => {
 				]
 			};
 
-			(global.fetch as any).mockResolvedValueOnce({
+			vi.mocked(global.fetch).mockResolvedValueOnce({
 				ok: true,
 				json: () => Promise.resolve(mockPayPalResponse),
-			});
+			} as Response);
 
 			const res = await app.fetch(
 				new Request('http://localhost/paypal', {
@@ -132,7 +133,7 @@ describe('Payments Routes', () => {
 			);
 
 			expect(res.status).toBe(200);
-			const data = await res.json() as any;
+			const data = await res.json() as PayPalOrderResponse;
 			expect(data).toEqual(mockPayPalResponse);
 
 			// Verify PayPal API was called with correct parameters
