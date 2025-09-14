@@ -1,5 +1,6 @@
-const FIELD_ITERATIONS = 100_000;
-const PASSWORD_ITERATIONS = 100_000;
+const FIELD_ITERATIONS = 10_000;  // Reduced for performance
+const PASSWORD_ITERATIONS = 100_000;  // Keep high for security
+const LEGACY_ITERATIONS = 100_000;  // For backward compatibility
 const KEY_LENGTH = 32;
 const HASH_ALGORITHM = 'SHA-256';
 
@@ -68,15 +69,52 @@ export const decryptField = async (cipherTextCombined: string, passphrase: strin
 	const iv = new Uint8Array(base64ToArrayBuffer(ivStr));
 	const ciphertext = base64ToArrayBuffer(cipherStr);
 
-	const key = await deriveEncryptionKey(passphrase, salt);
+	// Try with new iterations first (for new data)
+	try {
+		const key = await deriveEncryptionKey(passphrase, salt);
+		const decrypted = await crypto.subtle.decrypt(
+			{ name: 'AES-GCM', iv },
+			key,
+			ciphertext
+		);
+		return decode(decrypted);
+	} catch (error) {
+		// Fall back to legacy iterations for existing data
+		try {
+			const legacyKey = await deriveEncryptionKeyLegacy(passphrase, salt);
+			const decrypted = await crypto.subtle.decrypt(
+				{ name: 'AES-GCM', iv },
+				legacyKey,
+				ciphertext
+			);
+			return decode(decrypted);
+		} catch (legacyError) {
+			throw new Error(`Decryption failed with both new and legacy methods: ${(error as Error).message}`);
+		}
+	}
+};
 
-	const decrypted = await crypto.subtle.decrypt(
-		{ name: 'AES-GCM', iv },
-		key,
-		ciphertext
+export const deriveEncryptionKeyLegacy = async (passphrase: string, salt: Uint8Array): Promise<any> => {
+	const baseKey = await crypto.subtle.importKey(
+		'raw',
+		encode(passphrase),
+		{ name: 'PBKDF2' },
+		false,
+		['deriveKey']
 	);
 
-	return decode(decrypted);
+	return crypto.subtle.deriveKey(
+		{
+			name: 'PBKDF2',
+			salt,
+			iterations: LEGACY_ITERATIONS,
+			hash: HASH_ALGORITHM,
+		},
+		baseKey,
+		{ name: 'AES-GCM', length: 256 },
+		false,
+		['encrypt', 'decrypt']
+	);
 };
 
 export const hashPassword = async (password: string): Promise<Salt> => {
