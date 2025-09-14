@@ -62,9 +62,8 @@ const userRouter = factory
 
 				const passphrase = c.env.ENCRYPTION_PASSPHRASE;
 
-				return c.json({
-					id: userData.id,
-					email: userData.email,
+				console.time('decrypt-profile');
+				const decryptedProfile = {
 					firstName: await decryptField(userData.firstName, passphrase),
 					lastName: await decryptField(userData.lastName, passphrase),
 					address: await decryptField(userData.shippingAddress, passphrase),
@@ -73,7 +72,9 @@ const userRouter = factory
 					zipCode: await decryptField(userData.zipCode, passphrase),
 					country: await decryptField(userData.country, passphrase),
 					phone: await decryptField(userData.phone, passphrase),
-				});
+				};
+				console.timeEnd('decrypt-profile');
+				return c.json(decryptedProfile);
 			}
 			catch (error: any) {
 				return c.json(
