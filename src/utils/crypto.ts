@@ -1,6 +1,4 @@
-const FIELD_ITERATIONS = 10_000;  // Reduced for performance
-const PASSWORD_ITERATIONS = 100_000;  // Keep high for security
-const LEGACY_ITERATIONS = 100_000;  // For backward compatibility
+const ITERATIONS = 100_000;
 const KEY_LENGTH = 32;
 const HASH_ALGORITHM = 'SHA-256';
 
@@ -23,9 +21,7 @@ const base64ToArrayBuffer = (base64: string): ArrayBuffer => {
 		bytes[i] = binaryString.charCodeAt(i);
 	}
 	return bytes.buffer;
-};
-
-export const deriveEncryptionKey = async (passphrase: string, salt: Uint8Array): Promise<any> => {
+};export const deriveEncryptionKey = async (passphrase: string, salt: Uint8Array): Promise<any> => {
 	const baseKey = await crypto.subtle.importKey(
 		'raw',
 		encode(passphrase),
@@ -38,7 +34,7 @@ export const deriveEncryptionKey = async (passphrase: string, salt: Uint8Array):
 		{
 			name: 'PBKDF2',
 			salt,
-			iterations: FIELD_ITERATIONS,
+			iterations: ITERATIONS,
 			hash: HASH_ALGORITHM,
 		},
 		baseKey,
@@ -69,52 +65,15 @@ export const decryptField = async (cipherTextCombined: string, passphrase: strin
 	const iv = new Uint8Array(base64ToArrayBuffer(ivStr));
 	const ciphertext = base64ToArrayBuffer(cipherStr);
 
-	// Try with new iterations first (for new data)
-	try {
-		const key = await deriveEncryptionKey(passphrase, salt);
-		const decrypted = await crypto.subtle.decrypt(
-			{ name: 'AES-GCM', iv },
-			key,
-			ciphertext
-		);
-		return decode(decrypted);
-	} catch (error) {
-		// Fall back to legacy iterations for existing data
-		try {
-			const legacyKey = await deriveEncryptionKeyLegacy(passphrase, salt);
-			const decrypted = await crypto.subtle.decrypt(
-				{ name: 'AES-GCM', iv },
-				legacyKey,
-				ciphertext
-			);
-			return decode(decrypted);
-		} catch (legacyError) {
-			throw new Error(`Decryption failed with both new and legacy methods: ${(error as Error).message}`);
-		}
-	}
-};
+	const key = await deriveEncryptionKey(passphrase, salt);
 
-export const deriveEncryptionKeyLegacy = async (passphrase: string, salt: Uint8Array): Promise<any> => {
-	const baseKey = await crypto.subtle.importKey(
-		'raw',
-		encode(passphrase),
-		{ name: 'PBKDF2' },
-		false,
-		['deriveKey']
+	const decrypted = await crypto.subtle.decrypt(
+		{ name: 'AES-GCM', iv },
+		key,
+		ciphertext
 	);
 
-	return crypto.subtle.deriveKey(
-		{
-			name: 'PBKDF2',
-			salt,
-			iterations: LEGACY_ITERATIONS,
-			hash: HASH_ALGORITHM,
-		},
-		baseKey,
-		{ name: 'AES-GCM', length: 256 },
-		false,
-		['encrypt', 'decrypt']
-	);
+	return decode(decrypted);
 };
 
 export const hashPassword = async (password: string): Promise<Salt> => {
@@ -132,7 +91,7 @@ export const hashPassword = async (password: string): Promise<Salt> => {
 		{
 			name: 'PBKDF2',
 			salt: saltBytes,
-			iterations: PASSWORD_ITERATIONS,
+			iterations: ITERATIONS,
 			hash: HASH_ALGORITHM,
 		},
 		baseKey,
@@ -165,7 +124,7 @@ export const verifyPassword = async (
 		{
 			name: 'PBKDF2',
 			salt: saltBytes,
-			iterations: PASSWORD_ITERATIONS,
+			iterations: ITERATIONS,
 			hash: HASH_ALGORITHM,
 		},
 		baseKey,
