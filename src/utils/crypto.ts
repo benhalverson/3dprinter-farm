@@ -1,4 +1,5 @@
-const ITERATIONS = 100_000;
+const FIELD_ITERATIONS = 100_000;
+const PASSWORD_ITERATIONS = 100_000;
 const KEY_LENGTH = 32;
 const HASH_ALGORITHM = 'SHA-256';
 
@@ -23,7 +24,7 @@ const base64ToArrayBuffer = (base64: string): ArrayBuffer => {
 	return bytes.buffer;
 };
 
-export const deriveEncryptionKey = async (passphrase: string, salt: Uint8Array): Promise<CryptoKey> => {
+export const deriveEncryptionKey = async (passphrase: string, salt: Uint8Array): Promise<any> => {
 	const baseKey = await crypto.subtle.importKey(
 		'raw',
 		encode(passphrase),
@@ -36,7 +37,7 @@ export const deriveEncryptionKey = async (passphrase: string, salt: Uint8Array):
 		{
 			name: 'PBKDF2',
 			salt,
-			iterations: ITERATIONS,
+			iterations: FIELD_ITERATIONS,
 			hash: HASH_ALGORITHM,
 		},
 		baseKey,
@@ -93,7 +94,7 @@ export const hashPassword = async (password: string): Promise<Salt> => {
 		{
 			name: 'PBKDF2',
 			salt: saltBytes,
-			iterations: ITERATIONS,
+			iterations: PASSWORD_ITERATIONS,
 			hash: HASH_ALGORITHM,
 		},
 		baseKey,
@@ -126,7 +127,7 @@ export const verifyPassword = async (
 		{
 			name: 'PBKDF2',
 			salt: saltBytes,
-			iterations: ITERATIONS,
+			iterations: PASSWORD_ITERATIONS,
 			hash: HASH_ALGORITHM,
 		},
 		baseKey,

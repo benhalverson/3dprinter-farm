@@ -63,20 +63,32 @@ const userRouter = factory
 				const passphrase = c.env.ENCRYPTION_PASSPHRASE;
 
 				console.time('decrypt-profile');
+				const [firstName, lastName, address, city, state, zipCode, country, phone] = await Promise.all([
+					decryptField(userData.firstName, passphrase),
+					decryptField(userData.lastName, passphrase),
+					decryptField(userData.shippingAddress, passphrase),
+					decryptField(userData.city, passphrase),
+					decryptField(userData.state, passphrase),
+					decryptField(userData.zipCode, passphrase),
+					decryptField(userData.country, passphrase),
+					decryptField(userData.phone, passphrase),
+				]);
+
 				const decryptedProfile = {
-					firstName: await decryptField(userData.firstName, passphrase),
-					lastName: await decryptField(userData.lastName, passphrase),
-					address: await decryptField(userData.shippingAddress, passphrase),
-					city: await decryptField(userData.city, passphrase),
-					state: await decryptField(userData.state, passphrase),
-					zipCode: await decryptField(userData.zipCode, passphrase),
-					country: await decryptField(userData.country, passphrase),
-					phone: await decryptField(userData.phone, passphrase),
+					firstName,
+					lastName,
+					address,
+					city,
+					state,
+					zipCode,
+					country,
+					phone,
 				};
 				console.timeEnd('decrypt-profile');
 				return c.json(decryptedProfile);
 			}
 			catch (error: any) {
+				console.log('Error fetching user data:', error);
 				return c.json(
 					{ error: 'Internal Server Error', details: error.message },
 					500
@@ -157,17 +169,28 @@ const userRouter = factory
 			try {
 				const passphrase = c.env.ENCRYPTION_PASSPHRASE;
 
+				const [encryptedFirstName, encryptedLastName, encryptedShippingAddress, encryptedCity, encryptedState, encryptedZipCode, encryptedCountry, encryptedPhone] = await Promise.all([
+					encryptField(firstName, passphrase),
+					encryptField(lastName, passphrase),
+					encryptField(shippingAddress, passphrase),
+					encryptField(city, passphrase),
+					encryptField(state, passphrase),
+					encryptField(zipCode, passphrase),
+					encryptField(country, passphrase),
+					encryptField(phone, passphrase)
+				]);
+
 				const [userData] = await c.var.db
 					.update(users)
 					.set({
-						firstName: await encryptField(firstName, passphrase),
-						lastName: await encryptField(lastName, passphrase),
-						shippingAddress: await encryptField(shippingAddress, passphrase),
-						city: await encryptField(city, passphrase),
-						state: await encryptField(state, passphrase),
-						zipCode: await encryptField(zipCode, passphrase),
-						country: await encryptField(country, passphrase),
-						phone: await encryptField(phone, passphrase)
+						firstName: encryptedFirstName,
+						lastName: encryptedLastName,
+						shippingAddress: encryptedShippingAddress,
+						city: encryptedCity,
+						state: encryptedState,
+						zipCode: encryptedZipCode,
+						country: encryptedCountry,
+						phone: encryptedPhone
 					})
 					.where(eq(users.id, userId))
 					.returning();

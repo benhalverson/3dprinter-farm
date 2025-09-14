@@ -63,21 +63,34 @@ const auth = factory
 
 				const { salt, hash } = await hashPassword(password);
 				const passphrase = c.env.ENCRYPTION_PASSPHRASE;
+				
+				const [encryptedFirstName, encryptedLastName, encryptedShippingAddress, encryptedBillingAddress, encryptedCity, encryptedState, encryptedZipCode, encryptedCountry, encryptedPhone] = await Promise.all([
+					encryptField('', passphrase),
+					encryptField('', passphrase),
+					encryptField('', passphrase),
+					encryptField('', passphrase),
+					encryptField('', passphrase),
+					encryptField('', passphrase),
+					encryptField('', passphrase),
+					encryptField('', passphrase),
+					encryptField('', passphrase),
+				]);
+
 				const [insertedUser] = await db
 					.insert(users)
 					.values({
 						email,
 						passwordHash: hash,
 						salt,
-						firstName: await encryptField('', passphrase),
-						lastName: await encryptField('', passphrase),
-						shippingAddress: await encryptField('', passphrase),
-						billingAddress: await encryptField('', passphrase),
-						city: await encryptField('', passphrase),
-						state: await encryptField('', passphrase),
-						zipCode: await encryptField('', passphrase),
-						country: await encryptField('', passphrase),
-						phone: await encryptField('', passphrase),
+						firstName: encryptedFirstName,
+						lastName: encryptedLastName,
+						shippingAddress: encryptedShippingAddress,
+						billingAddress: encryptedBillingAddress,
+						city: encryptedCity,
+						state: encryptedState,
+						zipCode: encryptedZipCode,
+						country: encryptedCountry,
+						phone: encryptedPhone,
 					})
 					.returning();
 
