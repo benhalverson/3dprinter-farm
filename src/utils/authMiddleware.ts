@@ -12,8 +12,10 @@ export const authMiddleware = factory.createMiddleware(async (c, next) => {
 	try {
 		const payload = await verify(signedToken, c.env.JWT_SECRET);
 		c.set('jwtPayload', payload);
+		console.log('Verified JWT payload:', payload);
 		return next();
 	} catch (err) {
+		console.error('JWT verification error:', err);
 		return c.json({ error: 'Invalid or expired token' }, 401);
 	}
 });

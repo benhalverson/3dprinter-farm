@@ -27,6 +27,9 @@ importers:
       '@simplewebauthn/server':
         specifier: ^13.1.1
         version: 13.1.1
+      cipher-kit:
+        specifier: ^1.0.1
+        version: 1.0.1
       drizzle-orm:
         specifier: ^0.43.1
         version: 0.43.1(@libsql/client@0.14.0)
@@ -1001,6 +1004,9 @@ packages:
   check-error@2.1.1:
     resolution: {integrity: sha512-OAlb+T7V4Op9OwdkjmguYRqncdlx5JiofwOAUkmTF+jNdHwzTaTs4sRAGpzLF3oOz5xAyDGrPgeIDFQmDOTiJw==}
     engines: {node: '>= 16'}
+
+  cipher-kit@1.0.1:
+    resolution: {integrity: sha512-0I+kJEppy+uRl2iNpl4Z4iN8eIGgIBoKsfYfZvjvRECx5dmpFLc7t2a5fXP1Tk/D7duSQWTaSdYvZUVk/ckjpg==}
 
   cjs-module-lexer@1.4.3:
     resolution: {integrity: sha512-9z8TZaGM1pfswYeXrUpzPrkx8UnWYdhJclsiYMm6x/w5+nN+8Tf/LnAgfLGQCm59qAOxU8WwHEq2vNwF6i4j+Q==}
@@ -2725,6 +2731,8 @@ snapshots:
       pathval: 2.0.0
 
   check-error@2.1.1: {}
+
+  cipher-kit@1.0.1: {}
 
   cjs-module-lexer@1.4.3: {}
 

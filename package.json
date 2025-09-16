@@ -26,6 +26,7 @@
     "@paypal/checkout-server-sdk": "^1.0.3",
     "@scalar/hono-api-reference": "^0.9.1",
     "@simplewebauthn/server": "^13.1.1",
+    "cipher-kit": "^1.0.1",
     "drizzle-orm": "^0.43.1",
     "hono": "^4.6.6",
     "hono-openapi": "^0.4.8",
