@@ -8,6 +8,8 @@ import { describeRoute } from 'hono-openapi';
 import { z } from 'zod';
 import { authMiddleware } from '../utils/authMiddleware';
 import { decryptField } from '../utils/crypto';
+import { createSecretKey, decrypt as ckDecrypt, isInWebApiEncryptionFormat } from 'cipher-kit/web-api';
+import type { WebApiKey } from 'cipher-kit';
 import { BASE_URL } from '../constants';
 import { generateOrderNumber } from '../utils/generateOrderNumber';
 
@@ -71,7 +73,6 @@ const shoppingCart = factory
 
 				// Expect cartId as query param to know which cart to estimate
 				const cartId = c.req.query('cartId');
-				console.log('cartId:', cartId);
 				if (!cartId) return c.json({ error: 'cartId query param required' }, 400);
 
 				const [userRow] = await c.var.db
@@ -81,16 +82,71 @@ const shoppingCart = factory
 				if (!userRow) return c.json({ error: 'User not found' }, 404);
 
 				const passphrase = c.env.ENCRYPTION_PASSPHRASE;
-				// Decrypt all user-related fields (including email if encrypted in your data store)
-				const email = await decryptField(userRow.email, passphrase).catch(() => userRow.email);
-				const firstName = await decryptField(userRow.firstName, passphrase);
-				const lastName = await decryptField(userRow.lastName, passphrase);
-				const shippingAddress = await decryptField(userRow.shippingAddress, passphrase);
-				const city = await decryptField(userRow.city, passphrase);
-				const state = await decryptField(userRow.state, passphrase);
-				const zipCode = await decryptField(userRow.zipCode, passphrase);
-				const country = await decryptField(userRow.country, passphrase);
-				const phone = await decryptField(userRow.phone, passphrase);
+				if (!passphrase) return c.json({ error: 'Encryption passphrase missing' }, 500);
+
+				// Cache derived cipher-kit secret key across requests in worker lifetime
+				const secretKeyCache: Map<string, WebApiKey> = (globalThis as any).__shippingSecretKeyCache || new Map();
+				(globalThis as any).__shippingSecretKeyCache = secretKeyCache;
+				const getSecretKey = async () => {
+					if (secretKeyCache.has(passphrase)) return secretKeyCache.get(passphrase)!;
+					const res = await createSecretKey(passphrase);
+					if (!res.success) throw new Error(`cipher-kit key derivation failed: ${res.error.message}`);
+					secretKeyCache.set(passphrase, res.secretKey);
+					return res.secretKey;
+				};
+				let secretKey: WebApiKey | undefined;
+
+				const decryptMaybe = async (value: unknown, field: string): Promise<string> => {
+					if (typeof value !== 'string' || value.length === 0) return '';
+					// cipher-kit format detection
+					if (isInWebApiEncryptionFormat(value)) {
+						try {
+							secretKey = secretKey || await getSecretKey();
+							const dec = await ckDecrypt(value, secretKey);
+							if (dec.success) return dec.result as string;
+							console.warn(`[decryptMaybe] cipher-kit decrypt failed for ${field}:`, dec.error?.message);
+							return '';
+						} catch (e) {
+							console.warn(`[decryptMaybe] cipher-kit exception for ${field}:`, (e as Error).message);
+							return '';
+						}
+					}
+					// legacy salt:iv:cipher
+					if (value.includes(':') && value.split(':').length === 3) {
+						try { return await decryptField(value, passphrase); } catch (e) {
+							console.warn(`[decryptMaybe] legacy decrypt failed for ${field}:`, (e as Error).message);
+							return '';
+						}
+					}
+					// treat as plaintext
+					return value;
+				};
+
+				const firstName = await decryptMaybe(userRow.firstName, 'firstName');
+				const lastName = await decryptMaybe(userRow.lastName, 'lastName');
+				const email = await decryptMaybe(userRow.email, 'email') || userRow.email || '';
+				const shippingAddress = await decryptMaybe(userRow.shippingAddress, 'shippingAddress');
+				const city = await decryptMaybe(userRow.city, 'city');
+				const state = await decryptMaybe(userRow.state, 'state');
+				const zipCode = await decryptMaybe(userRow.zipCode, 'zipCode');
+				const country = await decryptMaybe(userRow.country, 'country');
+				let phone = await decryptMaybe(userRow.phone, 'phone');
+				// Additional heuristic: if phone still looks like an encoded blob (contains '.' segments, not many digits)
+				if (phone && phone.includes('.') && !/\d{5,}/.test(phone) && phone.length > 15) {
+					try {
+						secretKey = secretKey || await getSecretKey();
+						const dec2 = await ckDecrypt(phone, secretKey);
+						if (dec2.success && typeof dec2.result === 'string') {
+							phone = dec2.result as string;
+						}
+					} catch (e) {
+						console.warn('[phone decrypt] Heuristic decrypt attempt failed:', (e as Error).message);
+					}
+				}
+				// Sanitize phone - keep digits and leading +, enforce <=20 chars
+				phone = phone ? phone.replace(/[^+0-9]/g, '') : '';
+				if (phone.length > 20) phone = phone.slice(0, 20);
+				if (!phone) phone = '0000000000'; // fallback minimal placeholder if upstream requires
 
 				// Pull cart contents and join products to enrich data.
 				const cartItems = await c.var.db
@@ -164,7 +220,6 @@ const shoppingCart = factory
 				const orderDataArray = cartItems.map((cart) => {
 					// Derive filename: use product STL last path segment or fallback.
 					const stlPath = cart.stl;
-					console.log('stlPath:', stlPath);
 					const filenameCandidate = stlPath?.split('/').pop();
 					const normalizedColor = normalizeColor(cart.color);
 					if (normalizedColor !== cart.color) {
@@ -213,17 +268,15 @@ const shoppingCart = factory
 					body: JSON.stringify(orderDataArray),
 				});
 
-				console.log('data to send', orderDataArray);
-
 				if (!response.ok) {
 					console.error('Upstream estimate error:', response.status, await response.text());
 					return c.json({ error: 'Upstream estimate failed', status: response.status }, 502);
 				}
 
 				const data = (await response.json()) as ShippingResponse;
-				console.log('Shipping estimate response:', data);
 				return c.json({ shippingCost: data.shippingCost});
 			} catch (err: any) {
+				console.log('Error fetching shipping estimate:', err);
 				return c.json({ error: 'Failed to retrieve shipping estimate', details: err?.message }, 500);
 			}
 		})
@@ -449,23 +502,17 @@ const shoppingCart = factory
 				const existingItems = await c.var.db.query.cart.findMany({
 					where: eq(cart.cartId, cartId),
 				});
-				console.log('Existing cart items:', existingItems);
-				console.log('Looking for itemId:', itemId, 'in cartId:', cartId);
 
 				if (quantity === 0) {
 					const deleteResult = await c.var.db
 						.delete(cart)
 						.where(and(eq(cart.id, itemId), eq(cart.cartId, cartId)));
-					console.log('Delete result:', deleteResult);
 					return c.json({ message: 'Cart item removed successfully' });
 				} else {
-					console.log('Updating cart item:', { cartId, itemId, quantity });
 					const updateResult = await c.var.db
 						.update(cart)
 						.set({ quantity })
 						.where(and(eq(cart.id, itemId), eq(cart.cartId, cartId)));
-
-					console.log('Update result:', updateResult);
 
 					// Check if any rows were affected
 					if (updateResult.changes === 0) {

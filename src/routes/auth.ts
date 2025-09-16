@@ -63,7 +63,7 @@ const auth = factory
 
 				const { salt, hash } = await hashPassword(password);
 				const passphrase = c.env.ENCRYPTION_PASSPHRASE;
-				
+
 				const [encryptedFirstName, encryptedLastName, encryptedShippingAddress, encryptedBillingAddress, encryptedCity, encryptedState, encryptedZipCode, encryptedCountry, encryptedPhone] = await Promise.all([
 					encryptField('', passphrase),
 					encryptField('', passphrase),
@@ -185,6 +185,8 @@ const auth = factory
 					iat,
 					exp,
 				});
+
+				console.log('Generated JWT for user ID:', user);
 
 				await setSignedCookie(c, 'token', token, c.env.JWT_SECRET, {
 					httpOnly: true,
