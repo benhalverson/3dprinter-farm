@@ -1,7 +1,7 @@
 import { describe, test, expect, beforeEach, vi } from 'vitest';
 import app from '../../src/index';
 import { mockEnv } from '../mocks/env';
-import { mockWhere, mockAll, mockInsert, mockUpdate } from '../mocks/drizzle';
+import { mockWhere, mockAll, mockInsert, mockUpdate, mockDelete } from '../mocks/drizzle';
 
 // Mock Stripe to prevent network calls
 vi.mock('stripe', () => {
@@ -198,4 +198,23 @@ describe('Product Routes', () => {
 		const data = await res.json();
 		expect(data.error).toBe('Validation error');
 	});
+
+	test('DELETE /delete-product/:id deletes a product', async () => {
+		mockDelete.mockResolvedValueOnce({ changes: 1 });
+
+		const request = new Request('http://localhost/delete-product/1', {
+			method: 'DELETE',
+			headers: {
+				Cookie: fakeSignedCookie,
+			},
+		});
+
+		expect(request.method).toBe('DELETE');
+
+		const res = await app.fetch(request, mockEnv());
+
+		expect(res.status).toBe(200);
+		const data = await res.json();
+		expect(data.success).toBe(true);
+	})
 });
