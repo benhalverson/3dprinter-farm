@@ -516,6 +516,33 @@ const product = factory
 			}
 			return c.json({ error: 'Internal Server Error' }, 500);
 		}
+	})
+	.delete('/delete-product/:id', authMiddleware,async (c) => {
+		try {
+			const idParam = c.req.param('id');
+			const parsedData = idSchema.parse({ id: Number(idParam) });
+			const deleteResult = await c.var.db
+				.delete(productsTable)
+				.where(eq(productsTable.id, parsedData.id));
+
+			if (deleteResult) {
+				return c.json({
+					success: true,
+					message: 'Product deleted successfully',
+				});
+			} else {
+				return c.json({ error: 'Product not found or delete failed' }, 404);
+			}
+		} catch (error) {
+			if (error instanceof ZodError) {
+				console.log('error', error);
+				return c.json(
+					{ error: 'Validation error', details: error.errors },
+					400
+				);
+			}
+			return c.json({ error: 'Internal Server Error' }, 500);
+		}
 	});
 
 export default product;
