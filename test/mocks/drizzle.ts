@@ -39,7 +39,7 @@ export function mockDrizzle() {
 					}),
 				}),
 				delete: () => ({
-					where: mockDelete,
+					where: () => mockDelete,
 				}),
 				query: mockQuery,
 			})),
