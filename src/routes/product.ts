@@ -530,6 +530,23 @@ const product = factory
 		describeRoute({
 			description: 'Delete a product by ID',
 			tags: ['Products'],
+			parameters: [],
+			responses: {
+				200: {
+					description: 'Product deleted successfully',
+					content: {
+						'application/json': {
+							schema: {
+								type: 'object',
+								properties: {
+									success: { type: 'boolean' },
+									message: { type: 'string' }
+								}
+							}
+						}
+					},
+				}
+			}
 		}),
 		async (c) => {
 		try {
