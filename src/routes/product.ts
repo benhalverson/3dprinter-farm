@@ -456,9 +456,13 @@ const product = factory
 			}
 		}
 	)
+
 	.get(
 		'/product/:id',
-
+		describeRoute({
+			description: 'Get a product by ID',
+			tags: ['Products'],
+		}),
 		async (c) => {
 			const idParam = c.req.param('id');
 			const parsedData = idSchema.parse({ id: Number(idParam) });
@@ -481,7 +485,12 @@ const product = factory
 			return c.json(product);
 		}
 	)
-	.put('/update-product', async (c) => {
+	.put('/update-product',
+		describeRoute({
+			description: 'Update an existing product',
+			tags: ['Products'],
+		}),
+		async (c) => {
 		try {
 			const body = await c.req.json();
 			const parsedData = updateProductSchema.parse(body);
@@ -517,7 +526,29 @@ const product = factory
 			return c.json({ error: 'Internal Server Error' }, 500);
 		}
 	})
-	.delete('/delete-product/:id', authMiddleware,async (c) => {
+	.delete('/delete-product/:id', authMiddleware,
+		describeRoute({
+			description: 'Delete a product by ID',
+			tags: ['Products'],
+			parameters: [],
+			responses: {
+				200: {
+					description: 'Product deleted successfully',
+					content: {
+						'application/json': {
+							schema: {
+								type: 'object',
+								properties: {
+									success: { type: 'boolean' },
+									message: { type: 'string' }
+								}
+							}
+						}
+					},
+				}
+			}
+		}),
+		async (c) => {
 		try {
 			const idParam = c.req.param('id');
 			const parsedData = idSchema.parse({ id: Number(idParam) });
