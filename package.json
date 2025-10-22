@@ -28,7 +28,7 @@
     "@simplewebauthn/server": "^13.1.1",
     "cipher-kit": "^1.0.1",
     "drizzle-orm": "^0.43.1",
-    "hono": "^4.6.6",
+    "hono": "^4.10.2",
     "hono-openapi": "^0.4.8",
     "langchain": "^0.2.17",
     "openai": "^4.57.0",
