@@ -4,6 +4,8 @@ import { zValidator } from '@hono/zod-validator';
 import { authMiddleware } from '../utils/authMiddleware';
 import {
 	addProductSchema,
+	categoryDataSchema,
+	categoryTable,
 	idSchema,
 	ProductData,
 	productsTable,
@@ -574,6 +576,30 @@ const product = factory
 			}
 			return c.json({ error: 'Internal Server Error' }, 500);
 		}
-	});
+	})
+	.post('/add-category', zValidator('json', categoryDataSchema), async(c) => {
+		const categoryData = c.req.valid('json');
+		try {
+			const newCategory = await c.var.db
+				.insert(categoryTable)
+				.values(categoryData)
+				.returning();
+			return c.json(newCategory);
+		} catch (error) {
+			console.error('Error adding category', error);
+			return c.json({ error: 'Failed to add category' }, 500);
+		}
+	})
+	.get('/categories', async(c) => {
+		try {
+			const categories = await c.var.db
+				.select()
+				.from(categoryTable);
+			return c.json(categories);
+		} catch (error) {
+			console.error('Error fetching categories', error);
+			return c.json({ error: 'Failed to fetch categories' }, 500);
+		}
+	})
 
 export default product;

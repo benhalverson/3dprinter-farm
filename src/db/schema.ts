@@ -1,3 +1,5 @@
+import { relations, sql } from 'drizzle-orm';
+import { index } from 'drizzle-orm/gel-core';
 import {
 	integer,
 	sqliteTable,
@@ -6,6 +8,8 @@ import {
 	primaryKey,
 	uniqueIndex,
 	blob,
+	foreignKey,
+	ForeignKey,
 } from 'drizzle-orm/sqlite-core';
 import { z } from 'zod';
 
@@ -48,6 +52,50 @@ export const productsTable = sqliteTable('products', {
    color: text('color').default('#000000'),
    stripeProductId: text('stripe_product_id'),
    stripePriceId: text('stripe_price_id'),
+	 categoryId: integer().references(() => categoryTable.categoryId).notNull(),
+});
+
+export const productRelations = relations(productsTable, ({many}) => ({
+	categoriesLink: many(productsToCategories)
+
+}))
+
+export const categoryTable = sqliteTable('category', {
+	categoryId: integer().primaryKey({ autoIncrement: true }),
+	categoryName: text().notNull()
+})
+
+export const productsToCategories = sqliteTable(
+	"products_to_categories",
+	{
+		productId: integer("product_id")
+			.notNull()
+			.references(() => productsTable.id, { onDelete: "cascade", onUpdate: "cascade" }),
+		categoryId: integer("category_id")
+			.notNull()
+			.references(() => categoryTable.categoryId, { onDelete: "cascade", onUpdate: "cascade" }),
+		orderIndex: integer("order_index"),
+		createdAt: text("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+	},
+	(t) => ([
+		primaryKey({ columns: [t.productId, t.categoryId] }),
+	]
+	));
+
+export const productsToCategoriesRelations = relations(productsToCategories, ({ one }) => ({
+	product: one(productsTable, {
+		fields: [productsToCategories.productId],
+		references: [productsTable.id],
+	}),
+	category: one(categoryTable, {
+		fields: [productsToCategories.categoryId],
+		references: [categoryTable.categoryId],
+	})
+}));
+
+export const categoryDataSchema = z.object({
+	categoryId: z.number(),
+	categoryName: z.string(),
 });
 
 export const ProductsDataSchema = z
@@ -62,6 +110,7 @@ export const ProductsDataSchema = z
 		filamentType: z.string(),
 		color: z.string(),
 		skuNumber: z.string(),
+		categoryId: z.array(z.number())
 	})
 	.omit({ id: true, skuNumber: true });
 
