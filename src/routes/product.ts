@@ -10,6 +10,7 @@ import {
 	ProductData,
 	productsTable,
 	updateProductSchema,
+	productsToCategories,
 } from '../db/schema';
 import { generateSkuNumber } from '../utils/generateSkuNumber';
 import { BASE_URL } from '../constants';
@@ -354,7 +355,7 @@ const product = factory
 			requestBody: {
 				content: {
 					'application/json': {
-						schema: resolver(addProductSchema),
+							schema: resolver(addProductSchema) as any,
 					},
 				},
 				required: true,
@@ -363,7 +364,7 @@ const product = factory
 				201: {
 					content: {
 						'application/json': {
-							schema: resolver(addProductSchema),
+								schema: resolver(addProductSchema) as any,
 						},
 					},
 					description: 'The product was created successfully',
@@ -371,7 +372,7 @@ const product = factory
 				400: {
 					content: {
 						'application/json': {
-							schema: resolver(addProductSchema),
+								schema: resolver(addProductSchema) as any,
 						},
 					},
 					description: 'Missing or invalid parameters',
@@ -386,6 +387,7 @@ const product = factory
 			const user = c.get('jwtPayload') as { id: number; email: string };
 			if (!user) return c.json({ error: 'Unauthorized' }, 401);
 			const data = await c.req.valid('json');
+			const { categoryIds, imageGallery, ...rest } = data as any;
 			const skuNumber = generateSkuNumber(data.name, data.color);
 
 			const stripeProduct = await stripe.products.create({
@@ -433,14 +435,18 @@ const product = factory
 				stripePriceId = price.id;
 			}
 
-			console.log('data.imageGallery before insertion', data.imageGallery);
+			console.log('data.imageGallery before insertion', imageGallery);
+			// Use first category as primary if provided; otherwise leave null
+			const primaryCategoryId = categoryIds && categoryIds.length > 0 ? categoryIds[0] : null;
+
 			const productDataToInsert = {
-				...data,
+				...rest,
 				price: markupPrice,
 				skuNumber: skuNumber,
 				stripeProductId: stripeProduct.id,
 				stripePriceId: stripePriceId,
-				imageGallery: JSON.stringify(data.imageGallery || []),
+				imageGallery: JSON.stringify(imageGallery || []),
+				categoryId: primaryCategoryId,
 			};
 
 			console.log('Inserting product:', productDataToInsert);
@@ -451,6 +457,17 @@ const product = factory
 					.values(productDataToInsert)
 					.returning();
 				console.log('response', response);
+
+				// Insert category links into join table (if any provided)
+				const created = response[0];
+				if (created && Array.isArray(categoryIds) && categoryIds.length > 0) {
+					for (const [idx, catId] of categoryIds.entries()) {
+						await c.var.db
+							.insert(productsToCategories)
+							.values({ productId: created.id, categoryId: catId, orderIndex: idx });
+					}
+				}
+
 				return c.json(response);
 			} catch (error) {
 				console.error('Error adding product', error);

@@ -52,7 +52,8 @@ export const productsTable = sqliteTable('products', {
    color: text('color').default('#000000'),
    stripeProductId: text('stripe_product_id'),
    stripePriceId: text('stripe_price_id'),
-	 categoryId: integer().references(() => categoryTable.categoryId).notNull(),
+	 // Make optional to allow products without categories during transition
+	 categoryId: integer().references(() => categoryTable.categoryId),
 });
 
 export const productRelations = relations(productsTable, ({many}) => ({
@@ -110,7 +111,8 @@ export const ProductsDataSchema = z
 		filamentType: z.string(),
 		color: z.string(),
 		skuNumber: z.string(),
-		categoryId: z.array(z.number())
+		// Use categoryIds for many-to-many relationships; optional for backward-compat
+		categoryIds: z.array(z.number().int()).optional()
 	})
 	.omit({ id: true, skuNumber: true });
 
@@ -308,6 +310,8 @@ export const addProductSchema = z.object({
 	color: z.string(),
 	image: z.string(),
 	imageGallery: z.array(z.string()).min(1).optional(),
+	// Accept multiple categories on create; optional for now to support existing data
+	categoryIds: z.array(z.number().int()).optional(),
 });
 
 export const updateProductSchema = z.object({
@@ -319,6 +323,8 @@ export const updateProductSchema = z.object({
 	color: z.string(),
 	image: z.string(),
 	imageGallery: z.array(z.string()).min(1).optional(),
+	// Allow updating categories; optional so updates can omit category changes
+	categoryIds: z.array(z.number().int()).min(1).optional(),
 });
 
 export const ProfileDataSchema = z.object({
