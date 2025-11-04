@@ -12,6 +12,9 @@ export const mockQuery = {
 	},
 };
 
+// Capture payloads passed to insert().values(...) for assertions in tests
+export const capturedInserts: unknown[] = [];
+
 export function mockDrizzle() {
 	vi.mock('drizzle-orm/d1', () => {
 		return {
@@ -26,10 +29,13 @@ export function mockDrizzle() {
 					}),
 				}),
 				insert: () => ({
-					values: () => ({
+					values: (payload: unknown) => {
+						capturedInserts.push(payload);
+						return ({
 						onConflictDoUpdate: vi.fn().mockResolvedValueOnce(undefined),
 						returning: mockInsert,
-					}),
+					});
+					},
 				}),
 				update: () => ({
 					set: () => ({
