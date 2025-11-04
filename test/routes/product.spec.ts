@@ -1,7 +1,7 @@
 import { describe, test, expect, beforeEach, vi } from 'vitest';
 import app from '../../src/index';
 import { mockEnv } from '../mocks/env';
-import { mockWhere, mockAll, mockInsert, mockUpdate, mockDelete } from '../mocks/drizzle';
+import { mockWhere, mockAll, mockInsert, mockUpdate, mockDelete, capturedInserts } from '../mocks/drizzle';
 
 // Mock Stripe to prevent network calls
 vi.mock('stripe', () => {
@@ -32,6 +32,7 @@ const fakeSignedCookie = 'token=s.mocked.signed.cookie';
 describe('Product Routes', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		capturedInserts.length = 0;
 	});
 
 	test('GET /products returns list of products', async () => {
@@ -65,7 +66,7 @@ describe('Product Routes', () => {
 		const res = await app.fetch(request, mockEnv());
 
 		expect(res.status).toBe(200);
-		const data = await res.json();
+		const data = await res.json() as { id: number };
 		expect(data).toMatchObject({ id: 1 });
 	});
 
@@ -82,11 +83,11 @@ describe('Product Routes', () => {
 		const res = await app.fetch(request, mockEnv());
 
 		expect(res.status).toBe(404);
-		const data = await res.json();
+		const data = await res.json() as { error: string };
 		expect(data.error).toMatch(/not found/i);
 	});
 
-	test('POST /add-product adds a product', async () => {
+	test('POST /add-product adds a product without categories', async () => {
 		(globalThis.fetch as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
 			ok: true,
 			json: async () => ({
@@ -116,9 +117,14 @@ describe('Product Routes', () => {
 		const res = await app.fetch(request, mockEnv());
 
 		expect(res.status).toBe(200);
-		const data = await res.json();
+		const data = await res.json() as Array<{ id: number }>;
 		expect(Array.isArray(data)).toBe(true);
 		expect(data[0]).toHaveProperty('id');
+		// One insert for product only; no join rows because categoryIds omitted
+		expect(capturedInserts.length).toBe(1);
+		// Inserted product should have null categoryId during transition
+		const [productInsertOnly] = capturedInserts as Array<any>;
+		expect(productInsertOnly).toHaveProperty('categoryId', null);
 	});
 
 	test('POST /add-product handles slicer API failure', async () => {
@@ -149,8 +155,53 @@ describe('Product Routes', () => {
 		const res = await app.fetch(request, mockEnv());
 
 		expect(res.status).toBe(500);
-		const data = await res.json();
+		const data = await res.json() as { error: string };
 		expect(data.error).toBe('Failed to slice file');
+	});
+
+	test('POST /add-product adds a product with multiple categories', async () => {
+		(globalThis.fetch as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+			ok: true,
+			json: async () => ({
+				data: { price: 12 },
+			}),
+		});
+
+		mockInsert.mockResolvedValueOnce([{ id: 42 }]);
+
+		const request = new Request('http://localhost/add-product', {
+			method: 'POST',
+			headers: {
+				'Content-Type': 'application/json',
+				Cookie: fakeSignedCookie,
+			},
+			body: JSON.stringify({
+				name: 'Categorized Product',
+				description: 'desc',
+				stl: 'url/to.stl',
+				price: 25,
+				image: 'url/to/image.jpg',
+				filamentType: 'PLA',
+				color: '#123456',
+				categoryIds: [2, 3, 5],
+			}),
+		});
+
+		const res = await app.fetch(request, mockEnv());
+
+		expect(res.status).toBe(200);
+		const data = await res.json() as Array<{ id: number }>;
+		expect(Array.isArray(data)).toBe(true);
+		expect(data[0]).toHaveProperty('id');
+
+		// First insert is product; next three are join rows
+		expect(capturedInserts.length).toBe(4);
+		const [productInsert, ...joinInserts] = capturedInserts as Array<any>;
+		// Product insert should include primary categoryId = first of categoryIds
+		expect(productInsert).toMatchObject({ categoryId: 2 });
+		// Join inserts should target the created product id and provided categoryIds
+		const joinCategoryIds = joinInserts.map((v) => (v as any).categoryId);
+		expect(joinCategoryIds).toEqual([2, 3, 5]);
 	});
 
 	test('PUT /update-product updates a product', async () => {
@@ -178,7 +229,7 @@ describe('Product Routes', () => {
 		const res = await app.fetch(request, mockEnv());
 
 		expect(res.status).toBe(200);
-		const data = await res.json();
+		const data = await res.json() as { success: boolean };
 		expect(data.success).toBe(true);
 	});
 
@@ -195,7 +246,7 @@ describe('Product Routes', () => {
 		const res = await app.fetch(request, mockEnv());
 
 		expect(res.status).toBe(400);
-		const data = await res.json();
+		const data = await res.json() as { error: string };
 		expect(data.error).toBe('Validation error');
 	});
 
@@ -214,7 +265,7 @@ describe('Product Routes', () => {
 		const res = await app.fetch(request, mockEnv());
 
 		expect(res.status).toBe(200);
-		const data = await res.json();
+		const data = await res.json() as { success: boolean };
 		expect(data.success).toBe(true);
 	})
 });
