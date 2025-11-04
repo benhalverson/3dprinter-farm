@@ -607,7 +607,43 @@ const product = factory
 			return c.json({ error: 'Failed to add category' }, 500);
 		}
 	})
-	.get('/categories', async(c) => {
+	.get('/categories', describeRoute({
+		description: 'Get all product categories',
+		tags: ['Products'],
+		responses: {
+			200: {
+				content: {
+					'application/json': {
+						schema: {
+							type: 'array',
+							items: {
+								type: 'object',
+								properties: {
+									id: { type: 'number' },
+									name: { type: 'string' },
+									description: { type: 'string' }
+								}
+							}
+						}
+					}
+				},
+				description: 'List of all product categories',
+			},
+			500: {
+				content: {
+					'application/json': {
+						schema: {
+							type: 'object',
+							properties: {
+								error: { type: 'string' }
+							}
+						}
+					}
+				},
+				description: 'Failed to fetch categories',
+			},
+		},
+	}), async(c) => {
 		try {
 			const categories = await c.var.db
 				.select()
