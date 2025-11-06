@@ -4,14 +4,24 @@ import { cors } from 'hono/cors';
 import { mcpRoutes } from './mcp';
 import { webhookRoutes } from './webhooks/handlers';
 
-const app = new Hono();
+interface Env {
+  ALLOWED_ORIGINS?: string;
+}
+
+const app = new Hono<{ Bindings: Env }>();
 
 // Middleware
 app.use('*', logger());
-app.use('*', cors({
-  origin: '*',
-  allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-}));
+app.use('*', async (c, next) => {
+  const allowedOrigins = c.env.ALLOWED_ORIGINS 
+    ? c.env.ALLOWED_ORIGINS.split(',')
+    : ['http://localhost:3000', 'http://localhost:8787'];
+  
+  return cors({
+    origin: allowedOrigins,
+    allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  })(c, next);
+});
 
 // Health check
 app.get('/health', (c) => c.json({ status: 'ok' }));

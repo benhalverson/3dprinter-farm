@@ -65,7 +65,10 @@ APS_CLIENT_SECRET=your_client_secret
 APS_PROJECT_ID=your_project_id
 APS_WEBHOOK_SECRET=your_webhook_secret
 APS_SCOPE=data:read data:write
+ALLOWED_ORIGINS=http://localhost:3000,http://localhost:8787
 ```
+
+**Note:** `ALLOWED_ORIGINS` is a comma-separated list of allowed CORS origins. If not specified, defaults to `http://localhost:3000` and `http://localhost:8787`.
 
 ### 3. Set Production Secrets
 
@@ -76,6 +79,13 @@ wrangler secret put APS_CLIENT_ID
 wrangler secret put APS_CLIENT_SECRET
 wrangler secret put APS_PROJECT_ID
 wrangler secret put APS_WEBHOOK_SECRET
+wrangler secret put ALLOWED_ORIGINS
+```
+
+**Production CORS Configuration:**
+Set `ALLOWED_ORIGINS` to your production domains (comma-separated):
+```bash
+echo "https://your-app.com,https://api.your-app.com" | wrangler secret put ALLOWED_ORIGINS
 ```
 
 ## Development
