@@ -5,6 +5,12 @@
 
 import { getAuthToken } from './auth';
 
+interface Env {
+  APS_CLIENT_ID: string;
+  APS_CLIENT_SECRET: string;
+  APS_SCOPE?: string;
+}
+
 interface ExportJob {
   jobId: string;
   status: 'pending' | 'inprogress' | 'success' | 'failed';
@@ -16,7 +22,7 @@ const APS_BASE_URL = 'https://developer.api.autodesk.com';
 /**
  * Export a model to the specified format
  */
-export async function exportModel(env: any, modelId: string, format: string): Promise<ExportJob> {
+export async function exportModel(env: Env, modelId: string, format: string): Promise<ExportJob> {
   const token = await getAuthToken(env);
   
   const url = `${APS_BASE_URL}/modelderivative/v2/designdata/${encodeURIComponent(modelId)}/manifest`;
@@ -59,7 +65,7 @@ export async function exportModel(env: any, modelId: string, format: string): Pr
 /**
  * Get the status of an export job
  */
-export async function getExportStatus(env: any, jobId: string): Promise<ExportJob> {
+export async function getExportStatus(env: Env, jobId: string): Promise<ExportJob> {
   const token = await getAuthToken(env);
   
   const url = `${APS_BASE_URL}/modelderivative/v2/designdata/${encodeURIComponent(jobId)}/manifest`;
@@ -93,7 +99,7 @@ export async function getExportStatus(env: any, jobId: string): Promise<ExportJo
 /**
  * Download the exported file
  */
-export async function downloadExport(env: any, downloadUrl: string): Promise<ArrayBuffer> {
+export async function downloadExport(env: Env, downloadUrl: string): Promise<ArrayBuffer> {
   const token = await getAuthToken(env);
   
   const response = await fetch(downloadUrl, {

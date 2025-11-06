@@ -2,6 +2,12 @@
  * Authentication module for Autodesk Platform Services (APS)
  */
 
+interface Env {
+  APS_CLIENT_ID: string;
+  APS_CLIENT_SECRET: string;
+  APS_SCOPE?: string;
+}
+
 interface ApsCredentials {
   clientId: string;
   clientSecret: string;
@@ -17,7 +23,7 @@ interface AuthToken {
 /**
  * Get OAuth2 token from Autodesk Platform Services
  */
-export async function getAuthToken(env: any): Promise<string> {
+export async function getAuthToken(env: Env): Promise<string> {
   const credentials: ApsCredentials = {
     clientId: env.APS_CLIENT_ID,
     clientSecret: env.APS_CLIENT_SECRET,
@@ -53,7 +59,7 @@ export async function getAuthToken(env: any): Promise<string> {
 /**
  * Refresh an existing OAuth2 token
  */
-export async function refreshToken(env: any, refreshToken: string): Promise<string> {
+export async function refreshToken(env: Env, refreshToken: string): Promise<string> {
   const credentials: ApsCredentials = {
     clientId: env.APS_CLIENT_ID,
     clientSecret: env.APS_CLIENT_SECRET,

@@ -5,7 +5,14 @@ import { exportModel } from './aps/exports';
 import { getDesignParams, updateDesignParams } from './aps/params';
 import { createWorkItem, getWorkItemStatus } from './aps/workitems';
 
-export const mcpRoutes = new Hono();
+interface Env {
+  APS_CLIENT_ID: string;
+  APS_CLIENT_SECRET: string;
+  APS_PROJECT_ID: string;
+  APS_SCOPE?: string;
+}
+
+export const mcpRoutes = new Hono<{ Bindings: Env }>();
 
 // MCP Tool: Get authentication token
 mcpRoutes.post('/auth/token', async (c) => {

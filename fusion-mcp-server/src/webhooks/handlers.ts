@@ -6,7 +6,12 @@
 import { Hono } from 'hono';
 import { verifyWebhookSignature } from './verify';
 
-export const webhookRoutes = new Hono();
+interface Env {
+  APS_WEBHOOK_SECRET?: string;
+  APS_TRUSTED_TENANTS?: string;
+}
+
+export const webhookRoutes = new Hono<{ Bindings: Env }>();
 
 interface WebhookEvent {
   hook: {
@@ -66,7 +71,7 @@ webhookRoutes.post('/', async (c) => {
 /**
  * Handle model.version.created event
  */
-async function handleModelVersionCreated(env: any, event: WebhookEvent): Promise<void> {
+async function handleModelVersionCreated(env: Env, event: WebhookEvent): Promise<void> {
   console.log('Model version created:', event.payload);
   // Add custom logic here (e.g., trigger automation, send notifications)
 }
@@ -74,7 +79,7 @@ async function handleModelVersionCreated(env: any, event: WebhookEvent): Promise
 /**
  * Handle model.version.modified event
  */
-async function handleModelVersionModified(env: any, event: WebhookEvent): Promise<void> {
+async function handleModelVersionModified(env: Env, event: WebhookEvent): Promise<void> {
   console.log('Model version modified:', event.payload);
   // Add custom logic here
 }
@@ -82,7 +87,7 @@ async function handleModelVersionModified(env: any, event: WebhookEvent): Promis
 /**
  * Handle workitem.completed event
  */
-async function handleWorkItemCompleted(env: any, event: WebhookEvent): Promise<void> {
+async function handleWorkItemCompleted(env: Env, event: WebhookEvent): Promise<void> {
   console.log('Work item completed:', event.payload);
   // Add custom logic here
 }
@@ -90,7 +95,7 @@ async function handleWorkItemCompleted(env: any, event: WebhookEvent): Promise<v
 /**
  * Handle workitem.failed event
  */
-async function handleWorkItemFailed(env: any, event: WebhookEvent): Promise<void> {
+async function handleWorkItemFailed(env: Env, event: WebhookEvent): Promise<void> {
   console.log('Work item failed:', event.payload);
   // Add custom logic here
 }
@@ -98,7 +103,7 @@ async function handleWorkItemFailed(env: any, event: WebhookEvent): Promise<void
 /**
  * Route webhook events to appropriate handlers
  */
-async function handleWebhookEvent(env: any, event: WebhookEvent): Promise<void> {
+async function handleWebhookEvent(env: Env, event: WebhookEvent): Promise<void> {
   const eventType = event.hook.event;
   
   switch (eventType) {

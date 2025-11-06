@@ -5,6 +5,12 @@
 
 import { getAuthToken } from './auth';
 
+interface Env {
+  APS_CLIENT_ID: string;
+  APS_CLIENT_SECRET: string;
+  APS_SCOPE?: string;
+}
+
 interface DesignParameter {
   name: string;
   value: string | number;
@@ -17,7 +23,7 @@ const APS_BASE_URL = 'https://developer.api.autodesk.com';
 /**
  * Get all design parameters for a model
  */
-export async function getDesignParams(env: any, modelId: string): Promise<DesignParameter[]> {
+export async function getDesignParams(env: Env, modelId: string): Promise<DesignParameter[]> {
   const token = await getAuthToken(env);
   
   const url = `${APS_BASE_URL}/designautomation/v3/models/${encodeURIComponent(modelId)}/parameters`;
@@ -43,7 +49,7 @@ export async function getDesignParams(env: any, modelId: string): Promise<Design
  * Update design parameters for a model
  */
 export async function updateDesignParams(
-  env: any, 
+  env: Env, 
   modelId: string, 
   params: DesignParameter[]
 ): Promise<{ success: boolean; message: string }> {
@@ -75,7 +81,7 @@ export async function updateDesignParams(
  * Get a specific design parameter by name
  */
 export async function getDesignParam(
-  env: any, 
+  env: Env, 
   modelId: string, 
   paramName: string
 ): Promise<DesignParameter | null> {
@@ -87,7 +93,7 @@ export async function getDesignParam(
  * Update a specific design parameter
  */
 export async function updateDesignParam(
-  env: any,
+  env: Env,
   modelId: string,
   paramName: string,
   value: string | number

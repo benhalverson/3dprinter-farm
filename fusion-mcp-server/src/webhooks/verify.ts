@@ -3,13 +3,16 @@
  * Ensures webhook requests are authentic
  */
 
-import { createHmac } from 'crypto';
+interface Env {
+  APS_WEBHOOK_SECRET?: string;
+  APS_TRUSTED_TENANTS?: string;
+}
 
 /**
- * Verify webhook signature using HMAC
+ * Verify webhook signature using HMAC (Web Crypto API for Cloudflare Workers)
  */
 export async function verifyWebhookSignature(
-  env: any,
+  env: Env,
   payload: string,
   signature: string
 ): Promise<boolean> {
@@ -21,10 +24,23 @@ export async function verifyWebhookSignature(
       return false;
     }
 
-    // Create HMAC hash
-    const hmac = createHmac('sha256', webhookSecret);
-    hmac.update(payload);
-    const expectedSignature = hmac.digest('hex');
+    // Create HMAC hash using Web Crypto API
+    const encoder = new TextEncoder();
+    const keyData = encoder.encode(webhookSecret);
+    const messageData = encoder.encode(payload);
+
+    const cryptoKey = await crypto.subtle.importKey(
+      'raw',
+      keyData,
+      { name: 'HMAC', hash: 'SHA-256' },
+      false,
+      ['sign']
+    );
+
+    const signatureBuffer = await crypto.subtle.sign('HMAC', cryptoKey, messageData);
+    const expectedSignature = Array.from(new Uint8Array(signatureBuffer))
+      .map(b => b.toString(16).padStart(2, '0'))
+      .join('');
 
     // Compare signatures (constant-time comparison to prevent timing attacks)
     return timingSafeEqual(signature, expectedSignature);
@@ -77,7 +93,7 @@ export function getWebhookEventType(payload: any): string | null {
 /**
  * Check if webhook event is from a trusted source
  */
-export function isTrustedSource(env: any, payload: any): boolean {
+export function isTrustedSource(env: Env, payload: any): boolean {
   const trustedTenants = env.APS_TRUSTED_TENANTS?.split(',') || [];
   
   if (trustedTenants.length === 0) {

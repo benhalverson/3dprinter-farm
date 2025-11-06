@@ -4,6 +4,13 @@
 
 import { getAuthToken } from './auth';
 
+interface Env {
+  APS_CLIENT_ID: string;
+  APS_CLIENT_SECRET: string;
+  APS_PROJECT_ID: string;
+  APS_SCOPE?: string;
+}
+
 interface Model {
   id: string;
   name: string;
@@ -26,7 +33,7 @@ const APS_BASE_URL = 'https://developer.api.autodesk.com';
 /**
  * List all models in the project
  */
-export async function listModels(env: any): Promise<Model[]> {
+export async function listModels(env: Env): Promise<Model[]> {
   const token = await getAuthToken(env);
   const projectId = env.APS_PROJECT_ID;
 
@@ -52,7 +59,7 @@ export async function listModels(env: any): Promise<Model[]> {
 /**
  * Get detailed information about a specific model
  */
-export async function getModelDetails(env: any, modelId: string): Promise<ModelDetails> {
+export async function getModelDetails(env: Env, modelId: string): Promise<ModelDetails> {
   const token = await getAuthToken(env);
   const projectId = env.APS_PROJECT_ID;
 
@@ -78,7 +85,7 @@ export async function getModelDetails(env: any, modelId: string): Promise<ModelD
 /**
  * Search for models by name or properties
  */
-export async function searchModels(env: any, query: string): Promise<Model[]> {
+export async function searchModels(env: Env, query: string): Promise<Model[]> {
   const token = await getAuthToken(env);
   const projectId = env.APS_PROJECT_ID;
 

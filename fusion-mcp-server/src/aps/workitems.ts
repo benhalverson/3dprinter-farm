@@ -5,6 +5,13 @@
 
 import { getAuthToken } from './auth';
 
+interface Env {
+  APS_CLIENT_ID: string;
+  APS_CLIENT_SECRET: string;
+  APS_PROJECT_ID: string;
+  APS_SCOPE?: string;
+}
+
 interface WorkItem {
   id: string;
   status: 'pending' | 'inprogress' | 'success' | 'failed' | 'cancelled';
@@ -23,7 +30,7 @@ const APS_BASE_URL = 'https://developer.api.autodesk.com';
 /**
  * Create a new work item for Design Automation
  */
-export async function createWorkItem(env: any, request: WorkItemRequest): Promise<WorkItem> {
+export async function createWorkItem(env: Env, request: WorkItemRequest): Promise<WorkItem> {
   const token = await getAuthToken(env);
   
   const url = `${APS_BASE_URL}/da/us-east/v3/workitems`;
@@ -60,7 +67,7 @@ export async function createWorkItem(env: any, request: WorkItemRequest): Promis
 /**
  * Get the status of a work item
  */
-export async function getWorkItemStatus(env: any, workItemId: string): Promise<WorkItem> {
+export async function getWorkItemStatus(env: Env, workItemId: string): Promise<WorkItem> {
   const token = await getAuthToken(env);
   
   const url = `${APS_BASE_URL}/da/us-east/v3/workitems/${encodeURIComponent(workItemId)}`;
@@ -92,7 +99,7 @@ export async function getWorkItemStatus(env: any, workItemId: string): Promise<W
 /**
  * Cancel a work item
  */
-export async function cancelWorkItem(env: any, workItemId: string): Promise<void> {
+export async function cancelWorkItem(env: Env, workItemId: string): Promise<void> {
   const token = await getAuthToken(env);
   
   const url = `${APS_BASE_URL}/da/us-east/v3/workitems/${encodeURIComponent(workItemId)}`;
@@ -112,12 +119,15 @@ export async function cancelWorkItem(env: any, workItemId: string): Promise<void
 }
 
 /**
- * Wait for work item completion
+ * Wait for work item completion (polling-based)
+ * Note: In Cloudflare Workers, consider using Durable Objects or external scheduling
+ * for production use cases requiring long-running operations.
  */
 export async function waitForWorkItem(
-  env: any, 
+  env: Env, 
   workItemId: string, 
-  timeoutMs: number = 300000
+  timeoutMs: number = 60000, // Reduced timeout for Workers environment
+  pollIntervalMs: number = 2000
 ): Promise<WorkItem> {
   const startTime = Date.now();
   
@@ -128,8 +138,12 @@ export async function waitForWorkItem(
       return status;
     }
     
-    // Wait 5 seconds before checking again
-    await new Promise(resolve => setTimeout(resolve, 5000));
+    // Use Promise-based delay compatible with Workers
+    await new Promise(resolve => {
+      const timer = setTimeout(resolve, pollIntervalMs);
+      // Note: In Workers, this will work but for long-running tasks, 
+      // consider using Durable Objects or external job queue
+    });
   }
   
   throw new Error('Work item timeout');
