@@ -1,0 +1,136 @@
+{
+  "name": "fusion-mcp-server",
+  "version": "1.0.0",
+  "description": "Model Context Protocol server for Autodesk Fusion 360 integration",
+  "mcpServers": {
+    "fusion": {
+      "command": "node",
+      "args": ["dist/index.js"],
+      "env": {
+        "APS_CLIENT_ID": "${APS_CLIENT_ID}",
+        "APS_CLIENT_SECRET": "${APS_CLIENT_SECRET}",
+        "APS_PROJECT_ID": "${APS_PROJECT_ID}",
+        "APS_WEBHOOK_SECRET": "${APS_WEBHOOK_SECRET}"
+      }
+    }
+  },
+  "tools": [
+    {
+      "name": "list_models",
+      "description": "List all Fusion 360 models in the project",
+      "inputSchema": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    {
+      "name": "get_model_details",
+      "description": "Get detailed information about a specific model",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "modelId": {
+            "type": "string",
+            "description": "The ID of the model"
+          }
+        },
+        "required": ["modelId"]
+      }
+    },
+    {
+      "name": "export_model",
+      "description": "Export a model to a specific format (STL, OBJ, STEP, etc.)",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "modelId": {
+            "type": "string",
+            "description": "The ID of the model to export"
+          },
+          "format": {
+            "type": "string",
+            "description": "Export format (stl, obj, step, iges, etc.)",
+            "enum": ["stl", "obj", "step", "iges", "fbx"]
+          }
+        },
+        "required": ["modelId", "format"]
+      }
+    },
+    {
+      "name": "get_design_params",
+      "description": "Get all design parameters for a model",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "modelId": {
+            "type": "string",
+            "description": "The ID of the model"
+          }
+        },
+        "required": ["modelId"]
+      }
+    },
+    {
+      "name": "update_design_params",
+      "description": "Update design parameters for a model",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "modelId": {
+            "type": "string",
+            "description": "The ID of the model"
+          },
+          "params": {
+            "type": "array",
+            "description": "Array of parameters to update",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "value": {
+                  "type": ["string", "number"]
+                }
+              },
+              "required": ["name", "value"]
+            }
+          }
+        },
+        "required": ["modelId", "params"]
+      }
+    },
+    {
+      "name": "create_work_item",
+      "description": "Create a Design Automation work item",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "activityId": {
+            "type": "string",
+            "description": "The activity ID to execute"
+          },
+          "arguments": {
+            "type": "object",
+            "description": "Arguments for the work item"
+          }
+        },
+        "required": ["activityId", "arguments"]
+      }
+    },
+    {
+      "name": "get_work_item_status",
+      "description": "Get the status of a work item",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "workItemId": {
+            "type": "string",
+            "description": "The ID of the work item"
+          }
+        },
+        "required": ["workItemId"]
+      }
+    }
+  ]
+}

@@ -1,0 +1,35 @@
+{
+  "name": "fusion-mcp-server",
+  "version": "1.0.0",
+  "description": "Model Context Protocol server for Autodesk Fusion 360 integration with Cloudflare Workers",
+  "main": "dist/index.js",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "start": "wrangler dev",
+    "build": "tsc",
+    "test": "vitest",
+    "cf-typegen": "wrangler types"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "autodesk",
+    "fusion-360",
+    "aps",
+    "cloudflare-workers",
+    "hono"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "hono": "^4.6.6"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20241127.0",
+    "typescript": "^5.5.2",
+    "vitest": "^2.1.8",
+    "wrangler": "^4.13.2"
+  }
+}
