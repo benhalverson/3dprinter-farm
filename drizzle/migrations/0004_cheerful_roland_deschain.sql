@@ -10,7 +10,7 @@ CREATE TABLE `products_to_categories` (
 	`created_at` text DEFAULT CURRENT_TIMESTAMP NOT NULL,
 	PRIMARY KEY(`product_id`, `category_id`),
 	FOREIGN KEY (`product_id`) REFERENCES `products`(`id`) ON UPDATE cascade ON DELETE cascade,
-	FOREIGN KEY (`category_id`) REFERENCES `category`(`categoryId`) ON UPDATE cascade ON DELETE cascade
+	FOREIGN KEY (`category_id`) REFERENCES `category`(`categoryId`) ON UPDATE cascade ON DELETE set null
 );
 --> statement-breakpoint
-ALTER TABLE `products` ADD `categoryId` integer NOT NULL REFERENCES category(categoryId);
+ALTER TABLE `products` ADD `categoryId` integer REFERENCES category(categoryId);
