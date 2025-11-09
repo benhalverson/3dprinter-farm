@@ -74,7 +74,7 @@ export const productsToCategories = sqliteTable(
 			.references(() => productsTable.id, { onDelete: "cascade", onUpdate: "cascade" }),
 		categoryId: integer("category_id")
 			.notNull()
-			.references(() => categoryTable.categoryId, { onDelete: "cascade", onUpdate: "cascade" }),
+			.references(() => categoryTable.categoryId, { onDelete: "set null", onUpdate: "cascade" }),
 		orderIndex: integer("order_index"),
 		createdAt: text("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
 	},

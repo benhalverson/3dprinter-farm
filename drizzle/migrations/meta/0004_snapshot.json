@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "0181d8df-9f2b-4fc8-ac0f-a7ad716e6152",
+  "id": "58dc9484-9511-4682-b6e2-47e90b2d09f0",
   "prevId": "820e8083-136f-4c20-9b62-2ff6abf4c2eb",
   "tables": {
     "authenticators": {
@@ -472,7 +472,7 @@
           "name": "categoryId",
           "type": "integer",
           "primaryKey": false,
-          "notNull": true,
+          "notNull": false,
           "autoincrement": false
         }
       },
@@ -554,7 +554,7 @@
           "columnsTo": [
             "categoryId"
           ],
-          "onDelete": "cascade",
+          "onDelete": "set null",
           "onUpdate": "cascade"
         }
       },
