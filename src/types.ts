@@ -5,6 +5,7 @@ export type Bindings = {
 	BUCKET: R2Bucket;
 	PHOTOS_BUCKET: R2Bucket;
 	SLANT_API: string;
+	SLANT_PLATFORM_ID: string;
 	STRIPE_PUBLISHABLE_KEY: string;
 	STRIPE_SECRET_KEY: string;
 	STRIPE_WEBHOOK_SECRET: string;
@@ -55,6 +56,55 @@ export interface Filament {
 	hexColor: string;
 	colorTag: string;
 	profile: string;
+}
+
+// V2 API Filament Types
+export interface FilamentV2 {
+	publicId: string;
+	name: string;
+	provider: string;
+	profile: 'PLA' | 'PETG' | 'ABS';
+	color: string;
+	hexValue: string;
+	public: boolean;
+	available: boolean;
+}
+
+export interface FilamentV2Response {
+	success: boolean;
+	message: string;
+	data: FilamentV2[];
+	count: number;
+	lastUpdated?: string;
+}
+
+// Slant3D V2 File API Types
+export interface STLMetrics {
+	x: number;
+	y: number;
+	z: number;
+	weight: number;
+	volume: number;
+	surfaceArea: number;
+	imageURL: string;
+}
+
+export interface Slant3DFile {
+	publicFileServiceId: string;
+	name: string;
+	ownerId?: string;
+	platformId: string;
+	type: 'stl';
+	fileURL: string;
+	STLMetrics?: STLMetrics;
+	createdAt: string;
+	updatedAt: string;
+}
+
+export interface Slant3DFileResponse {
+	success: boolean;
+	message: string;
+	data: Slant3DFile;
 }
 
 // export interface Details {
