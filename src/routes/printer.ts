@@ -4,6 +4,7 @@ import {
 	ErrorResponse,
 	FilamentColorsResponse,
 	FilamentV2Response,
+	Slant3DFileResponse,
 	ListResponse,
 	OrderData,
 	OrderResponse,
@@ -550,6 +551,189 @@ const printer = factory
 			}
 			return c.json({ error: 'Failed to estimate order' }, 500);
 		}
-	});
+	})
+	.post(
+		'/v2/upload',
+		describeRoute({
+			summary: 'Upload file and register with Slant3D V2 API',
+			description: 'Upload STL file to R2 bucket and register it with Slant3D V2 API for order processing. Returns both local file info and Slant3D file ID.',
+			tags: ['Printer'],
+			requestBody: {
+				content: {
+					'multipart/form-data': {
+						schema: z.object({
+							file: z.instanceof(File).describe('STL file to upload'),
+							ownerId: z.string().optional().describe('Your application user ID for tracking'),
+						}),
+					},
+				},
+				required: true,
+			},
+			responses: {
+				201: {
+					content: {
+						'application/json': {
+							schema: z.object({
+								success: z.boolean(),
+								message: z.string(),
+								data: z.object({
+									local: z.object({
+										key: z.string().describe('File key in R2 bucket'),
+										url: z.string().describe('R2 public URL'),
+										name: z.string(),
+									}),
+									slant3D: z.object({
+										publicFileServiceId: z.string().describe('UUID for use in orders'),
+										name: z.string(),
+										fileURL: z.string(),
+										metrics: z.object({
+											x: z.number().describe('Width in mm'),
+											y: z.number().describe('Depth in mm'),
+											z: z.number().describe('Height in mm'),
+											weight: z.number().describe('Weight in grams'),
+											volume: z.number().describe('Volume in cubic cm'),
+											surfaceArea: z.number().describe('Surface area in sq mm'),
+											imageURL: z.string().describe('Preview image URL'),
+										}).optional(),
+									}),
+								}),
+							}),
+						},
+					},
+					description: 'File uploaded and registered successfully',
+				},
+				400: {
+					content: {
+						'application/json': {
+							schema: z.object({
+								success: z.boolean(),
+								error: z.string(),
+							}),
+						},
+					},
+					description: 'Invalid file or missing parameters',
+				},
+				500: {
+					content: {
+						'application/json': {
+							schema: z.object({
+								success: z.boolean(),
+								error: z.string(),
+								details: z.any(),
+							}),
+						},
+					},
+					description: 'Upload or registration failed',
+				},
+			},
+		}),
+		async (c: Context) => {
+			try {
+				const body = await c.req.parseBody();
+
+				if (!body || !body.file) {
+					return c.json(
+						{ success: false, error: 'No file uploaded' },
+						400
+					);
+				}
+
+				const file = body.file as File;
+				const ownerId = (body.ownerId as string) || 'anonymous';
+
+				// Validate file is STL
+				const isStl =
+					file.type === 'model/stl' ||
+					file.name.toLowerCase().endsWith('.stl');
+
+				if (!isStl) {
+					return c.json(
+						{
+							success: false,
+							error: 'Invalid file type. Only STL files are supported.',
+						},
+						400
+					);
+				}
+
+				// Step 1: Upload to R2 bucket
+				const cleanKey = dashFilename(file.name);
+				const bucket = c.env.BUCKET;
+
+				await bucket.put(cleanKey, file.stream(), {
+					httpMetadata: { contentType: 'model/stl' },
+				});
+
+				const baseUrl = c.env.R2_PUBLIC_BASE_URL || 'https://cdn.example.com';
+				const publicUrl = `${baseUrl}/${encodeURIComponent(cleanKey)}`;
+
+				// Step 2: Register file with Slant3D V2 API
+				const slant3DResponse = await fetch(
+					`${BASE_URL_V2}files`,
+					{
+						method: 'POST',
+						headers: {
+							'Content-Type': 'application/json',
+							Authorization: `Bearer ${c.env.SLANT_API}`,
+						},
+						body: JSON.stringify({
+							URL: publicUrl,
+							name: file.name.replace(/\.stl$/i, ''),
+							platformId: c.env.SLANT_PLATFORM_ID,
+							ownerId,
+							type: 'stl',
+						}),
+					}
+				);
+
+				if (!slant3DResponse.ok) {
+					const error = await slant3DResponse.json();
+					return c.json(
+						{
+							success: false,
+							error: 'Failed to register file with Slant3D V2 API',
+							details: error,
+						},
+						500
+					);
+				}
+
+				const slant3DData =
+					(await slant3DResponse.json()) as Slant3DFileResponse;
+
+				return c.json(
+					{
+						success: true,
+						message: 'File uploaded and registered successfully',
+						data: {
+							local: {
+								key: cleanKey,
+								url: publicUrl,
+								name: file.name,
+							},
+							slant3D: {
+								publicFileServiceId:
+									slant3DData.data.publicFileServiceId,
+								name: slant3DData.data.name,
+								fileURL: slant3DData.data.fileURL,
+								metrics: slant3DData.data.STLMetrics,
+							},
+						},
+					},
+					201
+				);
+			} catch (error: any) {
+				console.error('V2 Upload error:', error);
+				return c.json(
+					{
+						success: false,
+						error: 'Failed to upload file',
+						details: error.message,
+					},
+					500
+				);
+			}
+		}
+	);
 
 export default printer;
