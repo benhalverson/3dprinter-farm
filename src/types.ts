@@ -57,6 +57,26 @@ export interface Filament {
 	profile: string;
 }
 
+// V2 API Filament Types
+export interface FilamentV2 {
+	publicId: string;
+	name: string;
+	provider: string;
+	profile: 'PLA' | 'PETG' | 'ABS';
+	color: string;
+	hexValue: string;
+	public: boolean;
+	available: boolean;
+}
+
+export interface FilamentV2Response {
+	success: boolean;
+	message: string;
+	data: FilamentV2[];
+	count: number;
+	lastUpdated?: string;
+}
+
 // export interface Details {
 // 	error: string;
 // }

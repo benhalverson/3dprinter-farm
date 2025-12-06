@@ -3,12 +3,13 @@ import { z } from 'zod';
 import {
 	ErrorResponse,
 	FilamentColorsResponse,
+	FilamentV2Response,
 	ListResponse,
 	OrderData,
 	OrderResponse,
 	SliceResponse,
 } from '../types';
-import { BASE_URL } from '../constants';
+import { BASE_URL, BASE_URL_V2 } from '../constants';
 import { authMiddleware } from '../utils/authMiddleware';
 import { orderSchema } from '../db/schema';
 import factory from '../factory';
@@ -322,6 +323,201 @@ const printer = factory
 			});
 
 			return c.json(filteredFilaments);
+		}
+	)
+	.get(
+		'/v2/colors',
+		describeRoute({
+			summary: 'Get available filaments (V2 API)',
+			description: 'Retrieves filaments from Slant3D V2 API with enhanced metadata including publicId, availability, and provider information.',
+			tags: ['Printer'],
+			parameters: [
+				{
+					name: 'profile',
+					in: 'query',
+					required: false,
+					schema: z.enum(['PLA', 'PETG', 'ABS']),
+					description: 'Filter by material type',
+				},
+				{
+					name: 'available',
+					in: 'query',
+					required: false,
+					schema: z.enum(['true', 'false']),
+					description: 'Filter by availability status',
+				},
+				{
+					name: 'provider',
+					in: 'query',
+					required: false,
+					schema: z.string(),
+					description: 'Filter by filament provider/manufacturer',
+				},
+			],
+			responses: {
+				200: {
+					content: {
+						'application/json': {
+							schema: z.object({
+								success: z.boolean(),
+								message: z.string(),
+								data: z.array(
+									z.object({
+										publicId: z.string().describe('UUID for order placement'),
+										name: z.string().describe('Filament display name'),
+										provider: z.string().describe('Manufacturer/brand'),
+										profile: z.enum(['PLA', 'PETG', 'ABS']).describe('Material type'),
+										color: z.string().describe('Color description'),
+										hexValue: z.string().describe('Hex color code'),
+										public: z.boolean().describe('Public visibility'),
+										available: z.boolean().describe('In-stock status'),
+									})
+								),
+								count: z.number(),
+								lastUpdated: z.string().optional(),
+							}),
+						},
+					},
+					description: 'Filaments retrieved successfully',
+				},
+				400: {
+					content: {
+						'application/json': {
+							schema: z.object({
+								success: z.boolean(),
+								message: z.string(),
+								error: z.string(),
+							}),
+						},
+					},
+					description: 'Invalid query parameters',
+				},
+				500: {
+					content: {
+						'application/json': {
+							schema: z.object({
+								success: z.boolean(),
+								message: z.string(),
+								error: z.string(),
+							}),
+						},
+					},
+					description: 'Failed to retrieve filaments',
+				},
+			},
+		}),
+		async (c: Context) => {
+			const profileQuery = c.req.query('profile')?.toUpperCase();
+			const availableQuery = c.req.query('available');
+			const providerQuery = c.req.query('provider');
+
+			// Build cache key from query parameters
+			const cacheKey = `v2:colors:${profileQuery || 'all'}:${availableQuery || 'all'}:${providerQuery || 'all'}`;
+
+			// Check cache first
+			const cachedResponse = await c.env.COLOR_CACHE.get(cacheKey);
+			if (cachedResponse) {
+				console.log(`Cache hit for key: ${cacheKey}`);
+				return c.json(JSON.parse(cachedResponse));
+			}
+
+			// Validate query parameters
+			if (profileQuery && !['PLA', 'PETG', 'ABS'].includes(profileQuery)) {
+				return c.json(
+					{
+						success: false,
+						message: 'Invalid profile parameter',
+						error: 'Accepted values are "PLA", "PETG", or "ABS"',
+					},
+					400
+				);
+			}
+
+			if (availableQuery && !['true', 'false'].includes(availableQuery)) {
+				return c.json(
+					{
+						success: false,
+						message: 'Invalid available parameter',
+						error: 'Accepted values are "true" or "false"',
+					},
+					400
+				);
+			}
+
+			try {
+				// Call Slant3D V2 API
+				const response = await fetch(`${BASE_URL_V2}filaments`, {
+					method: 'GET',
+					headers: {
+						'Content-Type': 'application/json',
+						Authorization: `Bearer ${c.env.SLANT_API_V2}`,
+					},
+				});
+
+				if (!response.ok) {
+					const error = (await response.json()) as ErrorResponse;
+					return c.json(
+						{
+							success: false,
+							message: 'Failed to retrieve filaments from Slant3D V2 API',
+							error: error.error || 'Unknown error',
+						},
+						500
+					);
+				}
+
+				const result = (await response.json()) as FilamentV2Response;
+
+				// Apply filters
+				let filteredData = result.data;
+
+				if (profileQuery) {
+					filteredData = filteredData.filter(
+						(filament) => filament.profile === profileQuery
+					);
+				}
+
+				if (availableQuery) {
+					const availableBool = availableQuery === 'true';
+					filteredData = filteredData.filter(
+						(filament) => filament.available === availableBool
+					);
+				}
+
+				if (providerQuery) {
+					filteredData = filteredData.filter((filament) =>
+						filament.provider.toLowerCase().includes(providerQuery.toLowerCase())
+					);
+				}
+
+				// Sort by color name for consistent ordering
+				filteredData.sort((a, b) => a.color.localeCompare(b.color));
+
+				const responseData = {
+					success: true,
+					message: 'Filaments retrieved successfully',
+					data: filteredData,
+					count: filteredData.length,
+					lastUpdated: result.lastUpdated || new Date().toISOString(),
+				};
+
+				// Cache the response for 7 days
+				await c.env.COLOR_CACHE.put(cacheKey, JSON.stringify(responseData), {
+					expirationTtl: 604800, // 7 days
+				});
+
+				return c.json(responseData);
+			} catch (error: any) {
+				console.error('Error fetching V2 filaments:', error);
+				return c.json(
+					{
+						success: false,
+						message: 'Failed to retrieve filaments',
+						error: error.message || 'Internal server error',
+					},
+					500
+				);
+			}
 		}
 	)
 	.post('/estimate', async (c: Context) => {
