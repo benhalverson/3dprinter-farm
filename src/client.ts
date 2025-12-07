@@ -1,6 +1,6 @@
-import { hc } from "hono/client";
-import { STORE_URL } from "./constants";
-import type { App } from "./index";
+import { hc } from 'hono/client';
+import { STORE_URL } from './constants';
+import type { App } from './index';
 
 // —————————————————————————————————————————————————————————————————————————————
 // Client

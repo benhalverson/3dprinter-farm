@@ -1,4 +1,4 @@
-import { relations, sql } from "drizzle-orm";
+import { relations, sql } from 'drizzle-orm';
 import {
   blob,
   integer,
@@ -7,48 +7,48 @@ import {
   sqliteTable,
   text,
   uniqueIndex,
-} from "drizzle-orm/sqlite-core";
-import { z } from "zod";
+} from 'drizzle-orm/sqlite-core';
+import { z } from 'zod';
 
-export const cart = sqliteTable("cart", {
-  id: integer("id").primaryKey(),
-  cartId: text("cart_id").notNull(),
-  skuNumber: text("sku_number").notNull(),
-  quantity: integer("quantity").default(1).notNull(),
-  color: text("color").default("#000000"),
-  filamentType: text("filament_type").notNull(),
+export const cart = sqliteTable('cart', {
+  id: integer('id').primaryKey(),
+  cartId: text('cart_id').notNull(),
+  skuNumber: text('sku_number').notNull(),
+  quantity: integer('quantity').default(1).notNull(),
+  color: text('color').default('#000000'),
+  filamentType: text('filament_type').notNull(),
 });
 
-export const leads = sqliteTable("leads", {
-  id: integer("id").primaryKey(),
-  email: text("email").unique(),
-  name: text("name").notNull(),
-  status: text("status"),
-  confirmedAt: integer("confirmed_at"),
-  createdAt: integer("created_at").notNull(),
-  updatedAt: integer("updated_at"),
+export const leads = sqliteTable('leads', {
+  id: integer('id').primaryKey(),
+  email: text('email').unique(),
+  name: text('name').notNull(),
+  status: text('status'),
+  confirmedAt: integer('confirmed_at'),
+  createdAt: integer('created_at').notNull(),
+  updatedAt: integer('updated_at'),
 });
 
 export const usPhoneNumberSchema = z
   .string()
   .regex(
     /^\(?([0-9]{3})\)?[-.\s]?([0-9]{3})[-.\s]?([0-9]{4})$/,
-    "Invalid US phone number format",
+    'Invalid US phone number format',
   );
 
-export const productsTable = sqliteTable("products", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
-  name: text("name").notNull(),
-  description: text("description").notNull(),
-  image: text("image").default(""),
-  imageGallery: text("image_gallery"),
-  stl: text("stl").notNull(),
-  price: real("price").default(0).notNull(),
-  filamentType: text("filament_type").notNull().default("PLA"),
-  skuNumber: text("sku_number").default(""),
-  color: text("color").default("#000000"),
-  stripeProductId: text("stripe_product_id"),
-  stripePriceId: text("stripe_price_id"),
+export const productsTable = sqliteTable('products', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  name: text('name').notNull(),
+  description: text('description').notNull(),
+  image: text('image').default(''),
+  imageGallery: text('image_gallery'),
+  stl: text('stl').notNull(),
+  price: real('price').default(0).notNull(),
+  filamentType: text('filament_type').notNull().default('PLA'),
+  skuNumber: text('sku_number').default(''),
+  color: text('color').default('#000000'),
+  stripeProductId: text('stripe_product_id'),
+  stripePriceId: text('stripe_price_id'),
   // Make optional to allow products without categories during transition
   categoryId: integer().references(() => categoryTable.categoryId),
 });
@@ -57,28 +57,28 @@ export const productRelations = relations(productsTable, ({ many }) => ({
   categoriesLink: many(productsToCategories),
 }));
 
-export const categoryTable = sqliteTable("category", {
+export const categoryTable = sqliteTable('category', {
   categoryId: integer().primaryKey({ autoIncrement: true }),
   categoryName: text().notNull(),
 });
 
 export const productsToCategories = sqliteTable(
-  "products_to_categories",
+  'products_to_categories',
   {
-    productId: integer("product_id")
+    productId: integer('product_id')
       .notNull()
       .references(() => productsTable.id, {
-        onDelete: "cascade",
-        onUpdate: "cascade",
+        onDelete: 'cascade',
+        onUpdate: 'cascade',
       }),
-    categoryId: integer("category_id")
+    categoryId: integer('category_id')
       .notNull()
       .references(() => categoryTable.categoryId, {
-        onDelete: "set null",
-        onUpdate: "cascade",
+        onDelete: 'set null',
+        onUpdate: 'cascade',
       }),
-    orderIndex: integer("order_index"),
-    createdAt: text("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+    orderIndex: integer('order_index'),
+    createdAt: text('created_at').default(sql`CURRENT_TIMESTAMP`).notNull(),
   },
   t => [primaryKey({ columns: [t.productId, t.categoryId] })],
 );
@@ -119,21 +119,21 @@ export const ProductsDataSchema = z
   })
   .omit({ id: true, skuNumber: true });
 
-export const users = sqliteTable("users", {
-  id: integer("id").primaryKey(),
-  email: text("email").notNull().unique(),
-  passwordHash: text("password_hash").notNull(),
-  salt: text("salt").notNull(),
-  firstName: text("first_name").default("").notNull(),
-  lastName: text("last_name").default("").notNull(),
-  shippingAddress: text("shipping_address").default("").notNull(),
-  billingAddress: text("billing_address").default("").notNull(),
-  city: text("city").notNull().default(""),
-  state: text("state").notNull().default(""),
-  zipCode: text("zip_code").notNull().default(""),
-  country: text("country").notNull().default(""),
-  phone: text("phone").notNull().default(""),
-  role: text("role").default("user").notNull(),
+export const users = sqliteTable('users', {
+  id: integer('id').primaryKey(),
+  email: text('email').notNull().unique(),
+  passwordHash: text('password_hash').notNull(),
+  salt: text('salt').notNull(),
+  firstName: text('first_name').default('').notNull(),
+  lastName: text('last_name').default('').notNull(),
+  shippingAddress: text('shipping_address').default('').notNull(),
+  billingAddress: text('billing_address').default('').notNull(),
+  city: text('city').notNull().default(''),
+  state: text('state').notNull().default(''),
+  zipCode: text('zip_code').notNull().default(''),
+  country: text('country').notNull().default(''),
+  phone: text('phone').notNull().default(''),
+  role: text('role').default('user').notNull(),
 });
 
 const OrderDataSchema = z.object({
@@ -167,49 +167,49 @@ export type OrderData = z.infer<typeof OrderDataSchema>;
 export type ProductData = z.infer<typeof ProductsDataSchema>;
 export type ProfileData = z.infer<typeof ProfileDataSchema>;
 
-export const ordersTable = sqliteTable("ordersTable", {
-  id: integer("id").primaryKey(),
-  userId: integer("user_id")
-    .references(() => users.id, { onDelete: "cascade" }) // Establish relationship with users table
+export const ordersTable = sqliteTable('ordersTable', {
+  id: integer('id').primaryKey(),
+  userId: integer('user_id')
+    .references(() => users.id, { onDelete: 'cascade' }) // Establish relationship with users table
     .notNull(),
-  orderNumber: text("order_number").notNull().unique(),
-  filename: text("filename"),
-  fileURL: text("file_url").notNull(),
+  orderNumber: text('order_number').notNull().unique(),
+  filename: text('filename'),
+  fileURL: text('file_url').notNull(),
 
   // Shipping address fields specific to each order
-  shipToName: text("ship_to_name").notNull(),
-  shipToStreet1: text("ship_to_street_1").notNull(),
-  shipToStreet2: text("ship_to_street_2"),
-  shipToCity: text("ship_to_city").notNull(),
-  shipToState: text("ship_to_state").notNull(),
-  shipToZip: text("ship_to_zip").notNull(),
-  shipToCountryISO: text("ship_to_country_iso").notNull(),
+  shipToName: text('ship_to_name').notNull(),
+  shipToStreet1: text('ship_to_street_1').notNull(),
+  shipToStreet2: text('ship_to_street_2'),
+  shipToCity: text('ship_to_city').notNull(),
+  shipToState: text('ship_to_state').notNull(),
+  shipToZip: text('ship_to_zip').notNull(),
+  shipToCountryISO: text('ship_to_country_iso').notNull(),
 
   // Billing address fields (if needed)
-  billToStreet1: text("bill_to_street_1"),
-  billToStreet2: text("bill_to_street_2"),
-  billToCity: text("bill_to_city"),
-  billToState: text("bill_to_state"),
-  billToZip: text("bill_to_zip"),
-  billToCountryISO: text("bill_to_country_iso"),
+  billToStreet1: text('bill_to_street_1'),
+  billToStreet2: text('bill_to_street_2'),
+  billToCity: text('bill_to_city'),
+  billToState: text('bill_to_state'),
+  billToZip: text('bill_to_zip'),
+  billToCountryISO: text('bill_to_country_iso'),
 });
 
 export const authenticators = sqliteTable(
-  "authenticators",
+  'authenticators',
   {
     id: integer().primaryKey().notNull(),
-    userId: integer("user_id")
+    userId: integer('user_id')
       .notNull()
-      .references(() => users.id, { onDelete: "cascade" }),
-    credentialId: text("credential_id").notNull(),
-    credentialPublicKey: blob("credential_public_key", {
-      mode: "buffer",
+      .references(() => users.id, { onDelete: 'cascade' }),
+    credentialId: text('credential_id').notNull(),
+    credentialPublicKey: blob('credential_public_key', {
+      mode: 'buffer',
     }).notNull(),
-    counter: integer("counter").notNull().default(0),
+    counter: integer('counter').notNull().default(0),
   },
   table => {
     return {
-      userCredUnique: uniqueIndex("authenticators_user_credential_unique").on(
+      userCredUnique: uniqueIndex('authenticators_user_credential_unique').on(
         table.userId,
         table.credentialId,
       ),
@@ -218,12 +218,12 @@ export const authenticators = sqliteTable(
 );
 
 export const webauthnChallenges = sqliteTable(
-  "webauthn_challenges",
+  'webauthn_challenges',
   {
-    userId: integer("user_id")
+    userId: integer('user_id')
       .notNull()
-      .references(() => users.id, { onDelete: "cascade" }),
-    challenge: text("challenge").notNull(),
+      .references(() => users.id, { onDelete: 'cascade' }),
+    challenge: text('challenge').notNull(),
   },
   table => {
     return {
@@ -255,26 +255,26 @@ export const orderSchema = z
     email: z
       .string()
       .email({
-        message: "Invalid email format",
+        message: 'Invalid email format',
       })
       .email()
       .min(5)
       .trim(),
     phone: z
       .string({
-        required_error: "Phone number is required",
-        invalid_type_error: "Phone number should be a string",
+        required_error: 'Phone number is required',
+        invalid_type_error: 'Phone number should be a string',
       })
       .trim()
       .toLowerCase(),
     name: z
       .string({
-        required_error: "Name is required",
+        required_error: 'Name is required',
       })
       .trim(),
     orderNumber: z
       .string({
-        required_error: "Order number is required",
+        required_error: 'Order number is required',
       })
       .trim(),
     filename: z.string().trim(),
@@ -332,13 +332,13 @@ export const updateProductSchema = z.object({
 
 export const ProfileDataSchema = z.object({
   id: z.number().optional(),
-  firstName: z.string().min(1, "First name is required"),
-  lastName: z.string().min(1, "Last name is required"),
-  shippingAddress: z.string().trim().min(10, "Shipping address is required"),
-  city: z.string().trim().min(1, "City is required"),
-  state: z.string().trim().min(1, "State is required").max(2),
-  zipCode: z.string().trim().min(1, "Zip code is required").max(5),
-  country: z.string().trim().min(1, "Country is required"),
+  firstName: z.string().min(1, 'First name is required'),
+  lastName: z.string().min(1, 'Last name is required'),
+  shippingAddress: z.string().trim().min(10, 'Shipping address is required'),
+  city: z.string().trim().min(1, 'City is required'),
+  state: z.string().trim().min(1, 'State is required').max(2),
+  zipCode: z.string().trim().min(1, 'Zip code is required').max(5),
+  country: z.string().trim().min(1, 'Country is required'),
   phone: usPhoneNumberSchema,
 });
 

@@ -1,6 +1,6 @@
 const ITERATIONS = 100_000;
 const KEY_LENGTH = 32;
-const HASH_ALGORITHM = "SHA-256";
+const HASH_ALGORITHM = 'SHA-256';
 
 // Fallback type for environments that don't include the DOM `CryptoKey` type
 type CryptoKeyLike = { [key: string]: unknown };
@@ -18,7 +18,7 @@ const arrayBuffertoBase64 = (arrayBuffer: Uint8Array): string => {
 };
 
 const base64ToArrayBuffer = (base64: string): ArrayBuffer => {
-  const binaryString = Buffer.from(base64, "base64").toString("binary");
+  const binaryString = Buffer.from(base64, 'base64').toString('binary');
   const bytes = new Uint8Array(binaryString.length);
   for (let i = 0; i < binaryString.length; i++) {
     bytes[i] = binaryString.charCodeAt(i);
@@ -30,24 +30,24 @@ export const deriveEncryptionKey = async (
   salt: Uint8Array,
 ): Promise<CryptoKeyLike> => {
   const baseKey: CryptoKeyLike = await crypto.subtle.importKey(
-    "raw",
+    'raw',
     encode(passphrase),
-    { name: "PBKDF2" },
+    { name: 'PBKDF2' },
     false,
-    ["deriveKey"],
+    ['deriveKey'],
   );
 
   const derivedKey: CryptoKeyLike = await crypto.subtle.deriveKey(
     {
-      name: "PBKDF2",
+      name: 'PBKDF2',
       salt,
       iterations: ITERATIONS,
       hash: HASH_ALGORITHM,
     },
     baseKey,
-    { name: "AES-GCM", length: 256 },
+    { name: 'AES-GCM', length: 256 },
     false,
-    ["encrypt", "decrypt"],
+    ['encrypt', 'decrypt'],
   );
 
   return derivedKey;
@@ -63,7 +63,7 @@ export const encryptField = async (
   const encoded = encode(plaintext);
 
   const ciphertext = await crypto.subtle.encrypt(
-    { name: "AES-GCM", iv },
+    { name: 'AES-GCM', iv },
     key,
     encoded,
   );
@@ -75,7 +75,7 @@ export const decryptField = async (
   cipherTextCombined: string,
   passphrase: string,
 ): Promise<string> => {
-  const [saltStr, ivStr, cipherStr] = cipherTextCombined.split(":");
+  const [saltStr, ivStr, cipherStr] = cipherTextCombined.split(':');
   const salt = new Uint8Array(base64ToArrayBuffer(saltStr));
   const iv = new Uint8Array(base64ToArrayBuffer(ivStr));
   const ciphertext = base64ToArrayBuffer(cipherStr);
@@ -83,7 +83,7 @@ export const decryptField = async (
   const key = await deriveEncryptionKey(passphrase, salt);
 
   const decrypted = await crypto.subtle.decrypt(
-    { name: "AES-GCM", iv },
+    { name: 'AES-GCM', iv },
     key,
     ciphertext,
   );
@@ -95,16 +95,16 @@ export const hashPassword = async (password: string): Promise<Salt> => {
   const saltBytes = crypto.getRandomValues(new Uint8Array(16));
 
   const baseKey = await crypto.subtle.importKey(
-    "raw",
+    'raw',
     encode(password),
-    { name: "PBKDF2" },
+    { name: 'PBKDF2' },
     false, // not extractable
-    ["deriveBits"],
+    ['deriveBits'],
   );
 
   const derivedBits = await crypto.subtle.deriveBits(
     {
-      name: "PBKDF2",
+      name: 'PBKDF2',
       salt: saltBytes,
       iterations: ITERATIONS,
       hash: HASH_ALGORITHM,
@@ -128,16 +128,16 @@ export const verifyPassword = async (
   const saltBytes = new Uint8Array(salt);
 
   const baseKey = await crypto.subtle.importKey(
-    "raw",
+    'raw',
     encode(password),
-    { name: "PBKDF2" },
+    { name: 'PBKDF2' },
     false,
-    ["deriveBits"],
+    ['deriveBits'],
   );
 
   const derivedBits = await crypto.subtle.deriveBits(
     {
-      name: "PBKDF2",
+      name: 'PBKDF2',
       salt: saltBytes,
       iterations: ITERATIONS,
       hash: HASH_ALGORITHM,
@@ -150,11 +150,11 @@ export const verifyPassword = async (
 
 export const base64url = (input: Uint8Array | string): string => {
   const buf =
-    typeof input === "string"
-      ? Buffer.from(input, "utf-8")
+    typeof input === 'string'
+      ? Buffer.from(input, 'utf-8')
       : Buffer.from(input);
-  const str = buf.toString("base64");
-  return str.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  const str = buf.toString('base64');
+  return str.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 };
 
 export const signJWT = async ({
@@ -164,25 +164,25 @@ export const signJWT = async ({
   exp,
 }: Payload): Promise<string> => {
   const encoder = new TextEncoder();
-  if (!payload || typeof payload !== "object") {
-    throw new Error("Invalid payload");
+  if (!payload || typeof payload !== 'object') {
+    throw new Error('Invalid payload');
   }
 
-  if (!secret || typeof secret !== "string") {
-    throw new Error("Invalid secret");
+  if (!secret || typeof secret !== 'string') {
+    throw new Error('Invalid secret');
   }
 
   if (!Number.isFinite(iat) || !Number.isFinite(exp)) {
-    throw new Error("iat and exp must be numbers");
+    throw new Error('iat and exp must be numbers');
   }
 
   if (exp <= iat) {
-    throw new Error("exp must be greater than iat");
+    throw new Error('exp must be greater than iat');
   }
 
   const header = {
-    alg: "HS256",
-    typ: "JWT",
+    alg: 'HS256',
+    typ: 'JWT',
   };
 
   payload.iat = iat;
@@ -193,23 +193,23 @@ export const signJWT = async ({
   const data = `${encodedHeader}.${encodedPayload}`;
 
   const key = await crypto.subtle.importKey(
-    "raw",
+    'raw',
     encoder.encode(secret),
-    { name: "HMAC", hash: { name: "SHA-256" } },
+    { name: 'HMAC', hash: { name: 'SHA-256' } },
     false,
-    ["sign"],
+    ['sign'],
   );
 
-  const signature = await crypto.subtle.sign("HMAC", key, encoder.encode(data));
+  const signature = await crypto.subtle.sign('HMAC', key, encoder.encode(data));
   const encodedSignature = base64url(new Uint8Array(signature));
 
   return `${data}.${encodedSignature}`;
 };
 
 export const base64urlToBuffer = (base64url: string): ArrayBuffer => {
-  const base64 = base64url.replace(/-/g, "+").replace(/_/g, "/");
+  const base64 = base64url.replace(/-/g, '+').replace(/_/g, '/');
   const padLength = 4 - (base64.length % 4);
-  const padded = base64 + "=".repeat(padLength === 4 ? 0 : padLength);
+  const padded = base64 + '='.repeat(padLength === 4 ? 0 : padLength);
   const binary = atob(padded);
   const buffer = new ArrayBuffer(binary.length);
   const view = new Uint8Array(buffer);
@@ -220,9 +220,9 @@ export const base64urlToBuffer = (base64url: string): ArrayBuffer => {
 };
 
 export const base64urlToUint8Array = (base64url: string): Uint8Array => {
-  const base64 = base64url.replace(/-/g, "+").replace(/_/g, "/");
+  const base64 = base64url.replace(/-/g, '+').replace(/_/g, '/');
   const pad = base64.length % 4;
-  const padded = base64 + (pad ? "=".repeat(4 - pad) : "");
+  const padded = base64 + (pad ? '='.repeat(4 - pad) : '');
   const binary = atob(padded);
   const bytes = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i++) {
@@ -233,10 +233,10 @@ export const base64urlToUint8Array = (base64url: string): Uint8Array => {
 
 export const bufferToBase64url = (buffer: Uint8Array | Buffer): string => {
   return Buffer.from(buffer)
-    .toString("base64")
-    .replace(/\+/g, "-")
-    .replace(/\//g, "_")
-    .replace(/=+$/, "");
+    .toString('base64')
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/, '');
 };
 
 interface Payload {

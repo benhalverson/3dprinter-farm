@@ -1,20 +1,20 @@
-import { zValidator } from "@hono/zod-validator";
-import type { WebApiKey } from "cipher-kit";
+import { zValidator } from '@hono/zod-validator';
+import type { WebApiKey } from 'cipher-kit';
 import {
   decrypt as ckDecrypt,
   createSecretKey,
   isInWebApiEncryptionFormat,
-} from "cipher-kit/web-api";
-import { and, eq } from "drizzle-orm";
-import { describeRoute } from "hono-openapi";
+} from 'cipher-kit/web-api';
+import { and, eq } from 'drizzle-orm';
+import { describeRoute } from 'hono-openapi';
 
-import { z } from "zod";
-import { BASE_URL } from "../constants";
-import { addCartItemSchema, cart, productsTable, users } from "../db/schema";
-import factory from "../factory";
-import { authMiddleware } from "../utils/authMiddleware";
-import { decryptField } from "../utils/crypto";
-import { generateOrderNumber } from "../utils/generateOrderNumber";
+import { z } from 'zod';
+import { BASE_URL } from '../constants';
+import { addCartItemSchema, cart, productsTable, users } from '../db/schema';
+import factory from '../factory';
+import { authMiddleware } from '../utils/authMiddleware';
+import { decryptField } from '../utils/crypto';
+import { generateOrderNumber } from '../utils/generateOrderNumber';
 
 // Schema for update cart item
 const updateCartItemSchema = z.object({
@@ -32,15 +32,15 @@ const removeCartItemSchema = z.object({
 const shoppingCart = factory
   .createApp()
   .get(
-    "/cart/shipping",
+    '/cart/shipping',
     authMiddleware,
     describeRoute({
-      description: "Get the shipping address for the logged-in user",
-      tags: ["Shopping Cart"],
+      description: 'Get the shipping address for the logged-in user',
+      tags: ['Shopping Cart'],
       responses: {
         200: {
           content: {
-            "application/json": {
+            'application/json': {
               schema: z.object({
                 address: z
                   .object({
@@ -57,38 +57,38 @@ const shoppingCart = factory
               }),
             },
           },
-          description: "Shipping address retrieved successfully",
+          description: 'Shipping address retrieved successfully',
         },
         500: {
           content: {
-            "application/json": {
+            'application/json': {
               schema: z.object({ error: z.string() }),
             },
           },
-          description: "Failed to retrieve shipping address",
+          description: 'Failed to retrieve shipping address',
         },
       },
     }),
     async c => {
       try {
-        const jwtPayload = c.get("jwtPayload");
+        const jwtPayload = c.get('jwtPayload');
         const userId = jwtPayload?.id;
-        if (!userId) return c.json({ error: "Unauthorized" }, 401);
+        if (!userId) return c.json({ error: 'Unauthorized' }, 401);
 
         // Expect cartId as query param to know which cart to estimate
-        const cartId = c.req.query("cartId");
+        const cartId = c.req.query('cartId');
         if (!cartId)
-          return c.json({ error: "cartId query param required" }, 400);
+          return c.json({ error: 'cartId query param required' }, 400);
 
         const [userRow] = await c.var.db
           .select()
           .from(users)
           .where(eq(users.id, userId));
-        if (!userRow) return c.json({ error: "User not found" }, 404);
+        if (!userRow) return c.json({ error: 'User not found' }, 404);
 
         const passphrase = c.env.ENCRYPTION_PASSPHRASE;
         if (!passphrase)
-          return c.json({ error: "Encryption passphrase missing" }, 500);
+          return c.json({ error: 'Encryption passphrase missing' }, 500);
 
         // Cache derived cipher-kit secret key across requests in worker lifetime
         const secretKeyCache: Map<string, WebApiKey> =
@@ -111,7 +111,7 @@ const shoppingCart = factory
           value: unknown,
           field: string,
         ): Promise<string> => {
-          if (typeof value !== "string" || value.length === 0) return "";
+          if (typeof value !== 'string' || value.length === 0) return '';
           // cipher-kit format detection
           if (isInWebApiEncryptionFormat(value)) {
             try {
@@ -122,17 +122,17 @@ const shoppingCart = factory
                 `[decryptMaybe] cipher-kit decrypt failed for ${field}:`,
                 dec.error?.message,
               );
-              return "";
+              return '';
             } catch (e) {
               console.warn(
                 `[decryptMaybe] cipher-kit exception for ${field}:`,
                 (e as Error).message,
               );
-              return "";
+              return '';
             }
           }
           // legacy salt:iv:cipher
-          if (value.includes(":") && value.split(":").length === 3) {
+          if (value.includes(':') && value.split(':').length === 3) {
             try {
               return await decryptField(value, passphrase);
             } catch (e) {
@@ -140,49 +140,49 @@ const shoppingCart = factory
                 `[decryptMaybe] legacy decrypt failed for ${field}:`,
                 (e as Error).message,
               );
-              return "";
+              return '';
             }
           }
           // treat as plaintext
           return value;
         };
 
-        const firstName = await decryptMaybe(userRow.firstName, "firstName");
-        const lastName = await decryptMaybe(userRow.lastName, "lastName");
+        const firstName = await decryptMaybe(userRow.firstName, 'firstName');
+        const lastName = await decryptMaybe(userRow.lastName, 'lastName');
         const email =
-          (await decryptMaybe(userRow.email, "email")) || userRow.email || "";
+          (await decryptMaybe(userRow.email, 'email')) || userRow.email || '';
         const shippingAddress = await decryptMaybe(
           userRow.shippingAddress,
-          "shippingAddress",
+          'shippingAddress',
         );
-        const city = await decryptMaybe(userRow.city, "city");
-        const state = await decryptMaybe(userRow.state, "state");
-        const zipCode = await decryptMaybe(userRow.zipCode, "zipCode");
-        const _country = await decryptMaybe(userRow.country, "country");
-        let phone = await decryptMaybe(userRow.phone, "phone");
+        const city = await decryptMaybe(userRow.city, 'city');
+        const state = await decryptMaybe(userRow.state, 'state');
+        const zipCode = await decryptMaybe(userRow.zipCode, 'zipCode');
+        const _country = await decryptMaybe(userRow.country, 'country');
+        let phone = await decryptMaybe(userRow.phone, 'phone');
         // Additional heuristic: if phone still looks like an encoded blob (contains '.' segments, not many digits)
         if (
-          phone?.includes(".") &&
+          phone?.includes('.') &&
           !/\d{5,}/.test(phone) &&
           phone.length > 15
         ) {
           try {
             secretKey = secretKey || (await getSecretKey());
             const dec2 = await ckDecrypt(phone, secretKey);
-            if (dec2.success && typeof dec2.result === "string") {
+            if (dec2.success && typeof dec2.result === 'string') {
               phone = dec2.result as string;
             }
           } catch (e) {
             console.warn(
-              "[phone decrypt] Heuristic decrypt attempt failed:",
+              '[phone decrypt] Heuristic decrypt attempt failed:',
               (e as Error).message,
             );
           }
         }
         // Sanitize phone - keep digits and leading +, enforce <=20 chars
-        phone = phone ? phone.replace(/[^+0-9]/g, "") : "";
+        phone = phone ? phone.replace(/[^+0-9]/g, '') : '';
         if (phone.length > 20) phone = phone.slice(0, 20);
-        if (!phone) phone = "0000000000"; // fallback minimal placeholder if upstream requires
+        if (!phone) phone = '0000000000'; // fallback minimal placeholder if upstream requires
 
         // Pull cart contents and join products to enrich data.
         const cartItems = await c.var.db
@@ -199,50 +199,50 @@ const shoppingCart = factory
           .leftJoin(productsTable, eq(cart.skuNumber, productsTable.skuNumber))
           .where(eq(cart.cartId, cartId));
 
-        console.log("cartItems:", cartItems);
+        console.log('cartItems:', cartItems);
 
         if (cartItems.length === 0) {
-          return c.json({ error: "Cart empty or not found" }, 404);
+          return c.json({ error: 'Cart empty or not found' }, 404);
         }
 
         // Build orderData array per API spec from each cart item.
         // Normalize colors to allowed enumeration expected by upstream API.
         const allowedColors = new Set([
-          "black",
-          "white",
-          "gray",
-          "grey",
-          "yellow",
-          "red",
-          "gold",
-          "purple",
-          "blue",
-          "orange",
-          "green",
-          "pink",
-          "matteBlack",
-          "lunarRegolith",
-          "petgBlack",
+          'black',
+          'white',
+          'gray',
+          'grey',
+          'yellow',
+          'red',
+          'gold',
+          'purple',
+          'blue',
+          'orange',
+          'green',
+          'pink',
+          'matteBlack',
+          'lunarRegolith',
+          'petgBlack',
         ]);
         const hexToNameMap: Record<string, string> = {
-          "#000000": "black",
-          "#ffffff": "white",
-          "#fff": "white",
-          "#000": "black",
-          "#808080": "gray",
-          "#808081": "gray",
-          "#ff0000": "red",
-          "#ffff00": "yellow",
-          "#ffa500": "orange",
-          "#00ff00": "green",
-          "#008000": "green",
-          "#0000ff": "blue",
-          "#800080": "purple",
-          "#ffc0cb": "pink",
-          "#ffd700": "gold",
+          '#000000': 'black',
+          '#ffffff': 'white',
+          '#fff': 'white',
+          '#000': 'black',
+          '#808080': 'gray',
+          '#808081': 'gray',
+          '#ff0000': 'red',
+          '#ffff00': 'yellow',
+          '#ffa500': 'orange',
+          '#00ff00': 'green',
+          '#008000': 'green',
+          '#0000ff': 'blue',
+          '#800080': 'purple',
+          '#ffc0cb': 'pink',
+          '#ffd700': 'gold',
         };
         const normalizeColor = (raw: string | null | undefined): string => {
-          if (!raw) return "black";
+          if (!raw) return 'black';
           const trimmed = raw.trim();
           // Already an allowed value (case sensitive match first)
           if (allowedColors.has(trimmed)) return trimmed;
@@ -254,7 +254,7 @@ const shoppingCart = factory
           // Attempt hex normalization
           let candidate = lower;
           if (
-            !candidate.startsWith("#") &&
+            !candidate.startsWith('#') &&
             /^([0-9a-f]{3}|[0-9a-f]{6})$/.test(candidate)
           ) {
             candidate = `#${candidate}`;
@@ -264,20 +264,20 @@ const shoppingCart = factory
           const mapped = hexToNameMap[candidate];
           if (mapped && allowedColors.has(mapped)) return mapped;
           // Map special marketing names ignoring case
-          if (lower === "matteblack") return "matteBlack";
-          if (lower === "lunarregolith") return "lunarRegolith";
-          if (lower === "petgblack" || lower === "petg_black")
-            return "petgBlack";
-          return "black"; // safe fallback
+          if (lower === 'matteblack') return 'matteBlack';
+          if (lower === 'lunarregolith') return 'lunarRegolith';
+          if (lower === 'petgblack' || lower === 'petg_black')
+            return 'petgBlack';
+          return 'black'; // safe fallback
         };
 
         const orderDataArray = cartItems.map(cart => {
           // Derive filename: use product STL last path segment or fallback.
           const stlPath = cart.stl;
-          const filenameCandidate = stlPath?.split("/").pop();
+          const filenameCandidate = stlPath?.split('/').pop();
           const normalizedColor = normalizeColor(cart.color);
           if (normalizedColor !== cart.color) {
-            console.log("Normalized color", {
+            console.log('Normalized color', {
               original: cart.color,
               normalized: normalizedColor,
             });
@@ -290,25 +290,25 @@ const shoppingCart = factory
             filename: filenameCandidate,
             fileURL: stlPath,
             bill_to_street_1: shippingAddress,
-            bill_to_street_2: "",
-            bill_to_street_3: "",
+            bill_to_street_2: '',
+            bill_to_street_3: '',
             bill_to_city: city,
             bill_to_state: state,
             bill_to_zip: zipCode,
-            bill_to_country_as_iso: "US",
-            bill_to_is_US_residential: "true",
+            bill_to_country_as_iso: 'US',
+            bill_to_is_US_residential: 'true',
             ship_to_name: `${firstName} ${lastName}`.trim(),
             ship_to_street_1: shippingAddress,
-            ship_to_street_2: "",
-            ship_to_street_3: "",
+            ship_to_street_2: '',
+            ship_to_street_3: '',
             ship_to_city: city,
             ship_to_state: state,
             ship_to_zip: zipCode,
-            ship_to_country_as_iso: "US",
-            ship_to_is_US_residential: "true",
+            ship_to_country_as_iso: 'US',
+            ship_to_is_US_residential: 'true',
             order_item_name: cart.productName,
             order_quantity: String(cart.quantity),
-            order_image_url: "",
+            order_image_url: '',
             order_sku: cart.skuNumber,
             order_item_color: normalizedColor,
             profile: cart.filamentType,
@@ -317,22 +317,22 @@ const shoppingCart = factory
 
         // API expects an array of orderData objects
         const response = await fetch(`${BASE_URL}order/estimate`, {
-          method: "POST",
+          method: 'POST',
           headers: {
-            "Content-Type": "application/json",
-            "api-key": c.env.SLANT_API,
+            'Content-Type': 'application/json',
+            'api-key': c.env.SLANT_API,
           },
           body: JSON.stringify(orderDataArray),
         });
 
         if (!response.ok) {
           console.error(
-            "Upstream estimate error:",
+            'Upstream estimate error:',
             response.status,
             await response.text(),
           );
           return c.json(
-            { error: "Upstream estimate failed", status: response.status },
+            { error: 'Upstream estimate failed', status: response.status },
             502,
           );
         }
@@ -340,10 +340,10 @@ const shoppingCart = factory
         const data = (await response.json()) as ShippingResponse;
         return c.json({ shippingCost: data.shippingCost });
       } catch (err: any) {
-        console.log("Error fetching shipping estimate:", err);
+        console.log('Error fetching shipping estimate:', err);
         return c.json(
           {
-            error: "Failed to retrieve shipping estimate",
+            error: 'Failed to retrieve shipping estimate',
             details: err?.message,
           },
           500,
@@ -353,21 +353,21 @@ const shoppingCart = factory
   )
 
   .post(
-    "/cart/create",
+    '/cart/create',
     describeRoute({
-      description: "Create a new shopping cart",
-      tags: ["Shopping Cart"],
+      description: 'Create a new shopping cart',
+      tags: ['Shopping Cart'],
       responses: {
         201: {
           content: {
-            "application/json": {
+            'application/json': {
               schema: z.object({
                 cartId: z.string().uuid(),
                 message: z.string(),
               }),
             },
           },
-          description: "Cart created successfully",
+          description: 'Cart created successfully',
         },
       },
     }),
@@ -377,24 +377,24 @@ const shoppingCart = factory
         return c.json(
           {
             cartId,
-            message: "Cart created successfully",
+            message: 'Cart created successfully',
           },
           201,
         );
       } catch (_error) {
-        return c.json({ error: "Failed to create cart" }, 500);
+        return c.json({ error: 'Failed to create cart' }, 500);
       }
     },
   )
   .get(
-    "/cart/:cartId",
+    '/cart/:cartId',
     describeRoute({
-      description: "Get shopping cart items",
-      tags: ["Shopping Cart"],
+      description: 'Get shopping cart items',
+      tags: ['Shopping Cart'],
       responses: {
         200: {
           content: {
-            "application/json": {
+            'application/json': {
               schema: z.object({
                 items: z.array(
                   z.object({
@@ -412,22 +412,22 @@ const shoppingCart = factory
               }),
             },
           },
-          description: "Cart items retrieved successfully",
+          description: 'Cart items retrieved successfully',
         },
         404: {
           content: {
-            "application/json": {
+            'application/json': {
               schema: z.object({
                 error: z.string(),
               }),
             },
           },
-          description: "Cart not found",
+          description: 'Cart not found',
         },
       },
     }),
     async c => {
-      const cartId = c.req.param("cartId");
+      const cartId = c.req.param('cartId');
 
       try {
         // Join cart with products to get pricing, name, and Stripe information
@@ -466,42 +466,42 @@ const shoppingCart = factory
           total,
         });
       } catch (_error) {
-        return c.json({ error: "Failed to retrieve cart items" }, 500);
+        return c.json({ error: 'Failed to retrieve cart items' }, 500);
       }
     },
   )
   .post(
-    "/cart/add",
+    '/cart/add',
     describeRoute({
-      description: "Add item to cart",
-      tags: ["Shopping Cart"],
+      description: 'Add item to cart',
+      tags: ['Shopping Cart'],
       responses: {
         200: {
           content: {
-            "application/json": {
+            'application/json': {
               schema: z.object({
                 message: z.string(),
               }),
             },
           },
-          description: "Item added successfully",
+          description: 'Item added successfully',
         },
         500: {
           content: {
-            "application/json": {
+            'application/json': {
               schema: z.object({
                 error: z.string(),
               }),
             },
           },
-          description: "Failed to add item",
+          description: 'Failed to add item',
         },
       },
     }),
-    zValidator("json", addCartItemSchema),
+    zValidator('json', addCartItemSchema),
     async c => {
       const { cartId, skuNumber, quantity, color, filamentType } =
-        c.req.valid("json");
+        c.req.valid('json');
 
       try {
         const existing = await c.var.db.query.cart.findFirst({
@@ -530,43 +530,43 @@ const shoppingCart = factory
           });
         }
 
-        return c.json({ message: "Item added to cart successfully" });
+        return c.json({ message: 'Item added to cart successfully' });
       } catch (_error) {
-        return c.json({ error: "Failed to add item to cart" }, 500);
+        return c.json({ error: 'Failed to add item to cart' }, 500);
       }
     },
   )
   .put(
-    "/cart/update",
+    '/cart/update',
     describeRoute({
-      description: "Update cart item quantity",
-      tags: ["Shopping Cart"],
+      description: 'Update cart item quantity',
+      tags: ['Shopping Cart'],
       responses: {
         200: {
           content: {
-            "application/json": {
+            'application/json': {
               schema: z.object({
                 message: z.string(),
               }),
             },
           },
-          description: "Cart item updated successfully",
+          description: 'Cart item updated successfully',
         },
         400: {
           content: {
-            "application/json": {
+            'application/json': {
               schema: z.object({
                 error: z.string(),
               }),
             },
           },
-          description: "Invalid request",
+          description: 'Invalid request',
         },
       },
     }),
-    zValidator("json", updateCartItemSchema),
+    zValidator('json', updateCartItemSchema),
     async c => {
-      const { cartId, itemId, quantity } = c.req.valid("json");
+      const { cartId, itemId, quantity } = c.req.valid('json');
 
       try {
         // First, let's see what items exist in this cart
@@ -578,7 +578,7 @@ const shoppingCart = factory
           const _deleteResult = await c.var.db
             .delete(cart)
             .where(and(eq(cart.id, itemId), eq(cart.cartId, cartId)));
-          return c.json({ message: "Cart item removed successfully" });
+          return c.json({ message: 'Cart item removed successfully' });
         } else {
           const updateResult = await c.var.db
             .update(cart)
@@ -589,7 +589,7 @@ const shoppingCart = factory
           if (updateResult.changes === 0) {
             return c.json(
               {
-                error: "No cart item found with that ID",
+                error: 'No cart item found with that ID',
                 debug: {
                   itemId,
                   cartId,
@@ -600,66 +600,66 @@ const shoppingCart = factory
             );
           }
 
-          return c.json({ message: "Cart item updated successfully" });
+          return c.json({ message: 'Cart item updated successfully' });
         }
       } catch (error) {
-        console.error("Update error:", error);
-        return c.json({ error: "Failed to update cart item" }, 500);
+        console.error('Update error:', error);
+        return c.json({ error: 'Failed to update cart item' }, 500);
       }
     },
   )
   .delete(
-    "/cart/remove",
+    '/cart/remove',
     describeRoute({
-      description: "Remove item from cart",
-      tags: ["Shopping Cart"],
+      description: 'Remove item from cart',
+      tags: ['Shopping Cart'],
       responses: {
         200: {
           content: {
-            "application/json": {
+            'application/json': {
               schema: z.object({
                 message: z.string(),
               }),
             },
           },
-          description: "Item removed from cart successfully",
+          description: 'Item removed from cart successfully',
         },
         400: {
           content: {
-            "application/json": {
+            'application/json': {
               schema: z.object({
                 error: z.string(),
               }),
             },
           },
-          description: "Invalid request",
+          description: 'Invalid request',
         },
       },
     }),
-    zValidator("json", removeCartItemSchema),
+    zValidator('json', removeCartItemSchema),
     async c => {
-      const { cartId, itemId } = c.req.valid("json");
+      const { cartId, itemId } = c.req.valid('json');
 
       try {
         await c.var.db
           .delete(cart)
           .where(and(eq(cart.id, itemId), eq(cart.cartId, cartId)));
 
-        return c.json({ message: "Item removed from cart successfully" });
+        return c.json({ message: 'Item removed from cart successfully' });
       } catch (_error) {
-        return c.json({ error: "Failed to remove item from cart" }, 500);
+        return c.json({ error: 'Failed to remove item from cart' }, 500);
       }
     },
   )
   .get(
-    "/cart/:cartId/stripe-items",
+    '/cart/:cartId/stripe-items',
     describeRoute({
-      description: "Get cart items formatted for Stripe checkout",
-      tags: ["Shopping Cart", "Stripe"],
+      description: 'Get cart items formatted for Stripe checkout',
+      tags: ['Shopping Cart', 'Stripe'],
       responses: {
         200: {
           content: {
-            "application/json": {
+            'application/json': {
               schema: z.object({
                 line_items: z.array(
                   z.object({
@@ -670,22 +670,22 @@ const shoppingCart = factory
               }),
             },
           },
-          description: "Stripe line items retrieved successfully",
+          description: 'Stripe line items retrieved successfully',
         },
         404: {
           content: {
-            "application/json": {
+            'application/json': {
               schema: z.object({
                 error: z.string(),
               }),
             },
           },
-          description: "Cart not found or no Stripe price IDs available",
+          description: 'Cart not found or no Stripe price IDs available',
         },
       },
     }),
     async c => {
-      const cartId = c.req.param("cartId");
+      const cartId = c.req.param('cartId');
 
       try {
         // Join cart with products to get Stripe price IDs
@@ -707,12 +707,12 @@ const shoppingCart = factory
           }));
 
         if (stripeItems.length === 0) {
-          return c.json({ error: "No items with Stripe price IDs found" }, 404);
+          return c.json({ error: 'No items with Stripe price IDs found' }, 404);
         }
 
         return c.json({ line_items: stripeItems });
       } catch (_error) {
-        return c.json({ error: "Failed to retrieve Stripe items" }, 500);
+        return c.json({ error: 'Failed to retrieve Stripe items' }, 500);
       }
     },
   );

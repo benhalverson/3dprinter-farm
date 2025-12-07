@@ -1,4 +1,4 @@
-import { vi } from "vitest";
+import { vi } from 'vitest';
 
 export const mockWhere = vi.fn();
 export const mockAll = vi.fn();
@@ -16,7 +16,7 @@ export const mockQuery = {
 export const capturedInserts: unknown[] = [];
 
 export function mockDrizzle() {
-  vi.mock("drizzle-orm/d1", () => {
+  vi.mock('drizzle-orm/d1', () => {
     return {
       drizzle: vi.fn(() => ({
         select: () => ({

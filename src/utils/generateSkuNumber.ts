@@ -6,15 +6,15 @@
  */
 export const generateSkuNumber = (productName: string, color: string) => {
   if (!productName.trim()) {
-    throw new Error("Product name cannot be empty");
+    throw new Error('Product name cannot be empty');
   }
 
   if (!color.trim()) {
-    throw new Error("Color cannot be empty");
+    throw new Error('Color cannot be empty');
   }
 
-  const productCode = productName.replace(/\s+/g, "").slice(0, 8).toUpperCase();
-  const colorCode = color.replace("#", "").substring(0, 5).toUpperCase();
+  const productCode = productName.replace(/\s+/g, '').slice(0, 8).toUpperCase();
+  const colorCode = color.replace('#', '').substring(0, 5).toUpperCase();
 
   return `${productCode}-${colorCode}`;
 };

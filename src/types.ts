@@ -1,5 +1,5 @@
-import type { z } from "zod";
-import type { orderSchema } from "./db/schema";
+import type { z } from 'zod';
+import type { orderSchema } from './db/schema';
 
 export type Bindings = {
   BUCKET: R2Bucket;
@@ -63,7 +63,7 @@ export interface FilamentV2 {
   publicId: string;
   name: string;
   provider: string;
-  profile: "PLA" | "PETG" | "ABS";
+  profile: 'PLA' | 'PETG' | 'ABS';
   color: string;
   hexValue: string;
   public: boolean;
@@ -94,7 +94,7 @@ export interface Slant3DFile {
   name: string;
   ownerId?: string;
   platformId: string;
-  type: "stl";
+  type: 'stl';
   fileURL: string;
   STLMetrics?: STLMetrics;
   createdAt: string;
@@ -112,8 +112,8 @@ export interface Slant3DFileResponse {
 // }
 
 enum FilamentType {
-  PLA = "PLA",
-  PETG = "PETG",
+  PLA = 'PLA',
+  PETG = 'PETG',
 }
 
 export interface ListResponse {

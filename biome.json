@@ -28,7 +28,7 @@
       "arrowParentheses": "asNeeded",
       "bracketSpacing": true,
       "bracketSameLine": false,
-      "quoteStyle": "double",
+      "quoteStyle": "single",
       "attributePosition": "auto"
     }
   },

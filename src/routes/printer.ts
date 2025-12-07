@@ -1,9 +1,9 @@
-import type { Context } from "hono";
-import { describeRoute } from "hono-openapi";
-import { z } from "zod";
-import { BASE_URL, BASE_URL_V2 } from "../constants";
-import { orderSchema } from "../db/schema";
-import factory from "../factory";
+import type { Context } from 'hono';
+import { describeRoute } from 'hono-openapi';
+import { z } from 'zod';
+import { BASE_URL, BASE_URL_V2 } from '../constants';
+import { orderSchema } from '../db/schema';
+import factory from '../factory';
 import type {
   ErrorResponse,
   FilamentColorsResponse,
@@ -13,11 +13,11 @@ import type {
   OrderResponse,
   Slant3DFileResponse,
   SliceResponse,
-} from "../types";
-import { authMiddleware } from "../utils/authMiddleware";
-import { dashFilename } from "../utils/dash";
+} from '../types';
+import { authMiddleware } from '../utils/authMiddleware';
+import { dashFilename } from '../utils/dash';
 
-const FilamentTypeSchema = z.enum(["PLA", "PETG"], {
+const FilamentTypeSchema = z.enum(['PLA', 'PETG'], {
   errorMap: () => ({
     message: 'Accepted values are "PLA" and "PETG".',
   }),
@@ -25,41 +25,41 @@ const FilamentTypeSchema = z.enum(["PLA", "PETG"], {
 
 const printer = factory
   .createApp()
-  .use("/list", authMiddleware)
-  .use("/estimate", authMiddleware)
-  .use("/upload", authMiddleware)
+  .use('/list', authMiddleware)
+  .use('/estimate', authMiddleware)
+  .use('/upload', authMiddleware)
   .get(
-    "/list",
+    '/list',
     describeRoute({
-      summary: "List all 3D models",
-      description: "Retrieves a list of all 3D models available for printing.",
-      tags: ["Printer"],
+      summary: 'List all 3D models',
+      description: 'Retrieves a list of all 3D models available for printing.',
+      tags: ['Printer'],
       responses: {
         200: {
           content: {
-            "application/json": {
+            'application/json': {
               schema: z.array(
                 z.object({
-                  stl: z.string().describe("The STL file name"),
+                  stl: z.string().describe('The STL file name'),
                   size: z
                     .number()
-                    .describe("The size of the STL file in bytes"),
-                  version: z.string().describe("The version of the STL file"),
+                    .describe('The size of the STL file in bytes'),
+                  version: z.string().describe('The version of the STL file'),
                 }),
               ),
             },
           },
-          description: "List of 3D models",
+          description: 'List of 3D models',
         },
         500: {
           content: {
-            "application/json": {
+            'application/json': {
               schema: z.object({
                 error: z.string(),
               }),
             },
           },
-          description: "Failed to retrieve list",
+          description: 'Failed to retrieve list',
         },
       },
     }),
@@ -76,15 +76,15 @@ const printer = factory
     },
   )
   .post(
-    "/upload",
+    '/upload',
     describeRoute({
-      description: "Upload a file to the bucket",
-      tags: ["Printer"],
+      description: 'Upload a file to the bucket',
+      tags: ['Printer'],
       requestBody: {
         content: {
-          "multipart/form-data": {
+          'multipart/form-data': {
             schema: z.object({
-              file: z.instanceof(File).describe("The file to upload"),
+              file: z.instanceof(File).describe('The file to upload'),
             }),
           },
         },
@@ -93,7 +93,7 @@ const printer = factory
       responses: {
         200: {
           content: {
-            "application/json": {
+            'application/json': {
               schema: z.object({
                 message: z.string(),
                 key: z.string(),
@@ -101,27 +101,27 @@ const printer = factory
               }),
             },
           },
-          description: "File uploaded successfully",
+          description: 'File uploaded successfully',
         },
         400: {
           content: {
-            "application/json": {
+            'application/json': {
               schema: z.object({
                 error: z.string(),
               }),
             },
           },
-          description: "No file uploaded",
+          description: 'No file uploaded',
         },
         500: {
           content: {
-            "application/json": {
+            'application/json': {
               schema: z.object({
                 error: z.string(),
               }),
             },
           },
-          description: "Failed to upload file",
+          description: 'Failed to upload file',
         },
       },
     }),
@@ -129,15 +129,15 @@ const printer = factory
       const body = await c.req.parseBody();
 
       if (!body || !body.file) {
-        return c.json({ error: "No file uploaded" }, 400);
+        return c.json({ error: 'No file uploaded' }, 400);
       }
 
       const file = body.file as File;
-      const mimeTypeStl = file.type === "model/stl";
-      const mimeTypePng = file.type === "image/png";
+      const mimeTypeStl = file.type === 'model/stl';
+      const mimeTypePng = file.type === 'image/png';
 
-      const acceptableExtensionStl = file.name.toLowerCase().endsWith(".stl");
-      const acceptableExtensionPng = file.name.toLowerCase().endsWith(".png");
+      const acceptableExtensionStl = file.name.toLowerCase().endsWith('.stl');
+      const acceptableExtensionPng = file.name.toLowerCase().endsWith('.png');
 
       // if(!mimeTypeStl && !acceptableExtensionStl || !mimeTypePng && !acceptableExtensionPng) {
       // 	return c.json({ error: 'Invalid file type or extension' }, 415);
@@ -156,33 +156,33 @@ const printer = factory
         case mimeTypeStl || acceptableExtensionStl:
           try {
             await bucketSTL.put(cleanKey, file.stream(), {
-              httpMetadata: { contentType: "model/stl" },
+              httpMetadata: { contentType: 'model/stl' },
             });
 
             const base = c.env.R2_PUBLIC_BASE_URL || new URL(c.req.url).origin;
             const url = `${base}/${encodeURIComponent(cleanKey)}`;
 
-            return c.json({ message: "File uploaded", key: cleanKey, url });
+            return c.json({ message: 'File uploaded', key: cleanKey, url });
           } catch (error) {
-            console.error("error", error);
-            return c.json({ error: "Failed to upload file" }, 500);
+            console.error('error', error);
+            return c.json({ error: 'Failed to upload file' }, 500);
           }
         case mimeTypePng || acceptableExtensionPng:
           try {
             await bucketPNG.put(cleanKey, file.stream(), {
-              httpMetadata: { contentType: "image/png" },
+              httpMetadata: { contentType: 'image/png' },
             });
 
             const base = c.env.R2_PHOTO_BASE_URL || new URL(c.req.url).origin;
             const url = `${base}/${encodeURIComponent(cleanKey)}`;
 
-            return c.json({ message: "File uploaded", key: cleanKey, url });
+            return c.json({ message: 'File uploaded', key: cleanKey, url });
           } catch (error) {
-            console.error("error", error);
-            return c.json({ error: "Failed to upload file" }, 500);
+            console.error('error', error);
+            return c.json({ error: 'Failed to upload file' }, 500);
           }
         default:
-          return c.json({ error: "Invalid file type or extension" }, 415);
+          return c.json({ error: 'Invalid file type or extension' }, 415);
       }
     },
   )
@@ -191,52 +191,52 @@ const printer = factory
    * @param filamentType The type of filament to list colors for (PLA or PETG)
    * @returns The list of colors for the filament
    */
-  .post("/slice", async (c: Context) => {
+  .post('/slice', async (c: Context) => {
     const fileURL = await c.req.json();
     try {
       const response = await fetch(`${BASE_URL}slicer`, {
-        method: "POST",
+        method: 'POST',
         headers: {
-          "Content-Type": "application/json",
-          "api-key": c.env.SLANT_API,
+          'Content-Type': 'application/json',
+          'api-key': c.env.SLANT_API,
         },
         body: JSON.stringify(fileURL),
       });
 
       if (!response.ok) {
         const error: ErrorResponse = await response.json();
-        return c.json({ error: "Failed to slice file", details: error }, 500);
+        return c.json({ error: 'Failed to slice file', details: error }, 500);
       }
 
       const result: SliceResponse = await response.json();
       return c.json(result);
     } catch (error: any) {
-      console.error("error", error);
+      console.error('error', error);
       return c.json(
-        { error: "Failed to slice file", details: error.message },
+        { error: 'Failed to slice file', details: error.message },
         500,
       );
     }
   })
   .get(
-    "/colors",
+    '/colors',
     describeRoute({
-      summary: "Get available filament colors",
-      description: "Retrieves a list of available filament colors.",
-      tags: ["Printer"],
+      summary: 'Get available filament colors',
+      description: 'Retrieves a list of available filament colors.',
+      tags: ['Printer'],
       parameters: [
         {
-          name: "filamentType",
-          in: "query",
+          name: 'filamentType',
+          in: 'query',
           required: false,
           schema: FilamentTypeSchema,
-          description: "Filter colors by filament type (PLA or PETG)",
+          description: 'Filter colors by filament type (PLA or PETG)',
         },
       ],
       responses: {
         200: {
           content: {
-            "application/json": {
+            'application/json': {
               schema: z.array(
                 z.object({
                   filament: z.string(),
@@ -246,34 +246,34 @@ const printer = factory
               ),
             },
           },
-          description: "List of filament colors",
+          description: 'List of filament colors',
         },
         400: {
           content: {
-            "application/json": {
+            'application/json': {
               schema: z.object({
                 error: z.string(),
                 message: z.string(),
               }),
             },
           },
-          description: "Invalid filament type",
+          description: 'Invalid filament type',
         },
         500: {
           content: {
-            "application/json": {
+            'application/json': {
               schema: z.object({
                 error: z.string(),
                 details: z.any(),
               }),
             },
           },
-          description: "Failed to retrieve colors",
+          description: 'Failed to retrieve colors',
         },
       },
     }),
     async (c: Context) => {
-      const query = c.req.query("filamentType");
+      const query = c.req.query('filamentType');
       const normalizedQuery = query?.toUpperCase();
       const cacheKey = `3dprinter-web-api-COLOR_CACHE:${normalizedQuery}`;
 
@@ -290,7 +290,7 @@ const printer = factory
         if (!validationResult.success) {
           return c.json(
             {
-              error: "Invalid filament type",
+              error: 'Invalid filament type',
               message: validationResult.error.issues[0].message,
             },
             400,
@@ -300,14 +300,14 @@ const printer = factory
 
       const response = await fetch(`${BASE_URL}filament`, {
         headers: {
-          "Content-Type": "application/json",
-          "api-key": c.env.SLANT_API,
+          'Content-Type': 'application/json',
+          'api-key': c.env.SLANT_API,
         },
       });
 
       if (!response.ok) {
         const error = (await response.json()) as ErrorResponse;
-        return c.json({ error: "Failed to get colors", details: error }, 500);
+        return c.json({ error: 'Failed to get colors', details: error }, 500);
       }
 
       const result = (await response.json()) as FilamentColorsResponse;
@@ -329,54 +329,54 @@ const printer = factory
     },
   )
   .get(
-    "/v2/colors",
+    '/v2/colors',
     describeRoute({
-      summary: "Get available filaments (V2 API)",
+      summary: 'Get available filaments (V2 API)',
       description:
-        "Retrieves filaments from Slant3D V2 API with enhanced metadata including publicId, availability, and provider information.",
-      tags: ["Printer"],
+        'Retrieves filaments from Slant3D V2 API with enhanced metadata including publicId, availability, and provider information.',
+      tags: ['Printer'],
       parameters: [
         {
-          name: "profile",
-          in: "query",
+          name: 'profile',
+          in: 'query',
           required: false,
-          schema: z.enum(["PLA", "PETG", "ABS"]),
-          description: "Filter by material type",
+          schema: z.enum(['PLA', 'PETG', 'ABS']),
+          description: 'Filter by material type',
         },
         {
-          name: "available",
-          in: "query",
+          name: 'available',
+          in: 'query',
           required: false,
-          schema: z.enum(["true", "false"]),
-          description: "Filter by availability status",
+          schema: z.enum(['true', 'false']),
+          description: 'Filter by availability status',
         },
         {
-          name: "provider",
-          in: "query",
+          name: 'provider',
+          in: 'query',
           required: false,
           schema: z.string(),
-          description: "Filter by filament provider/manufacturer",
+          description: 'Filter by filament provider/manufacturer',
         },
       ],
       responses: {
         200: {
           content: {
-            "application/json": {
+            'application/json': {
               schema: z.object({
                 success: z.boolean(),
                 message: z.string(),
                 data: z.array(
                   z.object({
-                    publicId: z.string().describe("UUID for order placement"),
-                    name: z.string().describe("Filament display name"),
-                    provider: z.string().describe("Manufacturer/brand"),
+                    publicId: z.string().describe('UUID for order placement'),
+                    name: z.string().describe('Filament display name'),
+                    provider: z.string().describe('Manufacturer/brand'),
                     profile: z
-                      .enum(["PLA", "PETG", "ABS"])
-                      .describe("Material type"),
-                    color: z.string().describe("Color description"),
-                    hexValue: z.string().describe("Hex color code"),
-                    public: z.boolean().describe("Public visibility"),
-                    available: z.boolean().describe("In-stock status"),
+                      .enum(['PLA', 'PETG', 'ABS'])
+                      .describe('Material type'),
+                    color: z.string().describe('Color description'),
+                    hexValue: z.string().describe('Hex color code'),
+                    public: z.boolean().describe('Public visibility'),
+                    available: z.boolean().describe('In-stock status'),
                   }),
                 ),
                 count: z.number(),
@@ -384,11 +384,11 @@ const printer = factory
               }),
             },
           },
-          description: "Filaments retrieved successfully",
+          description: 'Filaments retrieved successfully',
         },
         400: {
           content: {
-            "application/json": {
+            'application/json': {
               schema: z.object({
                 success: z.boolean(),
                 message: z.string(),
@@ -396,11 +396,11 @@ const printer = factory
               }),
             },
           },
-          description: "Invalid query parameters",
+          description: 'Invalid query parameters',
         },
         500: {
           content: {
-            "application/json": {
+            'application/json': {
               schema: z.object({
                 success: z.boolean(),
                 message: z.string(),
@@ -408,17 +408,17 @@ const printer = factory
               }),
             },
           },
-          description: "Failed to retrieve filaments",
+          description: 'Failed to retrieve filaments',
         },
       },
     }),
     async (c: Context) => {
-      const profileQuery = c.req.query("profile")?.toUpperCase();
-      const availableQuery = c.req.query("available");
-      const providerQuery = c.req.query("provider");
+      const profileQuery = c.req.query('profile')?.toUpperCase();
+      const availableQuery = c.req.query('available');
+      const providerQuery = c.req.query('provider');
 
       // Build cache key from query parameters
-      const cacheKey = `v2:colors:${profileQuery || "all"}:${availableQuery || "all"}:${providerQuery || "all"}`;
+      const cacheKey = `v2:colors:${profileQuery || 'all'}:${availableQuery || 'all'}:${providerQuery || 'all'}`;
 
       // Check cache first
       const cachedResponse = await c.env.COLOR_CACHE.get(cacheKey);
@@ -428,22 +428,22 @@ const printer = factory
       }
 
       // Validate query parameters
-      if (profileQuery && !["PLA", "PETG", "ABS"].includes(profileQuery)) {
+      if (profileQuery && !['PLA', 'PETG', 'ABS'].includes(profileQuery)) {
         return c.json(
           {
             success: false,
-            message: "Invalid profile parameter",
+            message: 'Invalid profile parameter',
             error: 'Accepted values are "PLA", "PETG", or "ABS"',
           },
           400,
         );
       }
 
-      if (availableQuery && !["true", "false"].includes(availableQuery)) {
+      if (availableQuery && !['true', 'false'].includes(availableQuery)) {
         return c.json(
           {
             success: false,
-            message: "Invalid available parameter",
+            message: 'Invalid available parameter',
             error: 'Accepted values are "true" or "false"',
           },
           400,
@@ -453,9 +453,9 @@ const printer = factory
       try {
         // Call Slant3D V2 API
         const response = await fetch(`${BASE_URL_V2}filaments`, {
-          method: "GET",
+          method: 'GET',
           headers: {
-            "Content-Type": "application/json",
+            'Content-Type': 'application/json',
             Authorization: `Bearer ${c.env.SLANT_API_V2}`,
           },
         });
@@ -465,8 +465,8 @@ const printer = factory
           return c.json(
             {
               success: false,
-              message: "Failed to retrieve filaments from Slant3D V2 API",
-              error: error.error || "Unknown error",
+              message: 'Failed to retrieve filaments from Slant3D V2 API',
+              error: error.error || 'Unknown error',
             },
             500,
           );
@@ -484,7 +484,7 @@ const printer = factory
         }
 
         if (availableQuery) {
-          const availableBool = availableQuery === "true";
+          const availableBool = availableQuery === 'true';
           filteredData = filteredData.filter(
             filament => filament.available === availableBool,
           );
@@ -503,7 +503,7 @@ const printer = factory
 
         const responseData = {
           success: true,
-          message: "Filaments retrieved successfully",
+          message: 'Filaments retrieved successfully',
           data: filteredData,
           count: filteredData.length,
           lastUpdated: result.lastUpdated || new Date().toISOString(),
@@ -516,28 +516,28 @@ const printer = factory
 
         return c.json(responseData);
       } catch (error: any) {
-        console.error("Error fetching V2 filaments:", error);
+        console.error('Error fetching V2 filaments:', error);
         return c.json(
           {
             success: false,
-            message: "Failed to retrieve filaments",
-            error: error.message || "Internal server error",
+            message: 'Failed to retrieve filaments',
+            error: error.message || 'Internal server error',
           },
           500,
         );
       }
     },
   )
-  .post("/estimate", async (c: Context) => {
+  .post('/estimate', async (c: Context) => {
     try {
       const data = await c.req.json();
       const parsedData: OrderData = orderSchema.parse(data);
 
       const response = await fetch(`${BASE_URL}order/estimate`, {
-        method: "POST",
+        method: 'POST',
         headers: {
-          "Content-Type": "application/json",
-          "api-key": c.env.SLANT_API,
+          'Content-Type': 'application/json',
+          'api-key': c.env.SLANT_API,
         },
         body: JSON.stringify(parsedData),
       });
@@ -545,7 +545,7 @@ const printer = factory
       if (!response.ok) {
         const error = await response.json();
         return c.json(
-          { error: "Failed to estimate order", details: error },
+          { error: 'Failed to estimate order', details: error },
           500,
         );
       }
@@ -556,25 +556,25 @@ const printer = factory
       if (error instanceof z.ZodError) {
         return c.json({ error: error.errors }, 400);
       }
-      return c.json({ error: "Failed to estimate order" }, 500);
+      return c.json({ error: 'Failed to estimate order' }, 500);
     }
   })
   .post(
-    "/v2/presigned-upload",
+    '/v2/presigned-upload',
     describeRoute({
-      summary: "Get presigned URL for direct file upload to Slant3D",
+      summary: 'Get presigned URL for direct file upload to Slant3D',
       description:
-        "Generate a presigned URL for direct browser upload to Slant3D S3 storage. This is the recommended method. After uploading the file to the presigned URL, call /v2/confirm to complete registration.",
-      tags: ["Printer"],
+        'Generate a presigned URL for direct browser upload to Slant3D S3 storage. This is the recommended method. After uploading the file to the presigned URL, call /v2/confirm to complete registration.',
+      tags: ['Printer'],
       requestBody: {
         content: {
-          "application/json": {
+          'application/json': {
             schema: z.object({
-              fileName: z.string().describe("Name of the STL file to upload"),
+              fileName: z.string().describe('Name of the STL file to upload'),
               ownerId: z
                 .string()
                 .optional()
-                .describe("Your application user ID for tracking"),
+                .describe('Your application user ID for tracking'),
             }),
           },
         },
@@ -583,18 +583,18 @@ const printer = factory
       responses: {
         200: {
           content: {
-            "application/json": {
+            'application/json': {
               schema: z.object({
                 success: z.boolean(),
                 message: z.string(),
                 data: z.object({
                   presignedUrl: z
                     .string()
-                    .describe("URL to upload file to (1 hour expiry)"),
-                  key: z.string().describe("S3 object key"),
+                    .describe('URL to upload file to (1 hour expiry)'),
+                  key: z.string().describe('S3 object key'),
                   filePlaceholder: z
                     .object({
-                      publicFileServiceId: z.string().describe("UUID for file"),
+                      publicFileServiceId: z.string().describe('UUID for file'),
                       name: z.string(),
                       ownerId: z.string(),
                       platformId: z.string(),
@@ -603,28 +603,28 @@ const printer = factory
                       updatedAt: z.string(),
                     })
                     .describe(
-                      "File metadata from Slant3D - use in confirm request",
+                      'File metadata from Slant3D - use in confirm request',
                     ),
                 }),
               }),
             },
           },
-          description: "Presigned URL generated successfully",
+          description: 'Presigned URL generated successfully',
         },
         400: {
           content: {
-            "application/json": {
+            'application/json': {
               schema: z.object({
                 success: z.boolean(),
                 error: z.string(),
               }),
             },
           },
-          description: "Invalid file name",
+          description: 'Invalid file name',
         },
         500: {
           content: {
-            "application/json": {
+            'application/json': {
               schema: z.object({
                 success: z.boolean(),
                 error: z.string(),
@@ -632,31 +632,31 @@ const printer = factory
               }),
             },
           },
-          description: "Failed to generate presigned URL",
+          description: 'Failed to generate presigned URL',
         },
       },
     }),
     async (c: Context) => {
       try {
-        console.log("=== /v2/upload endpoint called ===");
-        console.log("Request method:", c.req.method);
-        console.log("Request URL:", c.req.url);
+        console.log('=== /v2/upload endpoint called ===');
+        console.log('Request method:', c.req.method);
+        console.log('Request URL:', c.req.url);
 
         let requestBody: any;
         try {
-          console.log("About to parse request JSON...");
+          console.log('About to parse request JSON...');
           requestBody = await c.req.json();
           console.log(
-            "Successfully parsed request JSON:",
+            'Successfully parsed request JSON:',
             JSON.stringify(requestBody),
           );
         } catch (parseError: any) {
-          console.error("ERROR parsing request JSON:", parseError.message);
-          console.error("Parse error stack:", parseError.stack);
+          console.error('ERROR parsing request JSON:', parseError.message);
+          console.error('Parse error stack:', parseError.stack);
           return c.json(
             {
               success: false,
-              error: "Failed to parse request JSON",
+              error: 'Failed to parse request JSON',
               details: parseError.message,
             },
             400,
@@ -664,28 +664,28 @@ const printer = factory
         }
 
         const { fileName, ownerId } = requestBody;
-        console.log("Extracted fileName:", fileName, "ownerId:", ownerId);
+        console.log('Extracted fileName:', fileName, 'ownerId:', ownerId);
 
         if (!fileName) {
-          return c.json({ success: false, error: "fileName is required" }, 400);
+          return c.json({ success: false, error: 'fileName is required' }, 400);
         }
 
         if (!c.env.SLANT_PLATFORM_ID) {
           return c.json(
             {
               success: false,
-              error: "Missing SLANT_PLATFORM_ID environment variable.",
+              error: 'Missing SLANT_PLATFORM_ID environment variable.',
             },
             500,
           );
         }
 
         // Validate file is STL
-        if (!fileName.toLowerCase().endsWith(".stl")) {
+        if (!fileName.toLowerCase().endsWith('.stl')) {
           return c.json(
             {
               success: false,
-              error: "Invalid file type. Only STL files are supported.",
+              error: 'Invalid file type. Only STL files are supported.',
             },
             400,
           );
@@ -693,34 +693,34 @@ const printer = factory
 
         // Request presigned URL from Slant3D V2 API
         const presignedRequest = {
-          name: fileName.replace(/\.stl$/i, ""),
+          name: fileName.replace(/\.stl$/i, ''),
           platformId: c.env.SLANT_PLATFORM_ID,
-          ownerId: ownerId || "anonymous",
+          ownerId: ownerId || 'anonymous',
         };
 
-        console.log("Presigned request:", JSON.stringify(presignedRequest));
-        console.log("Auth header:", `Bearer ${c.env.SLANT_API_V2}`);
-        console.log("Fetching from:", `${BASE_URL_V2}files/direct-upload`);
+        console.log('Presigned request:', JSON.stringify(presignedRequest));
+        console.log('Auth header:', `Bearer ${c.env.SLANT_API_V2}`);
+        console.log('Fetching from:', `${BASE_URL_V2}files/direct-upload`);
 
         const slant3DResponse = await fetch(
           `${BASE_URL_V2}files/direct-upload`,
           {
-            method: "POST",
+            method: 'POST',
             headers: {
-              "Content-Type": "application/json",
+              'Content-Type': 'application/json',
               Authorization: `Bearer ${c.env.SLANT_API_V2}`,
             },
             body: JSON.stringify(presignedRequest),
           },
         );
 
-        console.log("Response status:", slant3DResponse.status);
-        console.log("Response ok:", slant3DResponse.ok);
+        console.log('Response status:', slant3DResponse.status);
+        console.log('Response ok:', slant3DResponse.ok);
 
         if (!slant3DResponse.ok) {
           let errorDetails: any;
           const responseText = await slant3DResponse.text();
-          console.log("Response text:", responseText);
+          console.log('Response text:', responseText);
           try {
             errorDetails = JSON.parse(responseText);
           } catch (_e) {
@@ -730,7 +730,7 @@ const printer = factory
           return c.json(
             {
               success: false,
-              error: "Failed to generate presigned URL from Slant3D V2 API",
+              error: 'Failed to generate presigned URL from Slant3D V2 API',
               details: errorDetails,
               status: slant3DResponse.status,
             },
@@ -738,15 +738,15 @@ const printer = factory
           );
         }
 
-        console.log("Response ok, parsing JSON...");
+        console.log('Response ok, parsing JSON...');
         const slant3DData = await slant3DResponse.json();
-        console.log("Parsed slant3DData:", JSON.stringify(slant3DData));
+        console.log('Parsed slant3DData:', JSON.stringify(slant3DData));
 
         return c.json(
           {
             success: true,
             message:
-              "Presigned URL generated successfully. Upload file to presignedUrl, then call /v2/confirm.",
+              'Presigned URL generated successfully. Upload file to presignedUrl, then call /v2/confirm.',
             data: {
               presignedUrl: slant3DData.data.presignedUrl,
               key: slant3DData.data.key,
@@ -756,14 +756,14 @@ const printer = factory
           200,
         );
       } catch (error: any) {
-        console.error("=== CATCH BLOCK ===");
-        console.error("Presigned upload error:", error);
-        console.error("Error stack:", error.stack);
-        console.error("Error message:", error.message);
+        console.error('=== CATCH BLOCK ===');
+        console.error('Presigned upload error:', error);
+        console.error('Error stack:', error.stack);
+        console.error('Error message:', error.message);
         return c.json(
           {
             success: false,
-            error: "Failed to generate presigned URL",
+            error: 'Failed to generate presigned URL',
             details: error.message,
           },
           500,
@@ -772,15 +772,15 @@ const printer = factory
     },
   )
   .post(
-    "/v2/confirm",
+    '/v2/confirm',
     describeRoute({
-      summary: "Confirm presigned upload and complete file registration",
+      summary: 'Confirm presigned upload and complete file registration',
       description:
-        "REQUIRED: Call this endpoint after successfully uploading to the presigned URL to trigger file processing and analysis. The filePlaceholder object must be the exact one returned from /v2/upload.",
-      tags: ["Printer"],
+        'REQUIRED: Call this endpoint after successfully uploading to the presigned URL to trigger file processing and analysis. The filePlaceholder object must be the exact one returned from /v2/upload.',
+      tags: ['Printer'],
       requestBody: {
         content: {
-          "application/json": {
+          'application/json': {
             schema: z.object({
               filePlaceholder: z
                 .object({
@@ -793,7 +793,7 @@ const printer = factory
                   updatedAt: z.string(),
                 })
                 .describe(
-                  "The exact filePlaceholder object returned from /v2/presigned-upload",
+                  'The exact filePlaceholder object returned from /v2/presigned-upload',
                 ),
             }),
           },
@@ -803,49 +803,49 @@ const printer = factory
       responses: {
         200: {
           content: {
-            "application/json": {
+            'application/json': {
               schema: z.object({
                 success: z.boolean(),
                 message: z.string(),
                 data: z.object({
                   publicFileServiceId: z
                     .string()
-                    .describe("UUID for use in orders"),
+                    .describe('UUID for use in orders'),
                   name: z.string(),
                   fileURL: z
                     .string()
-                    .describe("Presigned download URL (1 hour expiry)"),
+                    .describe('Presigned download URL (1 hour expiry)'),
                   STLMetrics: z
                     .object({
-                      x: z.number().describe("Width in mm"),
-                      y: z.number().describe("Depth in mm"),
-                      z: z.number().describe("Height in mm"),
-                      weight: z.number().describe("Weight in grams"),
-                      volume: z.number().describe("Volume in cubic cm"),
-                      surfaceArea: z.number().describe("Surface area in sq mm"),
-                      imageURL: z.string().describe("Preview image URL"),
+                      x: z.number().describe('Width in mm'),
+                      y: z.number().describe('Depth in mm'),
+                      z: z.number().describe('Height in mm'),
+                      weight: z.number().describe('Weight in grams'),
+                      volume: z.number().describe('Volume in cubic cm'),
+                      surfaceArea: z.number().describe('Surface area in sq mm'),
+                      imageURL: z.string().describe('Preview image URL'),
                     })
                     .optional(),
                 }),
               }),
             },
           },
-          description: "Upload confirmed and file processed successfully",
+          description: 'Upload confirmed and file processed successfully',
         },
         400: {
           content: {
-            "application/json": {
+            'application/json': {
               schema: z.object({
                 success: z.boolean(),
                 error: z.string(),
               }),
             },
           },
-          description: "Invalid or missing filePlaceholder",
+          description: 'Invalid or missing filePlaceholder',
         },
         500: {
           content: {
-            "application/json": {
+            'application/json': {
               schema: z.object({
                 success: z.boolean(),
                 error: z.string(),
@@ -853,7 +853,7 @@ const printer = factory
               }),
             },
           },
-          description: "Confirmation failed",
+          description: 'Confirmation failed',
         },
       },
     }),
@@ -863,7 +863,7 @@ const printer = factory
 
         if (!filePlaceholder) {
           return c.json(
-            { success: false, error: "filePlaceholder is required" },
+            { success: false, error: 'filePlaceholder is required' },
             400,
           );
         }
@@ -876,9 +876,9 @@ const printer = factory
         const slant3DResponse = await fetch(
           `${BASE_URL_V2}files/confirm-upload`,
           {
-            method: "POST",
+            method: 'POST',
             headers: {
-              "Content-Type": "application/json",
+              'Content-Type': 'application/json',
               Authorization: `Bearer ${c.env.SLANT_API_V2}`,
             },
             body: JSON.stringify(confirmRequest),
@@ -897,7 +897,7 @@ const printer = factory
           return c.json(
             {
               success: false,
-              error: "Failed to confirm upload with Slant3D V2 API",
+              error: 'Failed to confirm upload with Slant3D V2 API',
               details: errorDetails,
             },
             500,
@@ -909,7 +909,7 @@ const printer = factory
         return c.json(
           {
             success: true,
-            message: "Upload confirmed and file processed successfully",
+            message: 'Upload confirmed and file processed successfully',
             data: {
               publicFileServiceId: slant3DData.data.publicFileServiceId,
               name: slant3DData.data.name,
@@ -920,11 +920,11 @@ const printer = factory
           200,
         );
       } catch (error: any) {
-        console.error("Presigned confirm error:", error);
+        console.error('Presigned confirm error:', error);
         return c.json(
           {
             success: false,
-            error: "Failed to confirm upload",
+            error: 'Failed to confirm upload',
             details: error.message,
           },
           500,
@@ -933,21 +933,21 @@ const printer = factory
     },
   )
   .post(
-    "/v2/upload",
+    '/v2/upload',
     describeRoute({
-      summary: "Upload file and register with Slant3D V2 API",
+      summary: 'Upload file and register with Slant3D V2 API',
       description:
-        "Upload STL file to R2 bucket and register it with Slant3D V2 API for order processing. Returns both local file info and Slant3D file ID.",
-      tags: ["Printer"],
+        'Upload STL file to R2 bucket and register it with Slant3D V2 API for order processing. Returns both local file info and Slant3D file ID.',
+      tags: ['Printer'],
       requestBody: {
         content: {
-          "multipart/form-data": {
+          'multipart/form-data': {
             schema: z.object({
-              file: z.instanceof(File).describe("STL file to upload"),
+              file: z.instanceof(File).describe('STL file to upload'),
               ownerId: z
                 .string()
                 .optional()
-                .describe("Your application user ID for tracking"),
+                .describe('Your application user ID for tracking'),
             }),
           },
         },
@@ -956,33 +956,33 @@ const printer = factory
       responses: {
         201: {
           content: {
-            "application/json": {
+            'application/json': {
               schema: z.object({
                 success: z.boolean(),
                 message: z.string(),
                 data: z.object({
                   local: z.object({
-                    key: z.string().describe("File key in R2 bucket"),
-                    url: z.string().describe("R2 public URL"),
+                    key: z.string().describe('File key in R2 bucket'),
+                    url: z.string().describe('R2 public URL'),
                     name: z.string(),
                   }),
                   slant3D: z.object({
                     publicFileServiceId: z
                       .string()
-                      .describe("UUID for use in orders"),
+                      .describe('UUID for use in orders'),
                     name: z.string(),
                     fileURL: z.string(),
                     metrics: z
                       .object({
-                        x: z.number().describe("Width in mm"),
-                        y: z.number().describe("Depth in mm"),
-                        z: z.number().describe("Height in mm"),
-                        weight: z.number().describe("Weight in grams"),
-                        volume: z.number().describe("Volume in cubic cm"),
+                        x: z.number().describe('Width in mm'),
+                        y: z.number().describe('Depth in mm'),
+                        z: z.number().describe('Height in mm'),
+                        weight: z.number().describe('Weight in grams'),
+                        volume: z.number().describe('Volume in cubic cm'),
                         surfaceArea: z
                           .number()
-                          .describe("Surface area in sq mm"),
-                        imageURL: z.string().describe("Preview image URL"),
+                          .describe('Surface area in sq mm'),
+                        imageURL: z.string().describe('Preview image URL'),
                       })
                       .optional(),
                   }),
@@ -990,22 +990,22 @@ const printer = factory
               }),
             },
           },
-          description: "File uploaded and registered successfully",
+          description: 'File uploaded and registered successfully',
         },
         400: {
           content: {
-            "application/json": {
+            'application/json': {
               schema: z.object({
                 success: z.boolean(),
                 error: z.string(),
               }),
             },
           },
-          description: "Invalid file or missing parameters",
+          description: 'Invalid file or missing parameters',
         },
         500: {
           content: {
-            "application/json": {
+            'application/json': {
               schema: z.object({
                 success: z.boolean(),
                 error: z.string(),
@@ -1013,7 +1013,7 @@ const printer = factory
               }),
             },
           },
-          description: "Upload or registration failed",
+          description: 'Upload or registration failed',
         },
       },
     }),
@@ -1022,31 +1022,31 @@ const printer = factory
         const body = await c.req.parseBody();
 
         if (!body || !body.file) {
-          return c.json({ success: false, error: "No file uploaded" }, 400);
+          return c.json({ success: false, error: 'No file uploaded' }, 400);
         }
 
         if (!c.env.SLANT_PLATFORM_ID) {
           return c.json(
             {
               success: false,
-              error: "Missing SLANT_PLATFORM_ID environment variable.",
+              error: 'Missing SLANT_PLATFORM_ID environment variable.',
             },
             500,
           );
         }
 
         const file = body.file as File;
-        const ownerId = (body.ownerId as string) || "anonymous";
+        const ownerId = (body.ownerId as string) || 'anonymous';
 
         // Validate file is STL
         const isStl =
-          file.type === "model/stl" || file.name.toLowerCase().endsWith(".stl");
+          file.type === 'model/stl' || file.name.toLowerCase().endsWith('.stl');
 
         if (!isStl) {
           return c.json(
             {
               success: false,
-              error: "Invalid file type. Only STL files are supported.",
+              error: 'Invalid file type. Only STL files are supported.',
             },
             400,
           );
@@ -1057,7 +1057,7 @@ const printer = factory
         const bucket = c.env.BUCKET;
 
         await bucket.put(cleanKey, file.stream(), {
-          httpMetadata: { contentType: "model/stl" },
+          httpMetadata: { contentType: 'model/stl' },
         });
 
         // const baseUrl = c.env.R2_PUBLIC_BASE_URL || new URL(c.req.url).origin;
@@ -1065,18 +1065,18 @@ const printer = factory
 
         // Step 2: Register file with Slant3D V2 API
         const registrationPayload = {
-          name: file.name.replace(/\.stl$/i, ""),
+          name: file.name.replace(/\.stl$/i, ''),
           platformId: c.env.SLANT_PLATFORM_ID,
           ownerId: ownerId,
-          type: "stl",
+          type: 'stl',
         };
 
         const slant3DResponse = await fetch(
           `${BASE_URL_V2}files/direct-upload`,
           {
-            method: "POST",
+            method: 'POST',
             headers: {
-              "Content-Type": "application/json",
+              'Content-Type': 'application/json',
               Authorization: `Bearer ${c.env.SLANT_API_V2}`,
             },
             body: JSON.stringify(registrationPayload),
@@ -1095,7 +1095,7 @@ const printer = factory
           return c.json(
             {
               success: false,
-              error: "Failed to register file with Slant3D V2 API",
+              error: 'Failed to register file with Slant3D V2 API',
               details: errorDetails,
             },
             500,
@@ -1108,7 +1108,7 @@ const printer = factory
         return c.json(
           {
             success: true,
-            message: "File uploaded and registered successfully",
+            message: 'File uploaded and registered successfully',
             data: {
               local: {
                 key: cleanKey,
@@ -1126,11 +1126,11 @@ const printer = factory
           201,
         );
       } catch (error: any) {
-        console.error("V2 Upload error:", error);
+        console.error('V2 Upload error:', error);
         return c.json(
           {
             success: false,
-            error: "Failed to upload file",
+            error: 'Failed to upload file',
             details: error.message,
           },
           500,

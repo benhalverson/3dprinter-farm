@@ -1,41 +1,41 @@
-import { beforeAll, describe, expect, it, vi } from "vitest";
-import { hashPassword, signJWT, verifyPassword } from "../../src/utils/crypto";
+import { beforeAll, describe, expect, it, vi } from 'vitest';
+import { hashPassword, signJWT, verifyPassword } from '../../src/utils/crypto';
 
-describe("Password hashing and vertification", () => {
+describe('Password hashing and vertification', () => {
   beforeAll(() => {
-    vi.unmock("../../src/utils/crypto");
+    vi.unmock('../../src/utils/crypto');
   });
-  const password = "testPassword";
+  const password = 'testPassword';
 
-  it("should return base64 encoded salt and has", async () => {
+  it('should return base64 encoded salt and has', async () => {
     const { salt, hash } = await hashPassword(password);
-    expect(typeof salt).toBe("string");
-    expect(typeof hash).toBe("string");
+    expect(typeof salt).toBe('string');
+    expect(typeof hash).toBe('string');
     expect(salt.length).toBeGreaterThan(10);
     expect(hash.length).toEqual(8);
   });
 
-  it("should return true for a valid password", async () => {
+  it('should return true for a valid password', async () => {
     const { salt, hash } = await hashPassword(password);
     const isValid = await verifyPassword(password, salt, hash);
     expect(isValid).toBe(true);
   });
 
-  it("should return false for an invalid password", async () => {
+  it('should return false for an invalid password', async () => {
     const { salt, hash } = await hashPassword(password);
-    const isValid = await verifyPassword("wrong-password", salt, hash);
+    const isValid = await verifyPassword('wrong-password', salt, hash);
     expect(isValid).toBe(false);
   });
 });
 
-describe("JWT signing", () => {
-  const secret = "mySecretKey";
+describe('JWT signing', () => {
+  const secret = 'mySecretKey';
   const payload = {
     userId: 123,
-    email: "test@test.com",
+    email: 'test@test.com',
   };
 
-  it("should produce a valid JWT", async () => {
+  it('should produce a valid JWT', async () => {
     const iat = Math.floor(Date.now() / 1000);
     const exp = iat + 60 * 60;
 
@@ -46,21 +46,21 @@ describe("JWT signing", () => {
       exp,
     });
 
-    const parts = jwt.split(".");
+    const parts = jwt.split('.');
 
     function base64urlDecode(str: string): string {
       const base64 = str
-        .replace(/-/g, "+")
-        .replace(/_/g, "/")
-        .padEnd(str.length + ((4 - (str.length % 4)) % 4), "=");
-      return Buffer.from(base64, "base64").toString("utf-8");
+        .replace(/-/g, '+')
+        .replace(/_/g, '/')
+        .padEnd(str.length + ((4 - (str.length % 4)) % 4), '=');
+      return Buffer.from(base64, 'base64').toString('utf-8');
     }
 
     const header = JSON.parse(base64urlDecode(parts[0]));
-    expect(typeof jwt).toBe("string");
+    expect(typeof jwt).toBe('string');
     expect(parts.length).toBe(3);
-    expect(header.alg).toBe("HS256");
-    expect(header.typ).toBe("JWT");
+    expect(header.alg).toBe('HS256');
+    expect(header.typ).toBe('JWT');
 
     const decodedPayload = JSON.parse(base64urlDecode(parts[1]));
     expect(decodedPayload.email).toBe(payload.email);
@@ -74,24 +74,24 @@ describe("JWT signing", () => {
   });
 });
 
-describe("JWT signing - negative cases", () => {
-  const secret = "supermySecretKey";
-  const validPayload = { email: "test@test.com" };
+describe('JWT signing - negative cases', () => {
+  const secret = 'supermySecretKey';
+  const validPayload = { email: 'test@test.com' };
   const iat = Math.floor(Date.now() / 1000);
   const exp = iat + 60 * 60;
 
-  it("should throw if secret is empty", async () => {
+  it('should throw if secret is empty', async () => {
     await expect(() =>
       signJWT({
         payload: validPayload,
-        secret: "",
+        secret: '',
         iat,
         exp,
       }),
     ).rejects.toThrow();
   });
 
-  it("should throw if payload is missing", async () => {
+  it('should throw if payload is missing', async () => {
     await expect(() =>
       signJWT({
         // @ts-expect-error testing invalid payload
@@ -103,7 +103,7 @@ describe("JWT signing - negative cases", () => {
     ).rejects.toThrow();
   });
 
-  it("should throw if exp is before iat", async () => {
+  it('should throw if exp is before iat', async () => {
     await expect(() =>
       signJWT({
         payload: validPayload,
@@ -114,7 +114,7 @@ describe("JWT signing - negative cases", () => {
     ).rejects.toThrow();
   });
 
-  it("should throw if exp or iat is NaN", async () => {
+  it('should throw if exp or iat is NaN', async () => {
     await expect(() =>
       signJWT({
         payload: validPayload,

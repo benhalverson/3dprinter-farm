@@ -1,13 +1,13 @@
-import { zValidator } from "@hono/zod-validator";
-import { eq } from "drizzle-orm";
-import { leads, leadsSchema } from "../db/schema";
-import factory from "../factory";
+import { zValidator } from '@hono/zod-validator';
+import { eq } from 'drizzle-orm';
+import { leads, leadsSchema } from '../db/schema';
+import factory from '../factory';
 
 const email = factory
   .createApp()
-  .post("/email", zValidator("json", leadsSchema), async c => {
+  .post('/email', zValidator('json', leadsSchema), async c => {
     try {
-      const { name, email } = c.req.valid("json");
+      const { name, email } = c.req.valid('json');
 
       const existing = await c.var.db
         .select()
@@ -17,7 +17,7 @@ const email = factory
 
       if (existing) {
         return c.json(
-          { status: "error", message: "Email is already subscribed." },
+          { status: 'error', message: 'Email is already subscribed.' },
           400,
         );
       }
@@ -25,35 +25,35 @@ const email = factory
       await c.var.db.insert(leads).values({
         name,
         email,
-        status: "pending",
+        status: 'pending',
         createdAt: Date.now(),
       });
 
       const auth = `${c.env.MAILJET_API_KEY}:${c.env.MAILJET_API_SECRET}`;
-      const base64Auth = Buffer.from(auth).toString("base64");
+      const base64Auth = Buffer.from(auth).toString('base64');
       const listId = c.env.MAILJET_CONTACT_LIST_ID;
 
       const manageContactRes = await fetch(
         `https://api.mailjet.com/v3/REST/contactslist/${listId}/managecontact`,
         {
-          method: "POST",
+          method: 'POST',
           headers: {
             Authorization: `Basic ${base64Auth}`,
-            "Content-Type": "application/json",
+            'Content-Type': 'application/json',
           },
           body: JSON.stringify({
             Email: email,
             Name: name,
-            Action: "addnoforce",
+            Action: 'addnoforce',
           }),
         },
       );
 
       if (!manageContactRes.ok) {
         const err = await manageContactRes.json();
-        console.error("Mailjet list error:", err);
+        console.error('Mailjet list error:', err);
         return c.json(
-          { status: "error", message: "Failed to add to contact list" },
+          { status: 'error', message: 'Failed to add to contact list' },
           500,
         );
       }
@@ -63,11 +63,11 @@ const email = factory
           email,
         )}`;
 
-        const sendEmailRes = await fetch("https://api.mailjet.com/v3.1/send", {
-          method: "POST",
+        const sendEmailRes = await fetch('https://api.mailjet.com/v3.1/send', {
+          method: 'POST',
           headers: {
             Authorization: `Basic ${base64Auth}`,
-            "Content-Type": "application/json",
+            'Content-Type': 'application/json',
           },
           body: JSON.stringify({
             Messages: [
@@ -82,7 +82,7 @@ const email = factory
                     Name: name,
                   },
                 ],
-                Subject: "Thank you for joining the waitlist",
+                Subject: 'Thank you for joining the waitlist',
                 TemplateID: Number(c.env.MAILJET_TEMPLATE_ID),
                 TemplateLanguage: true,
                 Variables: {
@@ -94,42 +94,42 @@ const email = factory
         });
 
         const data = await sendEmailRes.json();
-        console.log("Mailjet send email response:", data);
+        console.log('Mailjet send email response:', data);
 
         return c.json(
           "{ status: 'success', message: 'Email sent successfully' }",
         );
       } catch (error) {
-        return c.json({ error: "Failed to send email", details: error }, 500);
+        return c.json({ error: 'Failed to send email', details: error }, 500);
       }
     } catch (error: unknown) {
       if (error instanceof Error) {
-        console.error("Unexpected error:", error);
+        console.error('Unexpected error:', error);
         return c.json(
-          { status: "error", message: "Internal Server Error" },
+          { status: 'error', message: 'Internal Server Error' },
           500,
         );
       }
     }
   })
-  .post("/email/confirm/:email", async c => {
+  .post('/email/confirm/:email', async c => {
     try {
-      const email = c.req.param("email");
+      const email = c.req.param('email');
       if (!email) {
-        return c.json({ status: "error", message: "Invalid request" }, 400);
+        return c.json({ status: 'error', message: 'Invalid request' }, 400);
       }
 
       await c.var.db
         .update(leads)
         .set({
-          status: "confirmed",
+          status: 'confirmed',
           confirmedAt: Date.now(),
           updatedAt: Date.now(),
         })
         .where(eq(leads.email, email));
     } catch (error) {
-      console.error("Error confirming email:", error);
-      return c.json({ status: "error", message: "Internal Server Error" }, 500);
+      console.error('Error confirming email:', error);
+      return c.json({ status: 'error', message: 'Internal Server Error' }, 500);
     }
   });
 

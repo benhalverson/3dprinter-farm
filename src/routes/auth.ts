@@ -1,62 +1,62 @@
-import { zValidator } from "@hono/zod-validator";
-import { eq } from "drizzle-orm";
-import { deleteCookie, setSignedCookie } from "hono/cookie";
-import { describeRoute } from "hono-openapi";
-import { resolver } from "hono-openapi/zod";
-import { ZodError, z } from "zod";
-import { signInSchema, signUpSchema, users } from "../db/schema";
-import factory from "../factory";
+import { zValidator } from '@hono/zod-validator';
+import { eq } from 'drizzle-orm';
+import { deleteCookie, setSignedCookie } from 'hono/cookie';
+import { describeRoute } from 'hono-openapi';
+import { resolver } from 'hono-openapi/zod';
+import { ZodError, z } from 'zod';
+import { signInSchema, signUpSchema, users } from '../db/schema';
+import factory from '../factory';
 import {
   encryptField,
   hashPassword,
   signJWT,
   verifyPassword,
-} from "../utils/crypto";
-import { rateLimit } from "../utils/rateLimit";
+} from '../utils/crypto';
+import { rateLimit } from '../utils/rateLimit';
 
 const auth = factory
   .createApp()
   .post(
-    "/signup",
+    '/signup',
     describeRoute({
-      description: "User signup endpoint",
-      tags: ["Auth"],
+      description: 'User signup endpoint',
+      tags: ['Auth'],
       responses: {
         200: {
           content: {
-            "application/json": {
+            'application/json': {
               schema: resolver(signInSchema),
             },
           },
-          description: "The user was created successfully",
+          description: 'The user was created successfully',
         },
         400: {
           content: {
-            "application/json": {
+            'application/json': {
               schema: resolver(signInSchema),
             },
           },
 
-          description: "Missing or invalid parameters",
+          description: 'Missing or invalid parameters',
         },
       },
     }),
     rateLimit({
       windowSeconds: 60,
       maxRequests: 3,
-      keyPrefix: "signup",
+      keyPrefix: 'signup',
     }),
-    zValidator("json", signUpSchema),
+    zValidator('json', signUpSchema),
     async c => {
       const db = c.var.db;
       try {
-        const { email, password } = c.req.valid("json");
+        const { email, password } = c.req.valid('json');
         const [existingUser] = await db
           .select()
           .from(users)
           .where(eq(users.email, email));
         if (existingUser) {
-          return c.json({ error: "User already exists" }, 409);
+          return c.json({ error: 'User already exists' }, 409);
         }
 
         const { salt, hash } = await hashPassword(password);
@@ -73,15 +73,15 @@ const auth = factory
           encryptedCountry,
           encryptedPhone,
         ] = await Promise.all([
-          encryptField("", passphrase),
-          encryptField("", passphrase),
-          encryptField("", passphrase),
-          encryptField("", passphrase),
-          encryptField("", passphrase),
-          encryptField("", passphrase),
-          encryptField("", passphrase),
-          encryptField("", passphrase),
-          encryptField("", passphrase),
+          encryptField('', passphrase),
+          encryptField('', passphrase),
+          encryptField('', passphrase),
+          encryptField('', passphrase),
+          encryptField('', passphrase),
+          encryptField('', passphrase),
+          encryptField('', passphrase),
+          encryptField('', passphrase),
+          encryptField('', passphrase),
         ]);
 
         const [insertedUser] = await db
@@ -112,10 +112,10 @@ const auth = factory
           exp,
         });
 
-        await setSignedCookie(c, "token", token, c.env.JWT_SECRET, {
+        await setSignedCookie(c, 'token', token, c.env.JWT_SECRET, {
           httpOnly: true,
-          sameSite: "None",
-          path: "/",
+          sameSite: 'None',
+          path: '/',
           secure: true,
           maxAge: 60 * 60 * 24, // 1 day
         });
@@ -123,7 +123,7 @@ const auth = factory
         return c.json(
           {
             success: true,
-            message: "User created successfully",
+            message: 'User created successfully',
             token,
           },
           200,
@@ -131,36 +131,36 @@ const auth = factory
       } catch (error) {
         if (error instanceof ZodError) {
           return c.json(
-            { error: "Validation error", details: error.errors },
+            { error: 'Validation error', details: error.errors },
             400,
           );
         }
-        console.error("Error during signup:", error);
-        return c.json({ error: "Internal Server Error" }, 500);
+        console.error('Error during signup:', error);
+        return c.json({ error: 'Internal Server Error' }, 500);
       }
     },
   )
   .post(
-    "/signin",
+    '/signin',
     describeRoute({
-      description: "User signin endpoint",
-      tags: ["Auth"],
+      description: 'User signin endpoint',
+      tags: ['Auth'],
       responses: {
         200: {
           content: {
-            "application/json": {
+            'application/json': {
               schema: resolver(signInSchema),
             },
           },
-          description: "The user was authenticated successfully",
+          description: 'The user was authenticated successfully',
         },
         400: {
           content: {
-            "application/json": {
+            'application/json': {
               schema: resolver(signInSchema),
             },
           },
-          description: "Missing or invalid parameters",
+          description: 'Missing or invalid parameters',
         },
       },
     }),
@@ -173,7 +173,7 @@ const auth = factory
           .from(users)
           .where(eq(users.email, email));
         if (!user) {
-          return c.json({ error: "Invalid Credentials" }, 401);
+          return c.json({ error: 'Invalid Credentials' }, 401);
         }
 
         const isValid = await verifyPassword(
@@ -182,7 +182,7 @@ const auth = factory
           user.passwordHash,
         );
         if (!isValid) {
-          return c.json({ error: "Invalid credentials" }, 401);
+          return c.json({ error: 'Invalid credentials' }, 401);
         }
 
         const iat = Math.floor(Date.now() / 1000);
@@ -194,58 +194,58 @@ const auth = factory
           exp,
         });
 
-        console.log("Generated JWT for user ID:", user);
+        console.log('Generated JWT for user ID:', user);
 
-        await setSignedCookie(c, "token", token, c.env.JWT_SECRET, {
+        await setSignedCookie(c, 'token', token, c.env.JWT_SECRET, {
           httpOnly: true,
-          sameSite: "None",
-          path: "/",
+          sameSite: 'None',
+          path: '/',
           secure: true,
           maxAge: 60 * 60 * 24,
         });
-        return c.json({ message: "signin success" });
+        return c.json({ message: 'signin success' });
       } catch (error) {
         if (error instanceof ZodError) {
           return c.json(
-            { error: "Validation error", details: error.errors },
+            { error: 'Validation error', details: error.errors },
             400,
           );
         }
 
         return c.json(
-          { error: "Internal Server Error", details: (error as Error).message },
+          { error: 'Internal Server Error', details: (error as Error).message },
           500,
         );
       }
     },
   )
   .get(
-    "/signout",
+    '/signout',
     describeRoute({
-      description: "User signout endpoint",
-      tags: ["Auth"],
+      description: 'User signout endpoint',
+      tags: ['Auth'],
       responses: {
         200: {
           content: {
-            "application/json": {
+            'application/json': {
               schema: z.object({
                 message: z.string(),
               }),
             },
           },
-          description: "User signed out successfully",
+          description: 'User signed out successfully',
         },
       },
     }),
 
     async c => {
-      deleteCookie(c, "token", {
-        path: "/",
+      deleteCookie(c, 'token', {
+        path: '/',
         secure: true,
         httpOnly: true,
       });
 
-      return c.json({ message: "signout success" });
+      return c.json({ message: 'signout success' });
     },
   );
 

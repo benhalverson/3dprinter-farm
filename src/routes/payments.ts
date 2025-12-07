@@ -1,20 +1,20 @@
-import { eq } from "drizzle-orm";
-import type { Context } from "hono";
-import { describeRoute } from "hono-openapi";
-import Stripe from "stripe";
-import { z } from "zod";
-import { BASE_URL } from "../constants";
-import { cart, productsTable, users } from "../db/schema";
-import factory from "../factory";
+import { eq } from 'drizzle-orm';
+import type { Context } from 'hono';
+import { describeRoute } from 'hono-openapi';
+import Stripe from 'stripe';
+import { z } from 'zod';
+import { BASE_URL } from '../constants';
+import { cart, productsTable, users } from '../db/schema';
+import factory from '../factory';
 import type {
   CartItemWithProduct,
   PayPalOrderResponse,
   Slant3DOrderData,
   Slant3DOrderResponse,
-} from "../types";
-import { decryptField } from "../utils/crypto";
-import { generateOrderNumber } from "../utils/generateOrderNumber";
-import { getPayPalAccessToken } from "../utils/payPalAccess";
+} from '../types';
+import { decryptField } from '../utils/crypto';
+import { generateOrderNumber } from '../utils/generateOrderNumber';
+import { getPayPalAccessToken } from '../utils/payPalAccess';
 
 // Schemas
 const _stripeCheckoutSchema = z.object({
@@ -39,27 +39,27 @@ const _stripeWebhookSchema = z.object({
 const paymentsRouter = factory
   .createApp()
   .get(
-    "/success",
+    '/success',
     describeRoute({
       description:
-        "Stripe payment success callback page. Users are redirected here after successful payment. Can include session_id query parameter for verification.",
-      tags: ["Payments", "Stripe"],
+        'Stripe payment success callback page. Users are redirected here after successful payment. Can include session_id query parameter for verification.',
+      tags: ['Payments', 'Stripe'],
       parameters: [
         {
-          name: "session_id",
-          in: "query",
+          name: 'session_id',
+          in: 'query',
           required: false,
-          schema: { type: "string" },
-          description: "Stripe checkout session ID for verification",
+          schema: { type: 'string' },
+          description: 'Stripe checkout session ID for verification',
         },
       ],
       responses: {
         200: {
-          description: "Payment success confirmation",
+          description: 'Payment success confirmation',
           content: {
-            "application/json": {
+            'application/json': {
               example: {
-                status: "Success",
+                status: 'Success',
               },
             },
           },
@@ -67,22 +67,22 @@ const paymentsRouter = factory
       },
     }),
     (c: Context) => {
-      return c.json({ status: "Success" });
+      return c.json({ status: 'Success' });
     },
   )
   .get(
-    "/cancel",
+    '/cancel',
     describeRoute({
       description:
-        "Stripe payment cancellation callback page. Users are redirected here when they cancel payment or payment fails.",
-      tags: ["Payments", "Stripe"],
+        'Stripe payment cancellation callback page. Users are redirected here when they cancel payment or payment fails.',
+      tags: ['Payments', 'Stripe'],
       responses: {
         200: {
-          description: "Payment cancellation confirmation",
+          description: 'Payment cancellation confirmation',
           content: {
-            "application/json": {
+            'application/json': {
               example: {
-                status: "Cancelled",
+                status: 'Cancelled',
               },
             },
           },
@@ -90,38 +90,38 @@ const paymentsRouter = factory
       },
     }),
     (c: Context) => {
-      return c.json({ status: "Cancelled" });
+      return c.json({ status: 'Cancelled' });
     },
   )
   .post(
-    "/paypal",
+    '/paypal',
     describeRoute({
       description:
-        "Create PayPal payment order. Legacy endpoint that creates a PayPal order with quantity-based pricing. Uses sandbox PayPal API.",
-      tags: ["Payments", "PayPal"],
+        'Create PayPal payment order. Legacy endpoint that creates a PayPal order with quantity-based pricing. Uses sandbox PayPal API.',
+      tags: ['Payments', 'PayPal'],
       parameters: [
         {
-          name: "qty",
-          in: "query",
+          name: 'qty',
+          in: 'query',
           required: false,
-          schema: { type: "string", default: "1" },
+          schema: { type: 'string', default: '1' },
           description:
-            "Quantity multiplier for pricing (qty * 10 = total price)",
+            'Quantity multiplier for pricing (qty * 10 = total price)',
         },
       ],
       responses: {
         200: {
-          description: "PayPal order created successfully",
+          description: 'PayPal order created successfully',
           content: {
-            "application/json": {
+            'application/json': {
               example: {
-                id: "paypal_order_id",
-                status: "CREATED",
+                id: 'paypal_order_id',
+                status: 'CREATED',
                 links: [
                   {
-                    href: "https://api-m.sandbox.paypal.com/v2/checkout/orders/paypal_order_id",
-                    rel: "self",
-                    method: "GET",
+                    href: 'https://api-m.sandbox.paypal.com/v2/checkout/orders/paypal_order_id',
+                    rel: 'self',
+                    method: 'GET',
                   },
                 ],
               },
@@ -131,25 +131,25 @@ const paymentsRouter = factory
       },
     }),
     async (c: Context) => {
-      const qty = c.req.query("qty") || 1;
+      const qty = c.req.query('qty') || 1;
       const accessToken = await getPayPalAccessToken(c);
 
       const quantity = (+qty * 10).toFixed(2);
 
       const response = await fetch(
-        "https://api-m.sandbox.paypal.com/v2/checkout/orders",
+        'https://api-m.sandbox.paypal.com/v2/checkout/orders',
         {
           headers: {
             Authorization: `Bearer ${accessToken}`,
-            "Content-Type": "application/json",
+            'Content-Type': 'application/json',
           },
-          method: "POST",
+          method: 'POST',
           body: JSON.stringify({
-            intent: "CAPTURE",
+            intent: 'CAPTURE',
             purchase_units: [
               {
                 amount: {
-                  currency_code: "USD",
+                  currency_code: 'USD',
                   value: quantity,
                 },
               },
@@ -163,50 +163,50 @@ const paymentsRouter = factory
     },
   )
   .post(
-    "/webhook/stripe",
+    '/webhook/stripe',
     describeRoute({
       description:
-        "Handle Stripe webhook events for payment confirmation. This endpoint processes checkout.session.completed events, creates orders with Slant3D API, and clears the cart. Must be configured in Stripe Dashboard with proper webhook secret.",
-      tags: ["Payments", "Stripe", "Webhooks"],
+        'Handle Stripe webhook events for payment confirmation. This endpoint processes checkout.session.completed events, creates orders with Slant3D API, and clears the cart. Must be configured in Stripe Dashboard with proper webhook secret.',
+      tags: ['Payments', 'Stripe', 'Webhooks'],
       responses: {
         200: {
           description:
-            "Webhook processed successfully - order created and cart cleared",
+            'Webhook processed successfully - order created and cart cleared',
           content: {
-            "application/json": {
+            'application/json': {
               example: {
                 success: true,
-                orderId: "slant3d_order_123",
+                orderId: 'slant3d_order_123',
               },
             },
           },
         },
         400: {
-          description: "Bad request - missing signature or invalid metadata",
+          description: 'Bad request - missing signature or invalid metadata',
           content: {
-            "application/json": {
+            'application/json': {
               example: {
-                error: "Missing stripe-signature header",
+                error: 'Missing stripe-signature header',
               },
             },
           },
         },
         404: {
-          description: "Cart or user not found",
+          description: 'Cart or user not found',
           content: {
-            "application/json": {
+            'application/json': {
               example: {
-                error: "Cart not found",
+                error: 'Cart not found',
               },
             },
           },
         },
         502: {
-          description: "Slant3D API error - order creation failed",
+          description: 'Slant3D API error - order creation failed',
           content: {
-            "application/json": {
+            'application/json': {
               example: {
-                error: "Order creation failed",
+                error: 'Order creation failed',
               },
             },
           },
@@ -215,11 +215,11 @@ const paymentsRouter = factory
     }),
     async (c: Context) => {
       const stripe = new Stripe(c.env.STRIPE_SECRET_KEY);
-      const sig = c.req.header("stripe-signature");
+      const sig = c.req.header('stripe-signature');
       const body = await c.req.text();
 
       if (!sig) {
-        return c.json({ error: "Missing stripe-signature header" }, 400);
+        return c.json({ error: 'Missing stripe-signature header' }, 400);
       }
 
       try {
@@ -231,7 +231,7 @@ const paymentsRouter = factory
         );
 
         // Handle successful payment
-        if (event.type === "checkout.session.completed") {
+        if (event.type === 'checkout.session.completed') {
           const session = event.data.object as Stripe.Checkout.Session;
 
           // Extract metadata from session (cartId, userId)
@@ -240,10 +240,10 @@ const paymentsRouter = factory
 
           if (!cartId || !userId) {
             console.error(
-              "Missing metadata in Stripe session:",
+              'Missing metadata in Stripe session:',
               session.metadata,
             );
-            return c.json({ error: "Missing required metadata" }, 400);
+            return c.json({ error: 'Missing required metadata' }, 400);
           }
 
           // Get cart items and user information
@@ -266,8 +266,8 @@ const paymentsRouter = factory
             .where(eq(cart.cartId, cartId));
 
           if (cartItems.length === 0) {
-            console.error("No cart items found for cartId:", cartId);
-            return c.json({ error: "Cart not found" }, 404);
+            console.error('No cart items found for cartId:', cartId);
+            return c.json({ error: 'Cart not found' }, 404);
           }
 
           // Get user information
@@ -277,8 +277,8 @@ const paymentsRouter = factory
             .where(eq(users.id, parseInt(userId, 10)));
 
           if (!userRow) {
-            console.error("User not found for userId:", userId);
-            return c.json({ error: "User not found" }, 404);
+            console.error('User not found for userId:', userId);
+            return c.json({ error: 'User not found' }, 404);
           }
 
           // Decrypt user information
@@ -297,38 +297,38 @@ const paymentsRouter = factory
 
           // Create order data for Slant3D API (using the same logic from shipping endpoint)
           const allowedColors = new Set([
-            "black",
-            "white",
-            "gray",
-            "grey",
-            "yellow",
-            "red",
-            "gold",
-            "purple",
-            "blue",
-            "orange",
-            "green",
-            "pink",
-            "matteBlack",
-            "lunarRegolith",
-            "petgBlack",
+            'black',
+            'white',
+            'gray',
+            'grey',
+            'yellow',
+            'red',
+            'gold',
+            'purple',
+            'blue',
+            'orange',
+            'green',
+            'pink',
+            'matteBlack',
+            'lunarRegolith',
+            'petgBlack',
           ]);
 
           const normalizeColor = (raw: string | null | undefined): string => {
-            if (!raw) return "black";
+            if (!raw) return 'black';
             const trimmed = raw.trim();
             if (allowedColors.has(trimmed)) return trimmed;
             const lower = trimmed.toLowerCase();
             for (const c of allowedColors) {
               if (c.toLowerCase() === lower) return c;
             }
-            return "black";
+            return 'black';
           };
 
           const orderDataArray: Slant3DOrderData[] = cartItems.map(
             (item: CartItemWithProduct): Slant3DOrderData => {
               const stlPath = item.stl;
-              const filenameCandidate = stlPath?.split("/").pop();
+              const filenameCandidate = stlPath?.split('/').pop();
               const normalizedColor = normalizeColor(item.color);
 
               return {
@@ -339,25 +339,25 @@ const paymentsRouter = factory
                 filename: filenameCandidate,
                 fileURL: stlPath,
                 bill_to_street_1: shippingAddress,
-                bill_to_street_2: "",
-                bill_to_street_3: "",
+                bill_to_street_2: '',
+                bill_to_street_3: '',
                 bill_to_city: city,
                 bill_to_state: state,
                 bill_to_zip: zipCode,
-                bill_to_country_as_iso: "US",
-                bill_to_is_US_residential: "true",
+                bill_to_country_as_iso: 'US',
+                bill_to_is_US_residential: 'true',
                 ship_to_name: `${firstName} ${lastName}`.trim(),
                 ship_to_street_1: shippingAddress,
-                ship_to_street_2: "",
-                ship_to_street_3: "",
+                ship_to_street_2: '',
+                ship_to_street_3: '',
                 ship_to_city: city,
                 ship_to_state: state,
                 ship_to_zip: zipCode,
-                ship_to_country_as_iso: "US",
-                ship_to_is_US_residential: "true",
+                ship_to_country_as_iso: 'US',
+                ship_to_is_US_residential: 'true',
                 order_item_name: item.productName,
                 order_quantity: String(item.quantity),
-                order_image_url: "",
+                order_image_url: '',
                 order_sku: item.skuNumber,
                 order_item_color: normalizedColor,
                 profile: item.filamentType,
@@ -368,27 +368,27 @@ const paymentsRouter = factory
           // Create order with Slant3D
           try {
             const response = await fetch(`${BASE_URL}estimate`, {
-              method: "POST",
+              method: 'POST',
               headers: {
-                "Content-Type": "application/json",
-                "api-key": c.env.SLANT_API,
+                'Content-Type': 'application/json',
+                'api-key': c.env.SLANT_API,
               },
               body: JSON.stringify(orderDataArray),
             });
 
             if (!response.ok) {
               console.error(
-                "Slant3D order creation failed:",
+                'Slant3D order creation failed:',
                 response.status,
                 await response.text(),
               );
               // You might want to store this failed order for retry later
-              return c.json({ error: "Order creation failed" }, 502);
+              return c.json({ error: 'Order creation failed' }, 502);
             }
 
             const orderResponse =
               (await response.json()) as Slant3DOrderResponse;
-            console.log("Slant3D order created successfully:", orderResponse);
+            console.log('Slant3D order created successfully:', orderResponse);
 
             // Clear the cart after successful order
             await db.delete(cart).where(eq(cart.cartId, cartId));
@@ -398,19 +398,19 @@ const paymentsRouter = factory
 
             return c.json({
               success: true,
-              orderId: orderResponse.orderId || "created",
+              orderId: orderResponse.orderId || 'created',
             });
           } catch (error) {
-            console.error("Error creating Slant3D order:", error);
-            return c.json({ error: "Order creation failed" }, 500);
+            console.error('Error creating Slant3D order:', error);
+            return c.json({ error: 'Order creation failed' }, 500);
           }
         }
 
         // Acknowledge receipt of event
         return c.json({ received: true });
       } catch (err) {
-        console.error("Webhook signature verification failed:", err);
-        return c.json({ error: "Webhook signature verification failed" }, 400);
+        console.error('Webhook signature verification failed:', err);
+        return c.json({ error: 'Webhook signature verification failed' }, 400);
       }
     },
   );

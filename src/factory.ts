@@ -1,7 +1,7 @@
-import { type DrizzleD1Database, drizzle } from "drizzle-orm/d1";
-import { createFactory } from "hono/factory";
+import { type DrizzleD1Database, drizzle } from 'drizzle-orm/d1';
+import { createFactory } from 'hono/factory';
 
-import * as schema from "./db/schema";
+import * as schema from './db/schema';
 
 // —————————————————————————————————————————————————————————————————————————————
 // Environment
@@ -26,7 +26,7 @@ export type WorkerEnv = {
 const factory = createFactory<WorkerEnv>({
   initApp(app) {
     app.use(async (c, next) => {
-      c.set("db", drizzle(c.env.DB, { schema }));
+      c.set('db', drizzle(c.env.DB, { schema }));
       await next();
     });
   },

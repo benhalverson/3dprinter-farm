@@ -1,12 +1,12 @@
-import { defineWorkersConfig } from "@cloudflare/vitest-pool-workers/config";
+import { defineWorkersConfig } from '@cloudflare/vitest-pool-workers/config';
 
 export default defineWorkersConfig({
   test: {
     isolate: true,
-    setupFiles: ["./test/setup.ts"],
+    setupFiles: ['./test/setup.ts'],
     poolOptions: {
       workers: {
-        wrangler: { configPath: "./wrangler.toml" },
+        wrangler: { configPath: './wrangler.toml' },
       },
     },
   },

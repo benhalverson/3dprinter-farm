@@ -3,7 +3,7 @@ export const calculateMarkupPrice = (
   markupPercentage: number,
 ): number => {
   if (markupPercentage <= 0) {
-    throw new Error("Invalid markup percentage");
+    throw new Error('Invalid markup percentage');
   }
   const markUpPrice = basePrice + basePrice * (markupPercentage / 100);
   return parseFloat(markUpPrice.toFixed(2));

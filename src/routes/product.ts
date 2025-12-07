@@ -1,10 +1,10 @@
-import { zValidator } from "@hono/zod-validator";
-import { count, eq, like, or } from "drizzle-orm";
-import { describeRoute } from "hono-openapi";
-import { resolver } from "hono-openapi/zod";
-import Stripe from "stripe";
-import { ZodError } from "zod";
-import { BASE_URL } from "../constants";
+import { zValidator } from '@hono/zod-validator';
+import { count, eq, like, or } from 'drizzle-orm';
+import { describeRoute } from 'hono-openapi';
+import { resolver } from 'hono-openapi/zod';
+import Stripe from 'stripe';
+import { ZodError } from 'zod';
+import { BASE_URL } from '../constants';
 import {
   addProductSchema,
   categoryDataSchema,
@@ -13,11 +13,11 @@ import {
   productsTable,
   productsToCategories,
   updateProductSchema,
-} from "../db/schema";
-import factory from "../factory";
-import { authMiddleware } from "../utils/authMiddleware";
-import { calculateMarkupPrice } from "../utils/calculateMarkupPrice";
-import { generateSkuNumber } from "../utils/generateSkuNumber";
+} from '../db/schema';
+import factory from '../factory';
+import { authMiddleware } from '../utils/authMiddleware';
+import { calculateMarkupPrice } from '../utils/calculateMarkupPrice';
+import { generateSkuNumber } from '../utils/generateSkuNumber';
 
 // Helper function to safely parse imageGallery JSON
 function parseImageGallery(imageGallery: string | null): string[] {
@@ -33,73 +33,73 @@ function parseImageGallery(imageGallery: string | null): string[] {
 const product = factory
   .createApp()
   .get(
-    "/products",
+    '/products',
     describeRoute({
-      description: "Get all products with pagination",
-      tags: ["Products"],
+      description: 'Get all products with pagination',
+      tags: ['Products'],
       responses: {
         200: {
           content: {
-            "application/json": {
+            'application/json': {
               schema: {
-                type: "object",
+                type: 'object',
                 properties: {
                   products: {
-                    type: "array",
+                    type: 'array',
                     items: {
-                      type: "object",
+                      type: 'object',
                       properties: {
-                        id: { type: "number" },
-                        name: { type: "string" },
-                        description: { type: "string" },
-                        image: { type: "string" },
+                        id: { type: 'number' },
+                        name: { type: 'string' },
+                        description: { type: 'string' },
+                        image: { type: 'string' },
                         imageGallery: {
-                          type: "array",
-                          items: { type: "string" },
+                          type: 'array',
+                          items: { type: 'string' },
                         },
-                        stl: { type: "string" },
-                        price: { type: "number" },
-                        filamentType: { type: "string" },
-                        skuNumber: { type: "string" },
-                        color: { type: "string" },
+                        stl: { type: 'string' },
+                        price: { type: 'number' },
+                        filamentType: { type: 'string' },
+                        skuNumber: { type: 'string' },
+                        color: { type: 'string' },
                       },
                     },
                   },
                   pagination: {
-                    type: "object",
+                    type: 'object',
                     properties: {
-                      page: { type: "number" },
-                      limit: { type: "number" },
-                      totalItems: { type: "number" },
-                      totalPages: { type: "number" },
-                      hasNextPage: { type: "boolean" },
-                      hasPreviousPage: { type: "boolean" },
+                      page: { type: 'number' },
+                      limit: { type: 'number' },
+                      totalItems: { type: 'number' },
+                      totalPages: { type: 'number' },
+                      hasNextPage: { type: 'boolean' },
+                      hasPreviousPage: { type: 'boolean' },
                     },
                   },
                 },
               },
             },
           },
-          description: "Paginated list of all products",
+          description: 'Paginated list of all products',
         },
         400: {
           content: {
-            "application/json": {
+            'application/json': {
               schema: {
-                type: "object",
+                type: 'object',
                 properties: {
-                  error: { type: "string" },
+                  error: { type: 'string' },
                 },
               },
             },
           },
-          description: "Invalid pagination parameters",
+          description: 'Invalid pagination parameters',
         },
       },
     }),
     async c => {
-      const pageParam = c.req.query("page");
-      const limitParam = c.req.query("limit");
+      const pageParam = c.req.query('page');
+      const limitParam = c.req.query('limit');
 
       // Check if pagination is requested
       const isPaginationRequested = pageParam || limitParam;
@@ -144,7 +144,7 @@ const product = factory
           return c.json(
             {
               error:
-                "Invalid pagination parameters. Page and limit must be numbers.",
+                'Invalid pagination parameters. Page and limit must be numbers.',
             },
             400,
           );
@@ -197,89 +197,89 @@ const product = factory
           pagination,
         });
       } catch (error) {
-        console.error("Error fetching products:", error);
-        return c.json({ error: "Failed to fetch products" }, 500);
+        console.error('Error fetching products:', error);
+        return c.json({ error: 'Failed to fetch products' }, 500);
       }
     },
   )
-  .use("/products/search", authMiddleware)
+  .use('/products/search', authMiddleware)
   .get(
-    "/products/search",
+    '/products/search',
     describeRoute({
-      description: "Search products by name and description with pagination",
-      tags: ["Products"],
+      description: 'Search products by name and description with pagination',
+      tags: ['Products'],
       responses: {
         200: {
           content: {
-            "application/json": {
+            'application/json': {
               schema: {
-                type: "object",
+                type: 'object',
                 properties: {
                   products: {
-                    type: "array",
+                    type: 'array',
                     items: {
-                      type: "object",
+                      type: 'object',
                       properties: {
-                        id: { type: "number" },
-                        name: { type: "string" },
-                        description: { type: "string" },
-                        image: { type: "string" },
+                        id: { type: 'number' },
+                        name: { type: 'string' },
+                        description: { type: 'string' },
+                        image: { type: 'string' },
                         imageGallery: {
-                          type: "array",
-                          items: { type: "string" },
+                          type: 'array',
+                          items: { type: 'string' },
                         },
-                        stl: { type: "string" },
-                        price: { type: "number" },
-                        filamentType: { type: "string" },
-                        skuNumber: { type: "string" },
-                        color: { type: "string" },
+                        stl: { type: 'string' },
+                        price: { type: 'number' },
+                        filamentType: { type: 'string' },
+                        skuNumber: { type: 'string' },
+                        color: { type: 'string' },
                       },
                     },
                   },
                   pagination: {
-                    type: "object",
+                    type: 'object',
                     properties: {
-                      page: { type: "number" },
-                      limit: { type: "number" },
-                      totalItems: { type: "number" },
-                      totalPages: { type: "number" },
-                      hasNextPage: { type: "boolean" },
-                      hasPreviousPage: { type: "boolean" },
+                      page: { type: 'number' },
+                      limit: { type: 'number' },
+                      totalItems: { type: 'number' },
+                      totalPages: { type: 'number' },
+                      hasNextPage: { type: 'boolean' },
+                      hasPreviousPage: { type: 'boolean' },
                     },
                   },
                 },
               },
             },
           },
-          description: "Paginated list of products matching the search query",
+          description: 'Paginated list of products matching the search query',
         },
         400: {
           content: {
-            "application/json": {
+            'application/json': {
               schema: {
-                type: "object",
+                type: 'object',
                 properties: {
-                  error: { type: "string" },
+                  error: { type: 'string' },
                 },
               },
             },
           },
-          description: "Invalid search query or pagination parameters",
+          description: 'Invalid search query or pagination parameters',
         },
       },
     }),
     async c => {
-      const query = c.req.query("q");
-      const pageParam = c.req.query("page");
-      const limitParam = c.req.query("limit");
+      const query = c.req.query('q');
+      const pageParam = c.req.query('page');
+      const limitParam = c.req.query('limit');
 
       if (!query) {
-        return c.json({ error: "Search query is required" }, 400);
+        return c.json({ error: 'Search query is required' }, 400);
       }
 
       if (query.trim().length < 2) {
         return c.json(
-          { error: "Search query must be at least 2 characters long" },
+          { error: 'Search query must be at least 2 characters long' },
           400,
         );
       }
@@ -296,7 +296,7 @@ const product = factory
         return c.json(
           {
             error:
-              "Invalid pagination parameters. Page and limit must be numbers.",
+              'Invalid pagination parameters. Page and limit must be numbers.',
           },
           400,
         );
@@ -358,21 +358,21 @@ const product = factory
           pagination,
         });
       } catch (error) {
-        console.error("Error searching products:", error);
-        return c.json({ error: "Failed to search products" }, 500);
+        console.error('Error searching products:', error);
+        return c.json({ error: 'Failed to search products' }, 500);
       }
     },
   )
-  .use("/add-product", authMiddleware)
-  .use("/update-product", authMiddleware)
+  .use('/add-product', authMiddleware)
+  .use('/update-product', authMiddleware)
   .post(
-    "/add-product",
+    '/add-product',
     describeRoute({
-      description: "Add a new product",
-      tags: ["Products"],
+      description: 'Add a new product',
+      tags: ['Products'],
       requestBody: {
         content: {
-          "application/json": {
+          'application/json': {
             schema: resolver(addProductSchema) as any,
           },
         },
@@ -381,30 +381,30 @@ const product = factory
       responses: {
         201: {
           content: {
-            "application/json": {
+            'application/json': {
               schema: resolver(addProductSchema) as any,
             },
           },
-          description: "The product was created successfully",
+          description: 'The product was created successfully',
         },
         400: {
           content: {
-            "application/json": {
+            'application/json': {
               schema: resolver(addProductSchema) as any,
             },
           },
-          description: "Missing or invalid parameters",
+          description: 'Missing or invalid parameters',
         },
       },
     }),
-    zValidator("json", addProductSchema),
+    zValidator('json', addProductSchema),
     async c => {
       const stripe = new Stripe(c.env.STRIPE_SECRET_KEY, {
         telemetry: false,
       });
-      const user = c.get("jwtPayload") as { id: number; email: string };
-      if (!user) return c.json({ error: "Unauthorized" }, 401);
-      const data = await c.req.valid("json");
+      const user = c.get('jwtPayload') as { id: number; email: string };
+      if (!user) return c.json({ error: 'Unauthorized' }, 401);
+      const data = await c.req.valid('json');
       const { categoryIds, imageGallery, ...rest } = data as any;
       const skuNumber = generateSkuNumber(data.name, data.color);
 
@@ -419,19 +419,19 @@ const product = factory
       });
 
       const slicingResponse = await fetch(`${BASE_URL}slicer`, {
-        method: "POST",
+        method: 'POST',
         headers: {
-          "Content-Type": "application/json",
-          "api-key": c.env.SLANT_API,
+          'Content-Type': 'application/json',
+          'api-key': c.env.SLANT_API,
         },
         body: JSON.stringify({ fileURL: data.stl, sku_number: skuNumber }),
       });
 
       if (!slicingResponse.ok) {
         const error = (await slicingResponse.json()) as Error;
-        console.log("slicing error", error);
+        console.log('slicing error', error);
         return c.json(
-          { error: "Failed to slice file", details: error.message },
+          { error: 'Failed to slice file', details: error.message },
           500,
         );
       }
@@ -439,7 +439,7 @@ const product = factory
       const slicingResult = (await slicingResponse.json()) as {
         data: { price: number };
       };
-      console.log("slicing result", slicingResult);
+      console.log('slicing result', slicingResult);
       const basePrice = slicingResult.data.price;
       const markupPrice = calculateMarkupPrice(basePrice, data.price);
 
@@ -448,12 +448,12 @@ const product = factory
         const price = await stripe.prices.create({
           product: stripeProduct.id,
           unit_amount: Math.round(markupPrice * 100), // Stripe expects the amount in cents
-          currency: "usd",
+          currency: 'usd',
         });
         stripePriceId = price.id;
       }
 
-      console.log("data.imageGallery before insertion", imageGallery);
+      console.log('data.imageGallery before insertion', imageGallery);
       // Use first category as primary if provided; otherwise leave null
       const primaryCategoryId =
         categoryIds && categoryIds.length > 0 ? categoryIds[0] : null;
@@ -468,14 +468,14 @@ const product = factory
         categoryId: primaryCategoryId,
       };
 
-      console.log("Inserting product:", productDataToInsert);
+      console.log('Inserting product:', productDataToInsert);
 
       try {
         const response = await c.var.db
           .insert(productsTable)
           .values(productDataToInsert)
           .returning();
-        console.log("response", response);
+        console.log('response', response);
 
         // Insert category links into join table (if any provided)
         const created = response[0];
@@ -491,20 +491,20 @@ const product = factory
 
         return c.json(response);
       } catch (error) {
-        console.error("Error adding product", error);
-        return c.json({ error: "Failed to add product" }, 500);
+        console.error('Error adding product', error);
+        return c.json({ error: 'Failed to add product' }, 500);
       }
     },
   )
 
   .get(
-    "/product/:id",
+    '/product/:id',
     describeRoute({
-      description: "Get a product by ID",
-      tags: ["Products"],
+      description: 'Get a product by ID',
+      tags: ['Products'],
     }),
     async c => {
-      const idParam = c.req.param("id");
+      const idParam = c.req.param('id');
       const parsedData = idSchema.parse({ id: Number(idParam) });
       const response = await c.var.db
         .select()
@@ -513,7 +513,7 @@ const product = factory
       const rawProduct = response[0];
 
       if (!rawProduct) {
-        return c.json({ error: "Product not found" }, 404);
+        return c.json({ error: 'Product not found' }, 404);
       }
 
       // Parse imageGallery safely for individual product
@@ -526,10 +526,10 @@ const product = factory
     },
   )
   .put(
-    "/update-product",
+    '/update-product',
     describeRoute({
-      description: "Update an existing product",
-      tags: ["Products"],
+      description: 'Update an existing product',
+      tags: ['Products'],
     }),
     async c => {
       try {
@@ -551,40 +551,40 @@ const product = factory
         if (updateResult) {
           return c.json({
             success: true,
-            message: "Product updated successfully",
+            message: 'Product updated successfully',
           });
         } else {
-          return c.json({ error: "Product not found or update failed" }, 404);
+          return c.json({ error: 'Product not found or update failed' }, 404);
         }
       } catch (error) {
         if (error instanceof ZodError) {
-          console.log("error", error);
+          console.log('error', error);
           return c.json(
-            { error: "Validation error", details: error.errors },
+            { error: 'Validation error', details: error.errors },
             400,
           );
         }
-        return c.json({ error: "Internal Server Error" }, 500);
+        return c.json({ error: 'Internal Server Error' }, 500);
       }
     },
   )
   .delete(
-    "/delete-product/:id",
+    '/delete-product/:id',
     authMiddleware,
     describeRoute({
-      description: "Delete a product by ID",
-      tags: ["Products"],
+      description: 'Delete a product by ID',
+      tags: ['Products'],
       parameters: [],
       responses: {
         200: {
-          description: "Product deleted successfully",
+          description: 'Product deleted successfully',
           content: {
-            "application/json": {
+            'application/json': {
               schema: {
-                type: "object",
+                type: 'object',
                 properties: {
-                  success: { type: "boolean" },
-                  message: { type: "string" },
+                  success: { type: 'boolean' },
+                  message: { type: 'string' },
                 },
               },
             },
@@ -594,7 +594,7 @@ const product = factory
     }),
     async c => {
       try {
-        const idParam = c.req.param("id");
+        const idParam = c.req.param('id');
         const parsedData = idSchema.parse({ id: Number(idParam) });
         const deleteResult = await c.var.db
           .delete(productsTable)
@@ -603,25 +603,25 @@ const product = factory
         if (deleteResult) {
           return c.json({
             success: true,
-            message: "Product deleted successfully",
+            message: 'Product deleted successfully',
           });
         } else {
-          return c.json({ error: "Product not found or delete failed" }, 404);
+          return c.json({ error: 'Product not found or delete failed' }, 404);
         }
       } catch (error) {
         if (error instanceof ZodError) {
-          console.log("error", error);
+          console.log('error', error);
           return c.json(
-            { error: "Validation error", details: error.errors },
+            { error: 'Validation error', details: error.errors },
             400,
           );
         }
-        return c.json({ error: "Internal Server Error" }, 500);
+        return c.json({ error: 'Internal Server Error' }, 500);
       }
     },
   )
-  .post("/add-category", zValidator("json", categoryDataSchema), async c => {
-    const categoryData = c.req.valid("json");
+  .post('/add-category', zValidator('json', categoryDataSchema), async c => {
+    const categoryData = c.req.valid('json');
     try {
       const newCategory = await c.var.db
         .insert(categoryTable)
@@ -629,17 +629,17 @@ const product = factory
         .returning();
       return c.json(newCategory);
     } catch (error) {
-      console.error("Error adding category", error);
-      return c.json({ error: "Failed to add category" }, 500);
+      console.error('Error adding category', error);
+      return c.json({ error: 'Failed to add category' }, 500);
     }
   })
-  .get("/categories", async c => {
+  .get('/categories', async c => {
     try {
       const categories = await c.var.db.select().from(categoryTable);
       return c.json(categories);
     } catch (error) {
-      console.error("Error fetching categories", error);
-      return c.json({ error: "Failed to fetch categories" }, 500);
+      console.error('Error fetching categories', error);
+      return c.json({ error: 'Failed to fetch categories' }, 500);
     }
   });
 
