@@ -1,11 +1,11 @@
-import { describe, expect, test } from 'vitest';
+import { describe, expect, test } from "vitest";
 
-describe('Printer V2 Routes', () => {
-	describe('GET /v2/colors', () => {
-		test('should be implemented', () => {
-			expect(true).toBe(true);
-		});
-	});
+describe("Printer V2 Routes", () => {
+  describe("GET /v2/colors", () => {
+    test("should be implemented", () => {
+      expect(true).toBe(true);
+    });
+  });
 });
 
 /*

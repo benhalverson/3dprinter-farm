@@ -47,10 +47,7 @@
       "indexes": {
         "authenticators_user_credential_unique": {
           "name": "authenticators_user_credential_unique",
-          "columns": [
-            "user_id",
-            "credential_id"
-          ],
+          "columns": ["user_id", "credential_id"],
           "isUnique": true
         }
       },
@@ -59,12 +56,8 @@
           "name": "authenticators_user_id_users_id_fk",
           "tableFrom": "authenticators",
           "tableTo": "users",
-          "columnsFrom": [
-            "user_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["user_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -207,9 +200,7 @@
       "indexes": {
         "leads_email_unique": {
           "name": "leads_email_unique",
-          "columns": [
-            "email"
-          ],
+          "columns": ["email"],
           "isUnique": true
         }
       },
@@ -351,9 +342,7 @@
       "indexes": {
         "ordersTable_order_number_unique": {
           "name": "ordersTable_order_number_unique",
-          "columns": [
-            "order_number"
-          ],
+          "columns": ["order_number"],
           "isUnique": true
         }
       },
@@ -362,12 +351,8 @@
           "name": "ordersTable_user_id_users_id_fk",
           "tableFrom": "ordersTable",
           "tableTo": "users",
-          "columnsFrom": [
-            "user_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["user_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -482,12 +467,8 @@
           "name": "products_categoryId_category_categoryId_fk",
           "tableFrom": "products",
           "tableTo": "category",
-          "columnsFrom": [
-            "categoryId"
-          ],
-          "columnsTo": [
-            "categoryId"
-          ],
+          "columnsFrom": ["categoryId"],
+          "columnsTo": ["categoryId"],
           "onDelete": "no action",
           "onUpdate": "no action"
         }
@@ -535,12 +516,8 @@
           "name": "products_to_categories_product_id_products_id_fk",
           "tableFrom": "products_to_categories",
           "tableTo": "products",
-          "columnsFrom": [
-            "product_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["product_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "cascade"
         },
@@ -548,22 +525,15 @@
           "name": "products_to_categories_category_id_category_categoryId_fk",
           "tableFrom": "products_to_categories",
           "tableTo": "category",
-          "columnsFrom": [
-            "category_id"
-          ],
-          "columnsTo": [
-            "categoryId"
-          ],
+          "columnsFrom": ["category_id"],
+          "columnsTo": ["categoryId"],
           "onDelete": "set null",
           "onUpdate": "cascade"
         }
       },
       "compositePrimaryKeys": {
         "products_to_categories_product_id_category_id_pk": {
-          "columns": [
-            "product_id",
-            "category_id"
-          ],
+          "columns": ["product_id", "category_id"],
           "name": "products_to_categories_product_id_category_id_pk"
         }
       },
@@ -685,9 +655,7 @@
       "indexes": {
         "users_email_unique": {
           "name": "users_email_unique",
-          "columns": [
-            "email"
-          ],
+          "columns": ["email"],
           "isUnique": true
         }
       },
@@ -720,12 +688,8 @@
           "name": "webauthn_challenges_user_id_users_id_fk",
           "tableFrom": "webauthn_challenges",
           "tableTo": "users",
-          "columnsFrom": [
-            "user_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["user_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
