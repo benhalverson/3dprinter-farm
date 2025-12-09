@@ -3,6 +3,9 @@ import app from '../../src/index';
 import { mockEnv } from '../mocks/env';
 import type { Slant3DFileResponse } from '../../src/types';
 
+// Mock STL file content for testing
+const MOCK_STL_CONTENT = 'solid test\nfacet normal 0 0 0\nouter loop\nvertex 0 0 0\nvertex 1 0 0\nvertex 0 1 0\nendloop\nendfacet\nendsolid';
+
 describe('Printer V2 Upload Routes', () => {
 	describe('POST /v2/upload', () => {
 		let env: ReturnType<typeof mockEnv>;
@@ -50,8 +53,7 @@ describe('Printer V2 Upload Routes', () => {
 			} as Response);
 
 			// Create a mock STL file
-			const stlContent = 'solid test\nfacet normal 0 0 0\nouter loop\nvertex 0 0 0\nvertex 1 0 0\nvertex 0 1 0\nendloop\nendfacet\nendsolid';
-			const file = new File([stlContent], 'test-model.stl', { type: 'model/stl' });
+			const file = new File([MOCK_STL_CONTENT], 'test-model.stl', { type: 'model/stl' });
 
 			// Create form data
 			const formData = new FormData();
@@ -149,7 +151,7 @@ describe('Printer V2 Upload Routes', () => {
 			} as Response);
 
 			// Create a file with .stl extension but no proper MIME type
-			const file = new File(['stl content'], 'test-model.STL', { type: 'application/octet-stream' });
+			const file = new File([MOCK_STL_CONTENT], 'test-model.STL', { type: 'application/octet-stream' });
 
 			const formData = new FormData();
 			formData.append('file', file);
@@ -188,7 +190,7 @@ describe('Printer V2 Upload Routes', () => {
 			// Remove SLANT_PLATFORM_ID
 			env.SLANT_PLATFORM_ID = '';
 
-			const file = new File(['stl content'], 'test-model.stl', { type: 'model/stl' });
+			const file = new File([MOCK_STL_CONTENT], 'test-model.stl', { type: 'model/stl' });
 			const formData = new FormData();
 			formData.append('file', file);
 
@@ -212,7 +214,7 @@ describe('Printer V2 Upload Routes', () => {
 				put: mockPut,
 			} as unknown as R2Bucket;
 
-			const file = new File(['stl content'], 'test-model.stl', { type: 'model/stl' });
+			const file = new File([MOCK_STL_CONTENT], 'test-model.stl', { type: 'model/stl' });
 			const formData = new FormData();
 			formData.append('file', file);
 
@@ -247,7 +249,7 @@ describe('Printer V2 Upload Routes', () => {
 				}),
 			} as Response);
 
-			const file = new File(['stl content'], 'test-model.stl', { type: 'model/stl' });
+			const file = new File([MOCK_STL_CONTENT], 'test-model.stl', { type: 'model/stl' });
 			const formData = new FormData();
 			formData.append('file', file);
 
@@ -285,7 +287,7 @@ describe('Printer V2 Upload Routes', () => {
 				text: async () => 'Internal server error',
 			} as Response);
 
-			const file = new File(['stl content'], 'test-model.stl', { type: 'model/stl' });
+			const file = new File([MOCK_STL_CONTENT], 'test-model.stl', { type: 'model/stl' });
 			const formData = new FormData();
 			formData.append('file', file);
 
@@ -313,7 +315,7 @@ describe('Printer V2 Upload Routes', () => {
 			// Mock fetch to throw network error
 			global.fetch = vi.fn().mockRejectedValue(new Error('Network error'));
 
-			const file = new File(['stl content'], 'test-model.stl', { type: 'model/stl' });
+			const file = new File([MOCK_STL_CONTENT], 'test-model.stl', { type: 'model/stl' });
 			const formData = new FormData();
 			formData.append('file', file);
 
@@ -359,7 +361,7 @@ describe('Printer V2 Upload Routes', () => {
 				json: async () => mockSlant3DResponse,
 			} as Response);
 
-			const file = new File(['stl content'], 'test-model-v2.stl', { type: 'model/stl' });
+			const file = new File([MOCK_STL_CONTENT], 'test-model-v2.stl', { type: 'model/stl' });
 			const formData = new FormData();
 			formData.append('file', file);
 
