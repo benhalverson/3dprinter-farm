@@ -24,6 +24,8 @@ export type Bindings = {
   MAILJET_SENDER_EMAIL: string;
   MAILJET_SENDER_NAME: string;
   ENCRYPTION_PASSPHRASE: string;
+  R2_PUBLIC_BASE_URL: string;
+  R2_PHOTO_BASE_URL: string;
 };
 
 export interface SliceResponse {
