@@ -62,7 +62,7 @@ describe('POST /v2/presigned-upload', () => {
         method: 'POST',
         headers: expect.objectContaining({
           'Content-Type': 'application/json',
-          Authorization: 'Bearer fake-api-v2-key',
+          Authorization: 'Bearer fake-api-key-v2',
         }),
         body: JSON.stringify({
           name: 'test-file',

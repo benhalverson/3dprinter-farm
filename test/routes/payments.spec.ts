@@ -20,6 +20,7 @@ mockDrizzle();
 const mockStripeCreate = vi.fn();
 const mockStripeWebhooks = {
   constructEvent: vi.fn(),
+  constructEventAsync: vi.fn(),
 };
 
 vi.mock('stripe', () => {
@@ -71,7 +72,7 @@ describe('Payments Routes', () => {
     mockInsert.mockReset();
     mockUpdate.mockReset();
     mockStripeCreate.mockReset();
-    mockStripeWebhooks.constructEvent.mockReset();
+    mockStripeWebhooks.constructEventAsync.mockReset();
 
     // Default fetch mock for external APIs
     global.fetch = vi.fn();
@@ -239,8 +240,8 @@ describe('Payments Routes', () => {
     };
 
     beforeEach(() => {
-      // Mock successful webhook signature verification
-      mockStripeWebhooks.constructEvent.mockReturnValue(mockWebhookPayload);
+      // Mock successful webhook signature verification (async)
+      mockStripeWebhooks.constructEventAsync.mockResolvedValue(mockWebhookPayload);
     });
 
     test('processes successful payment webhook', async () => {
@@ -302,7 +303,7 @@ describe('Payments Routes', () => {
       });
 
       // Verify Stripe webhook signature was verified
-      expect(mockStripeWebhooks.constructEvent).toHaveBeenCalledWith(
+      expect(mockStripeWebhooks.constructEventAsync).toHaveBeenCalledWith(
         JSON.stringify(mockWebhookPayload),
         'valid-signature',
         'whsec_123',
@@ -342,9 +343,9 @@ describe('Payments Routes', () => {
     });
 
     test('returns error when signature verification fails', async () => {
-      mockStripeWebhooks.constructEvent.mockImplementation(() => {
-        throw new Error('Invalid signature');
-      });
+      mockStripeWebhooks.constructEventAsync.mockRejectedValue(
+        new Error('Invalid signature')
+      );
 
       const res = await app.fetch(
         new Request('http://localhost/webhook/stripe', {
@@ -376,7 +377,7 @@ describe('Payments Routes', () => {
         },
       };
 
-      mockStripeWebhooks.constructEvent.mockReturnValue(incompletePayload);
+      mockStripeWebhooks.constructEventAsync.mockResolvedValue(incompletePayload);
 
       const res = await app.fetch(
         new Request('http://localhost/webhook/stripe', {
@@ -520,7 +521,7 @@ describe('Payments Routes', () => {
         },
       };
 
-      mockStripeWebhooks.constructEvent.mockReturnValue(nonCheckoutPayload);
+      mockStripeWebhooks.constructEventAsync.mockResolvedValue(nonCheckoutPayload);
 
       const res = await app.fetch(
         new Request('http://localhost/webhook/stripe', {
