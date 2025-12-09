@@ -49,6 +49,7 @@ export const productsTable = sqliteTable('products', {
   color: text('color').default('#000000'),
   stripeProductId: text('stripe_product_id'),
   stripePriceId: text('stripe_price_id'),
+  publicFileServiceId: text('public_file_service_id'), // Slant3D file UUID for orders
   // Make optional to allow products without categories during transition
   categoryId: integer().references(() => categoryTable.categoryId),
 });
@@ -99,6 +100,11 @@ export const productsToCategoriesRelations = relations(
 
 export const categoryDataSchema = z.object({
   categoryId: z.number(),
+  categoryName: z.string(),
+});
+
+// Input schema for creating categories (ID auto-increments in DB)
+export const addCategorySchema = z.object({
   categoryName: z.string(),
 });
 
@@ -315,6 +321,8 @@ export const addProductSchema = z.object({
   imageGallery: z.array(z.string()).min(1).optional(),
   // Accept multiple categories on create; optional for now to support existing data
   categoryIds: z.array(z.number().int()).optional(),
+  // Also allow a single categoryId for convenience (accept number or array)
+  categoryId: z.union([z.number().int(), z.array(z.number().int())]).optional(),
 });
 
 export const updateProductSchema = z.object({

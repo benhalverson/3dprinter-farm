@@ -560,6 +560,185 @@ const printer = factory
     }
   })
   .post(
+    '/v2/estimate',
+    describeRoute({
+      summary: 'Estimate file print cost (V2 API)',
+      description:
+        'Estimate the cost to print a single file without drafting an order. If no filament is provided, cost is estimated against PLA BLACK.',
+      tags: ['Printer'],
+      requestBody: {
+        content: {
+          'application/json': {
+            schema: z.object({
+              publicFileServiceId: z
+                .string()
+                .describe('UUID of the file returned from /v2/upload or /v2/confirm'),
+              filamentId: z
+                .string()
+                .optional()
+                .describe('UUID of the filament (defaults to PLA BLACK if not provided)'),
+              quantity: z
+                .number()
+                .int()
+                .positive()
+                .optional()
+                .describe('Number of copies to print (default: 1)'),
+              slicer: z
+                .object({
+                  support_enabled: z
+                    .boolean()
+                    .optional()
+                    .describe('Enable support structures'),
+                })
+                .optional()
+                .describe('Slicer configuration options'),
+            }),
+            required: true,
+          },
+        },
+      },
+      responses: {
+        200: {
+          content: {
+            'application/json': {
+              schema: z.object({
+                success: z.boolean(),
+                message: z.string(),
+                data: z.object({
+                  publicFileServiceId: z.string(),
+                  estimatedCost: z
+                    .number()
+                    .describe('Estimated cost in USD'),
+                  quantity: z.number(),
+                  filamentId: z.string(),
+                  slicer: z.record(z.any()).optional(),
+                }),
+              }),
+            },
+          },
+          description: 'Cost estimated successfully',
+        },
+        400: {
+          content: {
+            'application/json': {
+              schema: z.object({
+                success: z.boolean(),
+                error: z.string(),
+              }),
+            },
+          },
+          description: 'Invalid parameters',
+        },
+        500: {
+          content: {
+            'application/json': {
+              schema: z.object({
+                success: z.boolean(),
+                error: z.string(),
+                details: z.any(),
+              }),
+            },
+          },
+          description: 'Estimation failed',
+        },
+      },
+    }),
+    async (c: Context) => {
+      try {
+        const body = await c.req.json();
+        const { publicFileServiceId, filamentId, quantity, slicer } = body;
+
+        if (!publicFileServiceId) {
+          return c.json(
+            {
+              success: false,
+              error: 'publicFileServiceId is required',
+            },
+            400,
+          );
+        }
+
+        // Default to PLA BLACK if no filament specified
+        const DEFAULT_BLACK_FILAMENT_ID = '76fe1f79-3f1e-43e4-b8f4-61159de5b93c';
+        const effectiveFilamentId = filamentId || DEFAULT_BLACK_FILAMENT_ID;
+        const resolvedQuantity = quantity ?? 1;
+
+        const estimateOptions = {
+          options: {
+            filamentId: effectiveFilamentId,
+            quantity: resolvedQuantity,
+            ...(slicer && { slicer }),
+          },
+        };
+
+        const response = await fetch(
+          `${BASE_URL_V2}files/${publicFileServiceId}/estimate`,
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${c.env.SLANT_API_V2}`,
+            },
+            body: JSON.stringify(estimateOptions),
+          },
+        );
+
+        if (!response.ok) {
+          let errorDetails: any;
+          let rawText = '';
+          try {
+            rawText = await response.text();
+            errorDetails = rawText ? JSON.parse(rawText) : {};
+          } catch (e) {
+            console.error('Error parsing Slant3D response:', e);
+            errorDetails = rawText || 'Failed to parse error body';
+          }
+
+          console.error('Slant3D estimate error body:', errorDetails);
+
+          return c.json(
+            {
+              success: false,
+              error: 'Failed to estimate file price from Slant3D V2 API',
+              details: errorDetails,
+              status: response.status,
+            },
+            response.status === 400 ? 400 : 500,
+          );
+        }
+
+        const estimateData = (await response.json()) as {
+          data: {
+            publicFileServiceId: string;
+            estimatedCost: number;
+            quantity: number;
+            filamentId: string;
+            slicer?: Record<string, unknown>;
+          };
+        };
+
+        return c.json(
+          {
+            success: true,
+            message: 'File price estimated successfully',
+            data: estimateData.data,
+          },
+          200,
+        );
+      } catch (error: any) {
+        console.error('V2 estimate error:', error);
+        return c.json(
+          {
+            success: false,
+            error: 'Failed to estimate file price',
+            details: error.message,
+          },
+          500,
+        );
+      }
+    },
+  )
+  .post(
     '/v2/presigned-upload',
     describeRoute({
       summary: 'Get presigned URL for direct file upload to Slant3D',
@@ -885,6 +1064,8 @@ const printer = factory
           },
         );
 
+        console.log('confirmation Response status:', slant3DResponse);
+
         if (!slant3DResponse.ok) {
           let errorDetails: any;
           try {
@@ -1036,7 +1217,7 @@ const printer = factory
         }
 
         const file = body.file as File;
-        const ownerId = (body.ownerId as string) || 'anonymous';
+        const ownerId = 'BenH';
 
         // Validate file is STL
         const isStl =
@@ -1055,6 +1236,7 @@ const printer = factory
         // Step 1: Upload to R2 bucket
         const cleanKey = dashFilename(file.name);
         const bucket = c.env.BUCKET;
+        console.log('r2 bucket:', bucket);
 
         await bucket.put(cleanKey, file.stream(), {
           httpMetadata: { contentType: 'model/stl' },
@@ -1083,6 +1265,8 @@ const printer = factory
           },
         );
 
+        console.log('Response status:', slant3DResponse.statusText);
+
         if (!slant3DResponse.ok) {
           let errorDetails: any;
           try {
@@ -1105,6 +1289,8 @@ const printer = factory
         const slant3DData =
           (await slant3DResponse.json()) as Slant3DFileResponse;
 
+        console.log('slant3DData:', JSON.stringify(slant3DData.data.publicFileServiceId));
+
         return c.json(
           {
             success: true,
@@ -1112,7 +1298,7 @@ const printer = factory
             data: {
               local: {
                 key: cleanKey,
-                url: c.env.R2_PUBLIC_BASE_URL,
+                url: c.env.R2_PHOTO_BASE_URL,
                 name: file.name,
               },
               slant3D: {

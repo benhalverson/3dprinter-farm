@@ -4,5 +4,5 @@ SLANT_API=
 SLANT_API_V2=
 SLANT_PLATFORM_ID=
 ENCRYPTION_PASSPHRASE=
-R2_PUBLIC_BASE_URL=api.benhalverson.dev
+R2_PUBLIC_BASE_URL=uploads.benhalverson.dev
 
