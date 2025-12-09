@@ -218,7 +218,7 @@ describe('Printer V2 Routes', () => {
           method: 'POST',
           headers: expect.objectContaining({
             'Content-Type': 'application/json',
-            Authorization: 'Bearer fake-api-key-v2',
+            Authorization: `Bearer ${env.SLANT_API_V2}`,
           }),
           body: JSON.stringify({ filePlaceholder: mockFilePlaceholder }),
         })
