@@ -5,6 +5,7 @@ export function mockEnv(): Bindings {
     DB: {} as D1Database,
     JWT_SECRET: 'test-secret',
     SLANT_API: 'fake-api-key',
+    SLANT_API_V2: 'fake-api-key-v2',
     BUCKET: {} as R2Bucket,
     PHOTOS_BUCKET: {} as R2Bucket,
     STRIPE_PUBLISHABLE_KEY: 'pk_test_123',
