@@ -418,7 +418,7 @@ const product = factory
       } else if (typeof categoryId === 'number') {
         normalizedCategoryIds = [categoryId];
       }
-      const skuNumber = generateSkuNumber(data.name, data.color);
+      const skuNumber = generateSkuNumber(data.name);
 
       const stripeProduct = await stripe.products.create({
         name: data.name,
@@ -602,7 +602,7 @@ const product = factory
         } else if (typeof categoryId === 'number') {
           normalizedCategoryIds = [categoryId];
         }
-        const skuNumber = generateSkuNumber(data.name, data.color);
+        const skuNumber = generateSkuNumber(data.name);
 
         // Step 1: Create Stripe product
         const stripeProduct = await stripe.products.create({
