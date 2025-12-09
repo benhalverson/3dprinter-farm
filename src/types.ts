@@ -5,6 +5,7 @@ export type Bindings = {
   BUCKET: R2Bucket;
   PHOTOS_BUCKET: R2Bucket;
   SLANT_API: string;
+  SLANT_API_V2: string;
   SLANT_PLATFORM_ID: string;
   STRIPE_PUBLISHABLE_KEY: string;
   STRIPE_SECRET_KEY: string;
