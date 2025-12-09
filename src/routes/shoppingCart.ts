@@ -9,6 +9,7 @@ import { and, eq } from 'drizzle-orm';
 import { describeRoute } from 'hono-openapi';
 
 import { z } from 'zod';
+import Stripe from 'stripe';
 import { BASE_URL } from '../constants';
 import { addCartItemSchema, cart, productsTable, users } from '../db/schema';
 import factory from '../factory';
@@ -27,6 +28,26 @@ const updateCartItemSchema = z.object({
 const removeCartItemSchema = z.object({
   cartId: z.string(),
   itemId: z.number(),
+});
+
+const cartIdParamSchema = z.object({
+  cartId: z.string().uuid(),
+});
+
+// Schema for creating a Stripe Checkout session
+const createCheckoutSchema = z.object({
+  successUrl: z.string().url(),
+  cancelUrl: z.string().url(),
+  customerEmail: z.string().email().optional(),
+  shippingAddress: z.object({
+    firstName: z.string(),
+    lastName: z.string(),
+    address: z.string(),
+    city: z.string(),
+    state: z.string(),
+    postalCode: z.string(),
+    country: z.string().length(2).describe('ISO 3166-1 alpha-2 country code (e.g., US, CA)'),
+  }).optional(),
 });
 
 const shoppingCart = factory
@@ -656,6 +677,15 @@ const shoppingCart = factory
     describeRoute({
       description: 'Get cart items formatted for Stripe checkout',
       tags: ['Shopping Cart', 'Stripe'],
+      parameters: [
+        {
+          name: 'cartId',
+          in: 'path',
+          required: true,
+          schema: z.string().uuid(),
+          description: 'Cart identifier',
+        },
+      ],
       responses: {
         200: {
           content: {
@@ -684,6 +714,7 @@ const shoppingCart = factory
         },
       },
     }),
+    zValidator('param', cartIdParamSchema),
     async c => {
       const cartId = c.req.param('cartId');
 
@@ -713,6 +744,274 @@ const shoppingCart = factory
         return c.json({ line_items: stripeItems });
       } catch (_error) {
         return c.json({ error: 'Failed to retrieve Stripe items' }, 500);
+      }
+    },
+  )
+  .post(
+    '/cart/:cartId/checkout',
+    describeRoute({
+      description: 'Create a Stripe Checkout session for a cart',
+      tags: ['Shopping Cart', 'Stripe'],
+      parameters: [
+        {
+          name: 'cartId',
+          in: 'path',
+          required: true,
+          schema: z.string().uuid(),
+          description: 'Cart identifier',
+        },
+      ],
+      requestBody: {
+        content: {
+          'application/json': {
+            schema: createCheckoutSchema,
+          },
+        },
+        required: true,
+      },
+      responses: {
+        200: {
+          content: {
+            'application/json': {
+              schema: z.object({
+                url: z.string().url(),
+                id: z.string(),
+              }),
+            },
+          },
+          description: 'Checkout session created successfully',
+        },
+        404: {
+          content: {
+            'application/json': {
+              schema: z.object({
+                error: z.string(),
+              }),
+            },
+          },
+          description: 'Cart not found or no Stripe price IDs available',
+        },
+        500: {
+          content: {
+            'application/json': {
+              schema: z.object({
+                error: z.string(),
+                details: z.any().optional(),
+              }),
+            },
+          },
+          description: 'Failed to create Stripe checkout session',
+        },
+      },
+    }),
+    zValidator('param', cartIdParamSchema),
+    zValidator('json', createCheckoutSchema),
+    async c => {
+      const cartId = c.req.param('cartId');
+      const { successUrl, cancelUrl, customerEmail, shippingAddress } = c.req.valid('json');
+
+      try {
+        const items = await c.var.db
+          .select({
+            stripePriceId: productsTable.stripePriceId,
+            quantity: cart.quantity,
+          })
+          .from(cart)
+          .leftJoin(productsTable, eq(cart.skuNumber, productsTable.skuNumber))
+          .where(eq(cart.cartId, cartId));
+
+        const stripeLineItems = items
+          .filter(item => item.stripePriceId)
+          .map(item => ({
+            price: item.stripePriceId!,
+            quantity: item.quantity,
+          }));
+
+        if (stripeLineItems.length === 0) {
+          return c.json({ error: 'No items with Stripe price IDs found' }, 404);
+        }
+
+        const stripe = new Stripe(c.env.STRIPE_SECRET_KEY, { telemetry: false });
+
+        const sessionParams: Stripe.Checkout.SessionCreateParams = {
+          mode: 'payment',
+          line_items: stripeLineItems,
+          success_url: successUrl,
+          cancel_url: cancelUrl,
+          customer_email: customerEmail,
+          metadata: { cartId },
+        };
+
+        // Add shipping address if provided
+        if (shippingAddress) {
+          sessionParams.shipping_address_collection = {
+            allowed_countries: [shippingAddress.country],
+          };
+          sessionParams.billing_address_collection = 'required';
+        }
+
+        const session = await stripe.checkout.sessions.create(sessionParams);
+
+        return c.json({ url: session.url!, id: session.id });
+      } catch (error: any) {
+        console.error('Stripe checkout error:', error);
+        return c.json(
+          {
+            error: 'Failed to create checkout session',
+            details: error?.message,
+          },
+          500,
+        );
+      }
+    },
+  )
+  .post(
+    '/cart/:cartId/payment-intent',
+    describeRoute({
+      description: 'Create a Stripe Payment Intent for embedded checkout',
+      tags: ['Shopping Cart', 'Stripe'],
+      parameters: [
+        {
+          name: 'cartId',
+          in: 'path',
+          required: true,
+          schema: z.string().uuid(),
+          description: 'Cart identifier',
+        },
+      ],
+      requestBody: {
+        content: {
+          'application/json': {
+            schema: z.object({
+              customerEmail: z.string().email().optional(),
+              shippingAddress: z.object({
+                firstName: z.string(),
+                lastName: z.string(),
+                address: z.string(),
+                city: z.string(),
+                state: z.string(),
+                postalCode: z.string(),
+                country: z.string().length(2),
+              }).optional(),
+            }),
+          },
+        },
+      },
+      responses: {
+        200: {
+          content: {
+            'application/json': {
+              schema: z.object({
+                clientSecret: z.string(),
+                amount: z.number(),
+                currency: z.string(),
+              }),
+            },
+          },
+          description: 'Payment Intent created successfully',
+        },
+        404: {
+          content: {
+            'application/json': {
+              schema: z.object({
+                error: z.string(),
+              }),
+            },
+          },
+          description: 'Cart not found or empty',
+        },
+        500: {
+          content: {
+            'application/json': {
+              schema: z.object({
+                error: z.string(),
+                details: z.any().optional(),
+              }),
+            },
+          },
+          description: 'Failed to create Payment Intent',
+        },
+      },
+    }),
+    zValidator('param', cartIdParamSchema),
+    async c => {
+      const cartId = c.req.param('cartId');
+      const body = await c.req.json();
+      const { customerEmail, shippingAddress } = body;
+
+      try {
+        // Get cart items with prices
+        const items = await c.var.db
+          .select({
+            stripePriceId: productsTable.stripePriceId,
+            quantity: cart.quantity,
+            price: productsTable.price,
+            name: productsTable.name,
+          })
+          .from(cart)
+          .leftJoin(productsTable, eq(cart.skuNumber, productsTable.skuNumber))
+          .where(eq(cart.cartId, cartId));
+
+        if (items.length === 0) {
+          return c.json({ error: 'Cart is empty' }, 404);
+        }
+
+        // Calculate total amount (in cents)
+        const totalAmount = items.reduce(
+          (sum, item) => sum + (item.price || 0) * item.quantity,
+          0,
+        );
+
+        if (totalAmount <= 0) {
+          return c.json({ error: 'Cart total must be greater than zero' }, 400);
+        }
+
+        const stripe = new Stripe(c.env.STRIPE_SECRET_KEY, { telemetry: false });
+
+        // Create Payment Intent
+        const paymentIntentParams: Stripe.PaymentIntentCreateParams = {
+          amount: Math.round(totalAmount * 100), // Convert to cents
+          currency: 'usd',
+          automatic_payment_methods: {
+            enabled: true,
+          },
+          metadata: {
+            cartId,
+            ...(customerEmail && { customerEmail }),
+          },
+          description: `Order for ${items.length} item(s)`,
+        };
+
+        // Add shipping if provided
+        if (shippingAddress) {
+          paymentIntentParams.shipping = {
+            name: `${shippingAddress.firstName} ${shippingAddress.lastName}`,
+            address: {
+              line1: shippingAddress.address,
+              city: shippingAddress.city,
+              state: shippingAddress.state,
+              postal_code: shippingAddress.postalCode,
+              country: shippingAddress.country,
+            },
+          };
+        }
+
+        const paymentIntent = await stripe.paymentIntents.create(paymentIntentParams);
+
+        return c.json({
+          clientSecret: paymentIntent.client_secret!,
+          amount: totalAmount,
+          currency: 'usd',
+        });
+      } catch (error: any) {
+        console.error('Payment Intent creation error:', error);
+        return c.json(
+          {
+            error: 'Failed to create Payment Intent',
+            details: error?.message,
+          },
+          500,
+        );
       }
     },
   );

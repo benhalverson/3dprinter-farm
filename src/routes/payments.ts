@@ -223,8 +223,8 @@ const paymentsRouter = factory
       }
 
       try {
-        // Verify webhook signature
-        const event = stripe.webhooks.constructEvent(
+        // Verify webhook signature using async method for Cloudflare Workers
+        const event = await stripe.webhooks.constructEventAsync(
           body,
           sig,
           c.env.STRIPE_WEBHOOK_SECRET,
