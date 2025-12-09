@@ -5,6 +5,7 @@ export type Bindings = {
   BUCKET: R2Bucket;
   PHOTOS_BUCKET: R2Bucket;
   SLANT_API: string;
+  SLANT_API_V2: string;
   SLANT_PLATFORM_ID: string;
   STRIPE_PUBLISHABLE_KEY: string;
   STRIPE_SECRET_KEY: string;
@@ -23,6 +24,8 @@ export type Bindings = {
   MAILJET_SENDER_EMAIL: string;
   MAILJET_SENDER_NAME: string;
   ENCRYPTION_PASSPHRASE: string;
+  R2_PUBLIC_BASE_URL: string;
+  R2_PHOTO_BASE_URL: string;
 };
 
 export interface SliceResponse {
