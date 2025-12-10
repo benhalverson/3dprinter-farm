@@ -883,6 +883,7 @@ const shoppingCart = factory
         content: {
           'application/json': {
             schema: z.object({
+              userId: z.number().optional(),
               customerEmail: z.string().email().optional(),
               shippingAddress: z.object({
                 firstName: z.string(),
@@ -933,11 +934,40 @@ const shoppingCart = factory
         },
       },
     }),
+    authMiddleware,
     zValidator('param', cartIdParamSchema),
     async c => {
       const cartId = c.req.param('cartId');
-      const body = await c.req.json();
-      const { customerEmail, shippingAddress } = body;
+      let body: any = {};
+      try {
+        body = await c.req.json();
+      } catch {
+        body = {};
+      }
+      let { userId, customerEmail, shippingAddress } = body;
+
+      console.log('POST /cart/:cartId/payment-intent called', {
+        cartId,
+        bodyUserId: body.userId,
+        bodyCustomerEmail: body.customerEmail,
+      });
+
+      // If userId not provided, extract from authenticated JWT
+      if (!userId) {
+        const jwtPayload = c.get('jwtPayload') as any;
+        console.log('jwtPayload available:', !!jwtPayload, jwtPayload);
+        if (jwtPayload?.id) {
+          userId = jwtPayload.id;
+          if (!customerEmail) {
+            customerEmail = jwtPayload.email;
+          }
+          console.log('✓ Extracted authenticated user from JWT:', { userId, customerEmail });
+        } else {
+          console.warn('✗ No jwtPayload or missing id in payload');
+        }
+      } else {
+        console.log('✓ userId already provided in body:', userId);
+      }
 
       try {
         // Get cart items with prices
@@ -977,6 +1007,7 @@ const shoppingCart = factory
           },
           metadata: {
             cartId,
+            ...(userId && { userId: String(userId) }),
             ...(customerEmail && { customerEmail }),
           },
           description: `Order for ${items.length} item(s)`,
