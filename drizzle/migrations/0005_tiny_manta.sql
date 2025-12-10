@@ -1,0 +1,1 @@
+ALTER TABLE `products` ADD `public_file_service_id` text;
