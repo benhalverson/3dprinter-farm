@@ -17,14 +17,26 @@ export const capturedInserts: unknown[] = [];
 
 export function mockDrizzle() {
   vi.mock('drizzle-orm/d1', () => {
+    const whereResult = {
+      all: mockAll,
+      get: vi.fn().mockResolvedValue(undefined),
+      orderBy: vi.fn(() => ({
+        all: mockAll,
+      })),
+    };
+
     return {
       drizzle: vi.fn(() => ({
         select: () => ({
           from: () => ({
-            where: mockWhere,
+            where: mockWhere.mockReturnValue(whereResult),
             all: mockAll,
+            get: vi.fn().mockResolvedValue(undefined),
             leftJoin: () => ({
-              where: mockWhere,
+              where: mockWhere.mockReturnValue(whereResult),
+            }),
+            innerJoin: () => ({
+              where: mockWhere.mockReturnValue(whereResult),
             }),
           }),
         }),

@@ -941,7 +941,8 @@ const product = factory
       const response = await c.var.db
         .select()
         .from(productsTable)
-        .where(eq(productsTable.id, parsedData.id));
+        .where(eq(productsTable.id, parsedData.id))
+        .all();
       const rawProduct = response[0];
 
       if (!rawProduct) {
