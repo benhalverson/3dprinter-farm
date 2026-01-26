@@ -7,15 +7,16 @@ export const FileUploadSchema = z.object({
   file: z
     .instanceof(File)
     .refine(
-      (file) => file.type === 'model/stl' || file.name.toLowerCase().endsWith('.stl'),
+      file =>
+        file.type === 'model/stl' || file.name.toLowerCase().endsWith('.stl'),
       {
         message: 'File must be a .stl file',
-      }
+      },
     )
-    .refine((file) => file.size > 0, {
+    .refine(file => file.size > 0, {
       message: 'File is empty',
     })
-    .refine((file) => file.size < 100 * 1024 * 1024, {
+    .refine(file => file.size < 100 * 1024 * 1024, {
       message: 'File is too large (max 100MB)',
     })
     .describe('STL file to upload'),

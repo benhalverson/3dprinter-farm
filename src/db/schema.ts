@@ -363,7 +363,9 @@ export const addCartItemSchema = z.object({
 // Table for storing uploaded STL files with estimates from Slant3D
 export const uploadedFilesTable = sqliteTable('uploaded_files', {
   id: integer('id').primaryKey({ autoIncrement: true }),
-  userId: integer('user_id').references(() => users.id, { onDelete: 'cascade' }),
+  userId: integer('user_id').references(() => users.id, {
+    onDelete: 'cascade',
+  }),
   publicFileServiceId: text('public_file_service_id').notNull().unique(), // Slant3D UUID
   fileName: text('file_name').notNull(),
   fileURL: text('file_url').notNull(), // Slant3D file URL
@@ -377,11 +379,17 @@ export const uploadedFilesTable = sqliteTable('uploaded_files', {
   surfaceArea: real('surface_area'), // square cm
 
   // Estimate data (default PLA BLACK, quantity 1)
-  defaultFilamentId: text('default_filament_id').default('76fe1f79-3f1e-43e4-b8f4-61159de5b93c'), // PLA BLACK
+  defaultFilamentId: text('default_filament_id').default(
+    '76fe1f79-3f1e-43e4-b8f4-61159de5b93c',
+  ), // PLA BLACK
   estimatedCost: real('estimated_cost'), // USD
   estimatedQuantity: integer('estimated_quantity').default(1),
 
   // Timestamps
-  createdAt: integer('created_at', { mode: 'timestamp' }).notNull().default(sql`(unixepoch())`),
-  updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull().default(sql`(unixepoch())`),
+  createdAt: integer('created_at', { mode: 'timestamp' })
+    .notNull()
+    .default(sql`(unixepoch())`),
+  updatedAt: integer('updated_at', { mode: 'timestamp' })
+    .notNull()
+    .default(sql`(unixepoch())`),
 });

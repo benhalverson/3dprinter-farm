@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import app from '../../src/index';
-import { mockEnv } from '../mocks/env';
 import type { Bindings } from '../../src/types';
+import { mockEnv } from '../mocks/env';
 
 describe('Printer V2 Routes', () => {
   let env: Bindings;
@@ -238,7 +238,9 @@ describe('Printer V2 Routes', () => {
 
       expect(response.status).toBe(400);
       expect(data.success).toBe(false);
-      expect(data.error).toBe('Failed to estimate file price from Slant3D V2 API');
+      expect(data.error).toBe(
+        'Failed to estimate file price from Slant3D V2 API',
+      );
       expect(data.details).toEqual(errorDetails);
       expect(data.status).toBe(400);
     });
@@ -271,7 +273,9 @@ describe('Printer V2 Routes', () => {
 
       expect(response.status).toBe(500);
       expect(data.success).toBe(false);
-      expect(data.error).toBe('Failed to estimate file price from Slant3D V2 API');
+      expect(data.error).toBe(
+        'Failed to estimate file price from Slant3D V2 API',
+      );
       expect(data.details).toEqual(errorDetails);
       expect(data.status).toBe(500);
     });
@@ -322,7 +326,9 @@ describe('Printer V2 Routes', () => {
 
       expect(response.status).toBe(500);
       expect(data.success).toBe(false);
-      expect(data.error).toBe('Failed to estimate file price from Slant3D V2 API');
+      expect(data.error).toBe(
+        'Failed to estimate file price from Slant3D V2 API',
+      );
       expect(data.details).toBe('Not valid JSON');
     });
 

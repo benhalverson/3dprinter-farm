@@ -6,8 +6,8 @@
  * Example: node test-presigned-upload.js ./test-cube.stl
  */
 
-import fs from 'fs';
-import path from 'path';
+import fs from 'node:fs';
+import path from 'node:path';
 
 // Configuration
 const API_BASE_URL = process.env.API_BASE_URL || 'http://localhost:8787';
@@ -47,7 +47,9 @@ async function main() {
       console.log('Example: node test-presigned-upload.js ./models/dragon.stl');
       console.log('');
       console.log('You can download a sample STL file:');
-      console.log('  curl -o test-cube.stl https://raw.githubusercontent.com/3DprintFIT/hedgehog/master/stl/calibration_cube.stl');
+      console.log(
+        '  curl -o test-cube.stl https://raw.githubusercontent.com/3DprintFIT/hedgehog/master/stl/calibration_cube.stl',
+      );
       process.exit(1);
     }
 
@@ -58,14 +60,17 @@ async function main() {
     log('yellow', '\nStep 1: Request presigned upload URL');
     console.log(`POST ${API_BASE_URL}/v2/presigned-upload\n`);
 
-    const presignedResponse = await fetch(`${API_BASE_URL}/v2/presigned-upload`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        fileName: fileName,
-        ownerId: OWNER_ID,
-      }),
-    });
+    const presignedResponse = await fetch(
+      `${API_BASE_URL}/v2/presigned-upload`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          fileName: fileName,
+          ownerId: OWNER_ID,
+        }),
+      },
+    );
 
     const presignedData = await presignedResponse.json();
     log('green', 'Response:');
@@ -92,7 +97,10 @@ async function main() {
     });
 
     if (uploadResponse.ok) {
-      log('green', `✓ File uploaded successfully (HTTP ${uploadResponse.status})`);
+      log(
+        'green',
+        `✓ File uploaded successfully (HTTP ${uploadResponse.status})`,
+      );
     } else {
       log('red', `Error: Upload failed (HTTP ${uploadResponse.status})`);
       const errorText = await uploadResponse.text();
@@ -121,7 +129,7 @@ async function main() {
     }
 
     const { publicFileServiceId, fileURL, STLMetrics } = confirmData.data;
-		console.log('uploaded publicFileServiceId:', publicFileServiceId);
+    console.log('uploaded publicFileServiceId:', publicFileServiceId);
     log('green', '\n✓ Upload confirmed');
     log('blue', `Public File Service ID: ${publicFileServiceId}`);
     log('blue', `File URL: ${fileURL}`);
@@ -215,7 +223,6 @@ async function main() {
   })
 });`);
     console.log('');
-
   } catch (error) {
     log('red', `\nError: ${error.message}`);
     console.error(error);

@@ -285,7 +285,14 @@ const paymentsRouter = factory
             const passphrase = c.env.ENCRYPTION_PASSPHRASE;
             let userRow: typeof users.$inferSelect | undefined;
 
-            console.log('Attempting to load user profile. userId:', userId, 'customerEmail:', customerEmail, 'receiptEmail:', paymentIntent.receipt_email);
+            console.log(
+              'Attempting to load user profile. userId:',
+              userId,
+              'customerEmail:',
+              customerEmail,
+              'receiptEmail:',
+              paymentIntent.receipt_email,
+            );
 
             // Try to load user by userId first
             if (userId) {
@@ -296,7 +303,10 @@ const paymentsRouter = factory
                 .where(eq(users.id, parseInt(userId, 10)));
               userRow = found;
               if (userRow) {
-                console.log('✓ User found by userId:', { id: userRow.id, email: userRow.email });
+                console.log('✓ User found by userId:', {
+                  id: userRow.id,
+                  email: userRow.email,
+                });
               } else {
                 console.warn('✗ User not found for userId:', userId);
               }
@@ -304,7 +314,8 @@ const paymentsRouter = factory
 
             // If no user found by ID, try by email
             if (!userRow) {
-              const emailToLookup = customerEmail || paymentIntent.receipt_email;
+              const emailToLookup =
+                customerEmail || paymentIntent.receipt_email;
               if (emailToLookup) {
                 console.log('Looking up user by email:', emailToLookup);
                 const [found] = await db
@@ -313,7 +324,10 @@ const paymentsRouter = factory
                   .where(eq(users.email, emailToLookup));
                 userRow = found;
                 if (userRow) {
-                  console.log('✓ User found by email:', { id: userRow.id, email: userRow.email });
+                  console.log('✓ User found by email:', {
+                    id: userRow.id,
+                    email: userRow.email,
+                  });
                 } else {
                   console.warn('✗ User not found for email:', emailToLookup);
                 }
@@ -330,7 +344,10 @@ const paymentsRouter = factory
             let state = 'CA';
             let zipCode = '00000';
             let phone = '0000000000';
-            let email = customerEmail || paymentIntent.receipt_email || 'guest@example.com';
+            let email =
+              customerEmail ||
+              paymentIntent.receipt_email ||
+              'guest@example.com';
 
             // Decrypt and load user profile if found
             if (userRow) {
@@ -363,7 +380,9 @@ const paymentsRouter = factory
                   if (isInWebApiEncryptionFormat(value)) {
                     const dec = await ckDecrypt(value, secretKey);
                     if (!dec.success)
-                      throw new Error(`cipher-kit decrypt error: ${dec.error.message}`);
+                      throw new Error(
+                        `cipher-kit decrypt error: ${dec.error.message}`,
+                      );
                     return dec.result as string;
                   }
                   // Legacy format (salt:iv:cipher)
@@ -385,11 +404,17 @@ const paymentsRouter = factory
                 const secretKey = await getSecretKey(passphrase);
 
                 firstName =
-                  (await decryptValue(userRow.firstName, passphrase, secretKey)) ||
-                  firstName;
+                  (await decryptValue(
+                    userRow.firstName,
+                    passphrase,
+                    secretKey,
+                  )) || firstName;
                 lastName =
-                  (await decryptValue(userRow.lastName, passphrase, secretKey)) ||
-                  lastName;
+                  (await decryptValue(
+                    userRow.lastName,
+                    passphrase,
+                    secretKey,
+                  )) || lastName;
                 shippingAddress =
                   (await decryptValue(
                     userRow.shippingAddress,
@@ -397,21 +422,23 @@ const paymentsRouter = factory
                     secretKey,
                   )) || shippingAddress;
                 city =
-                  (await decryptValue(userRow.city, passphrase, secretKey)) || city;
+                  (await decryptValue(userRow.city, passphrase, secretKey)) ||
+                  city;
                 state =
                   (await decryptValue(userRow.state, passphrase, secretKey)) ||
                   state;
                 zipCode =
-                  (await decryptValue(userRow.zipCode, passphrase, secretKey)) ||
-                  zipCode;
+                  (await decryptValue(
+                    userRow.zipCode,
+                    passphrase,
+                    secretKey,
+                  )) || zipCode;
                 const decryptedPhone = await decryptValue(
                   userRow.phone,
                   passphrase,
                   secretKey,
                 );
                 phone = normalizePhone(decryptedPhone || phone);
-
-          
               } catch (e) {
                 console.error('Error decrypting user profile:', e);
                 // Use defaults if decryption fails
@@ -512,7 +539,10 @@ const paymentsRouter = factory
                 errorText,
               );
               // Store failed order for manual review/retry
-              console.error('Failed order data:', JSON.stringify(orderDataArray, null, 2));
+              console.error(
+                'Failed order data:',
+                JSON.stringify(orderDataArray, null, 2),
+              );
               return c.json({ error: 'Order creation failed' }, 502);
             }
 
@@ -690,7 +720,10 @@ const paymentsRouter = factory
                 await response.text(),
               );
               // Store failed order for manual review/retry
-              console.error('Failed order data:', JSON.stringify(orderDataArray, null, 2));
+              console.error(
+                'Failed order data:',
+                JSON.stringify(orderDataArray, null, 2),
+              );
               return c.json({ error: 'Order creation failed' }, 502);
             }
 

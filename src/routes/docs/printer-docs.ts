@@ -1,3 +1,5 @@
+import { resolver } from 'hono-openapi/zod';
+import { z } from 'zod';
 import {
   ColorErrorSchema,
   ColorSchema,
@@ -9,14 +11,12 @@ import {
   FilamentV2ErrorSchema,
   FilamentV2ResponseSchema,
   ListItemSchema,
+  type OpenAPISchema,
   PresignedUploadResponseSchema,
-  UploadResponseSchema,
   UploadedFileResponseSchema,
   UploadedFilesListResponseSchema,
-  type OpenAPISchema,
+  UploadResponseSchema,
 } from '../schemas/printer-schemas';
-import { resolver } from 'hono-openapi/zod';
-import { z } from 'zod';
 
 // List 3D models documentation
 export const listModelsDoc = {
@@ -50,9 +50,11 @@ export const uploadFileDoc = {
   requestBody: {
     content: {
       'multipart/form-data': {
-        schema: resolver(z.object({
-          file: z.instanceof(File).describe('The file to upload'),
-        })) as unknown as OpenAPISchema,
+        schema: resolver(
+          z.object({
+            file: z.instanceof(File).describe('The file to upload'),
+          }),
+        ) as unknown as OpenAPISchema,
         example: {
           file: 'dragon-model.stl',
         },
@@ -152,10 +154,12 @@ export const getColorsDoc = {
     500: {
       content: {
         'application/json': {
-          schema: resolver(z.object({
-            error: z.string(),
-            details: z.unknown(),
-          })) as unknown as OpenAPISchema,
+          schema: resolver(
+            z.object({
+              error: z.string(),
+              details: z.unknown(),
+            }),
+          ) as unknown as OpenAPISchema,
         },
       },
       description: 'Failed to retrieve colors',
@@ -265,37 +269,45 @@ export const estimateV2Doc = {
   requestBody: {
     content: {
       'application/json': {
-        schema: resolver(z.object({
-          publicFileServiceId: z
-            .string()
-            .uuid()
-            .describe('UUID of the file returned from /v2/upload or /v2/confirm'),
-          options: z
-            .object({
-              filamentId: z
-                .string()
-                .uuid()
-                .optional()
-                .describe('UUID of the filament (defaults to PLA BLACK if not provided)'),
-              quantity: z
-                .number()
-                .int()
-                .positive()
-                .optional()
-                .describe('Number of copies to print (default: 1)'),
-              slicer: z
-                .object({
-                  support_enabled: z
-                    .boolean()
-                    .optional()
-                    .describe('Enable support structures (default: true)'),
-                })
-                .optional()
-                .describe('Slicer configuration options'),
-            })
-            .optional()
-            .describe('Options object containing filament, quantity, and slicer settings'),
-        })) as unknown as OpenAPISchema,
+        schema: resolver(
+          z.object({
+            publicFileServiceId: z
+              .string()
+              .uuid()
+              .describe(
+                'UUID of the file returned from /v2/upload or /v2/confirm',
+              ),
+            options: z
+              .object({
+                filamentId: z
+                  .string()
+                  .uuid()
+                  .optional()
+                  .describe(
+                    'UUID of the filament (defaults to PLA BLACK if not provided)',
+                  ),
+                quantity: z
+                  .number()
+                  .int()
+                  .positive()
+                  .optional()
+                  .describe('Number of copies to print (default: 1)'),
+                slicer: z
+                  .object({
+                    support_enabled: z
+                      .boolean()
+                      .optional()
+                      .describe('Enable support structures (default: true)'),
+                  })
+                  .optional()
+                  .describe('Slicer configuration options'),
+              })
+              .optional()
+              .describe(
+                'Options object containing filament, quantity, and slicer settings',
+              ),
+          }),
+        ) as unknown as OpenAPISchema,
         example: {
           publicFileServiceId: 'a1b2c3d4-e5f6-7890-abcd-ef1234567890',
           options: {
@@ -346,11 +358,13 @@ export const estimateV2Doc = {
     500: {
       content: {
         'application/json': {
-          schema: resolver(z.object({
-            success: z.boolean(),
-            error: z.string(),
-            details: z.unknown(),
-          })) as unknown as OpenAPISchema,
+          schema: resolver(
+            z.object({
+              success: z.boolean(),
+              error: z.string(),
+              details: z.unknown(),
+            }),
+          ) as unknown as OpenAPISchema,
         },
       },
       description: 'Estimation failed',
@@ -367,13 +381,15 @@ export const presignedUploadDoc = {
   requestBody: {
     content: {
       'application/json': {
-        schema: resolver(z.object({
-          fileName: z.string().describe('Name of the STL file to upload'),
-          ownerId: z
-            .string()
-            .optional()
-            .describe('Your application user ID for tracking'),
-        })) as unknown as OpenAPISchema,
+        schema: resolver(
+          z.object({
+            fileName: z.string().describe('Name of the STL file to upload'),
+            ownerId: z
+              .string()
+              .optional()
+              .describe('Your application user ID for tracking'),
+          }),
+        ) as unknown as OpenAPISchema,
         example: {
           fileName: 'dragon-model.stl',
           ownerId: 'user_123456',
@@ -386,12 +402,15 @@ export const presignedUploadDoc = {
     200: {
       content: {
         'application/json': {
-          schema: resolver(PresignedUploadResponseSchema) as unknown as OpenAPISchema,
+          schema: resolver(
+            PresignedUploadResponseSchema,
+          ) as unknown as OpenAPISchema,
           example: {
             success: true,
             message: 'Presigned URL generated successfully',
             data: {
-              presignedUrl: 'https://s3.amazonaws.com/slant3d-uploads/dragon-model.stl?signature=...',
+              presignedUrl:
+                'https://s3.amazonaws.com/slant3d-uploads/dragon-model.stl?signature=...',
               key: 'uploads/user_123456/dragon-model.stl',
               filePlaceholder: {
                 publicFileServiceId: 'a1b2c3d4-e5f6-7890-abcd-ef1234567890',
@@ -423,11 +442,13 @@ export const presignedUploadDoc = {
     500: {
       content: {
         'application/json': {
-          schema: resolver(z.object({
-            success: z.boolean(),
-            error: z.string(),
-            details: z.unknown(),
-          })) as unknown as OpenAPISchema,
+          schema: resolver(
+            z.object({
+              success: z.boolean(),
+              error: z.string(),
+              details: z.unknown(),
+            }),
+          ) as unknown as OpenAPISchema,
         },
       },
       description: 'Failed to generate presigned URL',
@@ -444,21 +465,23 @@ export const confirmUploadDoc = {
   requestBody: {
     content: {
       'application/json': {
-        schema: resolver(z.object({
-          filePlaceholder: z
-            .object({
-              publicFileServiceId: z.string(),
-              name: z.string(),
-              ownerId: z.string(),
-              platformId: z.string(),
-              type: z.string(),
-              createdAt: z.string(),
-              updatedAt: z.string(),
-            })
-            .describe(
-              'The exact filePlaceholder object returned from /v2/presigned-upload',
-            ),
-        })) as unknown as OpenAPISchema,
+        schema: resolver(
+          z.object({
+            filePlaceholder: z
+              .object({
+                publicFileServiceId: z.string(),
+                name: z.string(),
+                ownerId: z.string(),
+                platformId: z.string(),
+                type: z.string(),
+                createdAt: z.string(),
+                updatedAt: z.string(),
+              })
+              .describe(
+                'The exact filePlaceholder object returned from /v2/presigned-upload',
+              ),
+          }),
+        ) as unknown as OpenAPISchema,
         example: {
           filePlaceholder: {
             publicFileServiceId: 'a1b2c3d4-e5f6-7890-abcd-ef1234567890',
@@ -478,14 +501,17 @@ export const confirmUploadDoc = {
     200: {
       content: {
         'application/json': {
-          schema: resolver(ConfirmUploadResponseSchema) as unknown as OpenAPISchema,
+          schema: resolver(
+            ConfirmUploadResponseSchema,
+          ) as unknown as OpenAPISchema,
           example: {
             success: true,
             message: 'Upload confirmed and file processed successfully',
             data: {
               publicFileServiceId: 'a1b2c3d4-e5f6-7890-abcd-ef1234567890',
               name: 'dragon-model',
-              fileURL: 'https://s3.amazonaws.com/slant3d-files/dragon-model.stl?signature=...',
+              fileURL:
+                'https://s3.amazonaws.com/slant3d-files/dragon-model.stl?signature=...',
               STLMetrics: {
                 x: 120.5,
                 y: 85.3,
@@ -493,7 +519,8 @@ export const confirmUploadDoc = {
                 weight: 15.8,
                 volume: 45230.5,
                 surfaceArea: 12450.2,
-                imageURL: 'https://s3.amazonaws.com/slant3d-previews/dragon-model.png',
+                imageURL:
+                  'https://s3.amazonaws.com/slant3d-previews/dragon-model.png',
               },
             },
           },
@@ -516,11 +543,13 @@ export const confirmUploadDoc = {
     500: {
       content: {
         'application/json': {
-          schema: resolver(z.object({
-            success: z.boolean(),
-            error: z.string(),
-            details: z.unknown(),
-          })) as unknown as OpenAPISchema,
+          schema: resolver(
+            z.object({
+              success: z.boolean(),
+              error: z.string(),
+              details: z.unknown(),
+            }),
+          ) as unknown as OpenAPISchema,
         },
       },
       description: 'Confirmation failed',
@@ -537,9 +566,11 @@ export const v2UploadDoc = {
   requestBody: {
     content: {
       'multipart/form-data': {
-        schema: resolver(z.object({
-          file: z.instanceof(File).describe('STL file to upload'),
-        })) as unknown as OpenAPISchema,
+        schema: resolver(
+          z.object({
+            file: z.instanceof(File).describe('STL file to upload'),
+          }),
+        ) as unknown as OpenAPISchema,
         example: {
           file: 'dragon-model.stl',
         },
@@ -551,30 +582,34 @@ export const v2UploadDoc = {
     201: {
       content: {
         'application/json': {
-          schema: resolver(z.object({
-            success: z.boolean(),
-            message: z.string(),
-            data: z.object({
-              id: z.number(),
-              publicFileServiceId: z.string(),
-              fileName: z.string(),
-              fileURL: z.string(),
-              STLMetrics: z.object({
-                dimensionX: z.number().optional(),
-                dimensionY: z.number().optional(),
-                dimensionZ: z.number().optional(),
-                volume: z.number().optional(),
-                weight: z.number().optional(),
-                surfaceArea: z.number().optional(),
-              }).optional(),
-              estimate: z.object({
-                filamentId: z.string(),
-                filamentName: z.string(),
-                quantity: z.number(),
-                cost: z.number().nullable(),
+          schema: resolver(
+            z.object({
+              success: z.boolean(),
+              message: z.string(),
+              data: z.object({
+                id: z.number(),
+                publicFileServiceId: z.string(),
+                fileName: z.string(),
+                fileURL: z.string(),
+                STLMetrics: z
+                  .object({
+                    dimensionX: z.number().optional(),
+                    dimensionY: z.number().optional(),
+                    dimensionZ: z.number().optional(),
+                    volume: z.number().optional(),
+                    weight: z.number().optional(),
+                    surfaceArea: z.number().optional(),
+                  })
+                  .optional(),
+                estimate: z.object({
+                  filamentId: z.string(),
+                  filamentName: z.string(),
+                  quantity: z.number(),
+                  cost: z.number().nullable(),
+                }),
               }),
             }),
-          })) as unknown as OpenAPISchema,
+          ) as unknown as OpenAPISchema,
           example: {
             success: true,
             message: 'File uploaded and estimate saved successfully',
@@ -582,7 +617,8 @@ export const v2UploadDoc = {
               id: 1,
               publicFileServiceId: 'a1b2c3d4-e5f6-7890-abcd-ef1234567890',
               fileName: 'dragon-model.stl',
-              fileURL: 'https://s3.amazonaws.com/slant3d-files/dragon-model.stl?signature=...',
+              fileURL:
+                'https://s3.amazonaws.com/slant3d-files/dragon-model.stl?signature=...',
               STLMetrics: {
                 dimensionX: 120.5,
                 dimensionY: 85.3,
@@ -595,7 +631,7 @@ export const v2UploadDoc = {
                 filamentId: '76fe1f79-3f1e-43e4-b8f4-61159de5b93c',
                 filamentName: 'PLA BLACK',
                 quantity: 1,
-                cost: 12.50,
+                cost: 12.5,
               },
             },
           },
@@ -618,11 +654,13 @@ export const v2UploadDoc = {
     500: {
       content: {
         'application/json': {
-          schema: resolver(z.object({
-            success: z.boolean(),
-            error: z.string(),
-            details: z.unknown(),
-          })) as unknown as OpenAPISchema,
+          schema: resolver(
+            z.object({
+              success: z.boolean(),
+              error: z.string(),
+              details: z.unknown(),
+            }),
+          ) as unknown as OpenAPISchema,
         },
       },
       description: 'Upload or registration failed',
@@ -640,7 +678,9 @@ export const getUploadedFileDoc = {
     200: {
       content: {
         'application/json': {
-          schema: resolver(UploadedFileResponseSchema) as unknown as OpenAPISchema,
+          schema: resolver(
+            UploadedFileResponseSchema,
+          ) as unknown as OpenAPISchema,
           example: {
             success: true,
             message: 'File retrieved successfully',
@@ -648,7 +688,8 @@ export const getUploadedFileDoc = {
               id: 1,
               publicFileServiceId: 'a1b2c3d4-e5f6-7890-abcd-ef1234567890',
               fileName: 'dragon-model.stl',
-              fileURL: 'https://s3.amazonaws.com/slant3d-files/dragon-model.stl',
+              fileURL:
+                'https://s3.amazonaws.com/slant3d-files/dragon-model.stl',
               dimensionX: 120.5,
               dimensionY: 85.3,
               dimensionZ: 45.2,
@@ -656,7 +697,7 @@ export const getUploadedFileDoc = {
               weight: 15.8,
               surfaceArea: 12450.2,
               defaultFilamentId: '76fe1f79-3f1e-43e4-b8f4-61159de5b93c',
-              estimatedCost: 12.50,
+              estimatedCost: 12.5,
               estimatedQuantity: 1,
               createdAt: 1705962000,
               updatedAt: 1705962000,
@@ -692,13 +733,16 @@ export const getUploadedFileDoc = {
 // Get all uploaded files documentation
 export const getUploadedFilesDoc = {
   summary: 'Get all uploaded files',
-  description: 'Retrieve a list of all uploaded STL files for the authenticated user with their estimates.',
+  description:
+    'Retrieve a list of all uploaded STL files for the authenticated user with their estimates.',
   tags: ['Printer'],
   responses: {
     200: {
       content: {
         'application/json': {
-          schema: resolver(UploadedFilesListResponseSchema) as unknown as OpenAPISchema,
+          schema: resolver(
+            UploadedFilesListResponseSchema,
+          ) as unknown as OpenAPISchema,
           example: {
             success: true,
             message: 'Files retrieved successfully',
@@ -708,7 +752,8 @@ export const getUploadedFilesDoc = {
                 id: 1,
                 publicFileServiceId: 'a1b2c3d4-e5f6-7890-abcd-ef1234567890',
                 fileName: 'dragon-model.stl',
-                fileURL: 'https://s3.amazonaws.com/slant3d-files/dragon-model.stl',
+                fileURL:
+                  'https://s3.amazonaws.com/slant3d-files/dragon-model.stl',
                 dimensionX: 120.5,
                 dimensionY: 85.3,
                 dimensionZ: 45.2,
@@ -716,7 +761,7 @@ export const getUploadedFilesDoc = {
                 weight: 15.8,
                 surfaceArea: 12450.2,
                 defaultFilamentId: '76fe1f79-3f1e-43e4-b8f4-61159de5b93c',
-                estimatedCost: 12.50,
+                estimatedCost: 12.5,
                 estimatedQuantity: 1,
                 createdAt: 1705962000,
                 updatedAt: 1705962000,
@@ -725,7 +770,8 @@ export const getUploadedFilesDoc = {
                 id: 2,
                 publicFileServiceId: 'b2c3d4e5-f6g7-8901-bcde-fg2345678901',
                 fileName: 'cube-model.stl',
-                fileURL: 'https://s3.amazonaws.com/slant3d-files/cube-model.stl',
+                fileURL:
+                  'https://s3.amazonaws.com/slant3d-files/cube-model.stl',
                 dimensionX: 50.0,
                 dimensionY: 50.0,
                 dimensionZ: 50.0,

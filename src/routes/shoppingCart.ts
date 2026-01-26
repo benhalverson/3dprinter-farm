@@ -7,9 +7,8 @@ import {
 } from 'cipher-kit/web-api';
 import { and, eq } from 'drizzle-orm';
 import { describeRoute } from 'hono-openapi';
-
-import { z } from 'zod';
 import Stripe from 'stripe';
+import { z } from 'zod';
 import { BASE_URL } from '../constants';
 import { addCartItemSchema, cart, productsTable, users } from '../db/schema';
 import factory from '../factory';
@@ -39,15 +38,20 @@ const createCheckoutSchema = z.object({
   successUrl: z.string().url(),
   cancelUrl: z.string().url(),
   customerEmail: z.string().email().optional(),
-  shippingAddress: z.object({
-    firstName: z.string(),
-    lastName: z.string(),
-    address: z.string(),
-    city: z.string(),
-    state: z.string(),
-    postalCode: z.string(),
-    country: z.string().length(2).describe('ISO 3166-1 alpha-2 country code (e.g., US, CA)'),
-  }).optional(),
+  shippingAddress: z
+    .object({
+      firstName: z.string(),
+      lastName: z.string(),
+      address: z.string(),
+      city: z.string(),
+      state: z.string(),
+      postalCode: z.string(),
+      country: z
+        .string()
+        .length(2)
+        .describe('ISO 3166-1 alpha-2 country code (e.g., US, CA)'),
+    })
+    .optional(),
 });
 
 const shoppingCart = factory
@@ -808,7 +812,8 @@ const shoppingCart = factory
     zValidator('json', createCheckoutSchema),
     async c => {
       const cartId = c.req.param('cartId');
-      const { successUrl, cancelUrl, customerEmail, shippingAddress } = c.req.valid('json');
+      const { successUrl, cancelUrl, customerEmail, shippingAddress } =
+        c.req.valid('json');
 
       try {
         const items = await c.var.db
@@ -831,7 +836,9 @@ const shoppingCart = factory
           return c.json({ error: 'No items with Stripe price IDs found' }, 404);
         }
 
-        const stripe = new Stripe(c.env.STRIPE_SECRET_KEY, { telemetry: false });
+        const stripe = new Stripe(c.env.STRIPE_SECRET_KEY, {
+          telemetry: false,
+        });
 
         const sessionParams: Stripe.Checkout.SessionCreateParams = {
           mode: 'payment',
@@ -885,15 +892,17 @@ const shoppingCart = factory
             schema: z.object({
               userId: z.number().optional(),
               customerEmail: z.string().email().optional(),
-              shippingAddress: z.object({
-                firstName: z.string(),
-                lastName: z.string(),
-                address: z.string(),
-                city: z.string(),
-                state: z.string(),
-                postalCode: z.string(),
-                country: z.string().length(2),
-              }).optional(),
+              shippingAddress: z
+                .object({
+                  firstName: z.string(),
+                  lastName: z.string(),
+                  address: z.string(),
+                  city: z.string(),
+                  state: z.string(),
+                  postalCode: z.string(),
+                  country: z.string().length(2),
+                })
+                .optional(),
             }),
           },
         },
@@ -961,7 +970,10 @@ const shoppingCart = factory
           if (!customerEmail) {
             customerEmail = jwtPayload.email;
           }
-          console.log('✓ Extracted authenticated user from JWT:', { userId, customerEmail });
+          console.log('✓ Extracted authenticated user from JWT:', {
+            userId,
+            customerEmail,
+          });
         } else {
           console.warn('✗ No jwtPayload or missing id in payload');
         }
@@ -996,7 +1008,9 @@ const shoppingCart = factory
           return c.json({ error: 'Cart total must be greater than zero' }, 400);
         }
 
-        const stripe = new Stripe(c.env.STRIPE_SECRET_KEY, { telemetry: false });
+        const stripe = new Stripe(c.env.STRIPE_SECRET_KEY, {
+          telemetry: false,
+        });
 
         // Create Payment Intent
         const paymentIntentParams: Stripe.PaymentIntentCreateParams = {
@@ -1027,7 +1041,8 @@ const shoppingCart = factory
           };
         }
 
-        const paymentIntent = await stripe.paymentIntents.create(paymentIntentParams);
+        const paymentIntent =
+          await stripe.paymentIntents.create(paymentIntentParams);
 
         return c.json({
           clientSecret: paymentIntent.client_secret!,

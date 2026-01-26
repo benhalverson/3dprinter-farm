@@ -143,8 +143,9 @@ describe('Product Routes', () => {
     // One insert for product only; no join rows because categoryIds omitted
     expect(capturedInserts.length).toBe(1);
     // Inserted product should have null categoryId during transition
-    const [productInsertOnly] =
-      capturedInserts as Array<{ categoryId: number | null }>;
+    const [productInsertOnly] = capturedInserts as Array<{
+      categoryId: number | null;
+    }>;
     expect(productInsertOnly).toHaveProperty('categoryId', null);
   });
 

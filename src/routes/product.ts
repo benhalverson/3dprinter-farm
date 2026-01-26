@@ -3,13 +3,14 @@ import { count, eq, like, or } from 'drizzle-orm';
 import { describeRoute } from 'hono-openapi';
 import { resolver } from 'hono-openapi/zod';
 import Stripe from 'stripe';
-import { z, ZodError } from 'zod';
+import { ZodError, z } from 'zod';
 
 type OpenAPISchema = Record<string, unknown>;
+
 import { BASE_URL, BASE_URL_V2 } from '../constants';
 import {
-  addProductSchema,
   addCategorySchema,
+  addProductSchema,
   categoryDataSchema,
   categoryTable,
   idSchema,
@@ -122,7 +123,7 @@ const product = factory
               filamentType: productsTable.filamentType,
               skuNumber: productsTable.skuNumber,
               color: productsTable.color,
-							categoryId: productsTable.categoryId,
+              categoryId: productsTable.categoryId,
             })
             .from(productsTable)
             .all();
@@ -696,7 +697,9 @@ const product = factory
         try {
           const fileResponse = await fetch(data.stl);
           if (!fileResponse.ok) {
-            throw new Error(`Failed to fetch file from R2: ${fileResponse.statusText}`);
+            throw new Error(
+              `Failed to fetch file from R2: ${fileResponse.statusText}`,
+            );
           }
           fileBuffer = Buffer.from(await fileResponse.arrayBuffer());
         } catch (err: unknown) {
@@ -736,14 +739,17 @@ const product = factory
 
         // Step 4: Confirm the upload
         console.log('Confirming upload...');
-        const confirmResponse = await fetch(`${BASE_URL_V2}files/confirm-upload`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${c.env.SLANT_API_V2}`,
+        const confirmResponse = await fetch(
+          `${BASE_URL_V2}files/confirm-upload`,
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${c.env.SLANT_API_V2}`,
+            },
+            body: JSON.stringify({ filePlaceholder }),
           },
-          body: JSON.stringify({ filePlaceholder }),
-        });
+        );
 
         if (!confirmResponse.ok) {
           const errorText = await confirmResponse.text();
@@ -806,20 +812,29 @@ const product = factory
           );
         }
 
-        const estimateDataRaw = (await estimateResponse.json()) as Record<string, unknown>;
-        console.log('Slant3D estimate raw response:', JSON.stringify(estimateDataRaw));
+        const estimateDataRaw = (await estimateResponse.json()) as Record<
+          string,
+          unknown
+        >;
+        console.log(
+          'Slant3D estimate raw response:',
+          JSON.stringify(estimateDataRaw),
+        );
 
         // Handle both possible response structures from Slant3D
         // V2 API returns: { total, pricePerUnit, subtotal, etc }
-        const estimateData = estimateDataRaw.data as Record<string, unknown> | undefined;
-        const basePrice = (estimateData?.total as number | undefined) ??
-                         (estimateData?.pricePerUnit as number | undefined) ??
-                         (estimateData?.subtotal as number | undefined) ??
-                         (estimateData?.estimatedCost as number | undefined) ??
-                         (estimateDataRaw.total as number | undefined) ??
-                         (estimateDataRaw.pricePerUnit as number | undefined) ??
-                         (estimateDataRaw.estimatedCost as number | undefined) ??
-                         (estimateDataRaw.cost as number | undefined);
+        const estimateData = estimateDataRaw.data as
+          | Record<string, unknown>
+          | undefined;
+        const basePrice =
+          (estimateData?.total as number | undefined) ??
+          (estimateData?.pricePerUnit as number | undefined) ??
+          (estimateData?.subtotal as number | undefined) ??
+          (estimateData?.estimatedCost as number | undefined) ??
+          (estimateDataRaw.total as number | undefined) ??
+          (estimateDataRaw.pricePerUnit as number | undefined) ??
+          (estimateDataRaw.estimatedCost as number | undefined) ??
+          (estimateDataRaw.cost as number | undefined);
 
         console.log('Slant3D estimated base price:', basePrice);
         console.log('Markup percentage from request:', data.price);
@@ -838,7 +853,10 @@ const product = factory
         try {
           markupPrice = calculateMarkupPrice(basePrice, data.price);
         } catch (err: unknown) {
-          console.error('Error calculating markup price:', err instanceof Error ? err.message : 'Unknown error');
+          console.error(
+            'Error calculating markup price:',
+            err instanceof Error ? err.message : 'Unknown error',
+          );
           return c.json(
             {
               error: 'Failed to calculate product price',
@@ -965,7 +983,8 @@ const product = factory
         .all();
 
       // Parse imageGallery safely for individual product
-      const { categoryId: _categoryId, ...productWithoutCategoryId } = rawProduct;
+      const { categoryId: _categoryId, ...productWithoutCategoryId } =
+        rawProduct;
       const product = {
         ...productWithoutCategoryId,
         imageGallery: parseImageGallery(rawProduct.imageGallery),
@@ -998,7 +1017,8 @@ const product = factory
         }
 
         // Normalize category input: accept both categoryId and categoryIds
-        const normalizedCategoryIds = parsedData.categoryIds || parsedData.categoryId;
+        const normalizedCategoryIds =
+          parsedData.categoryIds || parsedData.categoryId;
 
         // Validate categories exist if provided
         if (normalizedCategoryIds && normalizedCategoryIds.length > 0) {
@@ -1164,7 +1184,9 @@ const product = factory
         200: {
           content: {
             'application/json': {
-              schema: resolver(categoryDataSchema.array()) as unknown as OpenAPISchema,
+              schema: resolver(
+                categoryDataSchema.array(),
+              ) as unknown as OpenAPISchema,
             },
           },
           description: 'Category created successfully',
@@ -1172,9 +1194,11 @@ const product = factory
         500: {
           content: {
             'application/json': {
-              schema: resolver(z.object({
-                error: z.string(),
-              })) as unknown as OpenAPISchema,
+              schema: resolver(
+                z.object({
+                  error: z.string(),
+                }),
+              ) as unknown as OpenAPISchema,
             },
           },
           description: 'Failed to add category',
@@ -1206,7 +1230,9 @@ const product = factory
         200: {
           content: {
             'application/json': {
-              schema: resolver(categoryDataSchema.array()) as unknown as OpenAPISchema,
+              schema: resolver(
+                categoryDataSchema.array(),
+              ) as unknown as OpenAPISchema,
             },
           },
           description: 'List of categories retrieved successfully',
@@ -1214,9 +1240,11 @@ const product = factory
         500: {
           content: {
             'application/json': {
-              schema: resolver(z.object({
-                error: z.string(),
-              })) as unknown as OpenAPISchema,
+              schema: resolver(
+                z.object({
+                  error: z.string(),
+                }),
+              ) as unknown as OpenAPISchema,
             },
           },
           description: 'Failed to fetch categories',
