@@ -336,6 +336,8 @@ export const updateProductSchema = z.object({
   imageGallery: z.array(z.string()).min(1).optional(),
   // Allow updating categories; optional so updates can omit category changes
   categoryIds: z.array(z.number().int()).min(1).optional(),
+  // Also accept categoryId as array for compatibility
+  categoryId: z.array(z.number().int()).min(1).optional(),
 });
 
 export const ProfileDataSchema = z.object({
@@ -356,4 +358,30 @@ export const addCartItemSchema = z.object({
   quantity: z.number().int().min(1).max(69),
   color: z.string(),
   filamentType: z.string(),
+});
+
+// Table for storing uploaded STL files with estimates from Slant3D
+export const uploadedFilesTable = sqliteTable('uploaded_files', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  userId: integer('user_id').references(() => users.id, { onDelete: 'cascade' }),
+  publicFileServiceId: text('public_file_service_id').notNull().unique(), // Slant3D UUID
+  fileName: text('file_name').notNull(),
+  fileURL: text('file_url').notNull(), // Slant3D file URL
+
+  // STL Metrics from Slant3D
+  dimensionX: real('dimension_x'), // mm
+  dimensionY: real('dimension_y'), // mm
+  dimensionZ: real('dimension_z'), // mm
+  volume: real('volume'), // cubic cm
+  weight: real('weight'), // grams
+  surfaceArea: real('surface_area'), // square cm
+
+  // Estimate data (default PLA BLACK, quantity 1)
+  defaultFilamentId: text('default_filament_id').default('76fe1f79-3f1e-43e4-b8f4-61159de5b93c'), // PLA BLACK
+  estimatedCost: real('estimated_cost'), // USD
+  estimatedQuantity: integer('estimated_quantity').default(1),
+
+  // Timestamps
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull().default(sql`(unixepoch())`),
+  updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull().default(sql`(unixepoch())`),
 });
