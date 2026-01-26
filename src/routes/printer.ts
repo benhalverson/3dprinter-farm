@@ -931,19 +931,53 @@ const printer = factory
         if (!estimateLocalResponse.ok) {
           const errorText = await estimateLocalResponse.text();
           console.error('Estimate error:', errorText);
-          // Continue even if estimate fails - we still have the file data
-          console.warn('⚠ Estimate failed, saving file data without estimate');
+          return c.json(
+            {
+              success: false,
+              error: 'Failed to estimate file price from Slant3D V2 API',
+              details: errorText,
+            },
+            500,
+          );
         }
 
-        let estimatedCost: number | null = null;
-        if (estimateLocalResponse.ok) {
-          const estimateData = (await estimateLocalResponse.json()) as {
-            success: boolean;
-            data: { estimatedCost: number };
+        const estimateData = (await estimateLocalResponse.json()) as {
+          success: boolean;
+          data?: {
+            estimatedCost?: number;
+            total?: number;
+            pricePerUnit?: number;
+            subtotal?: number;
+            quantity?: number;
           };
-          estimatedCost = estimateData.data.estimatedCost;
-          console.log(`✓ Estimate obtained: $${estimatedCost}`);
+          error?: unknown;
+        };
+
+        const costCandidate = [
+          estimateData.data?.estimatedCost,
+          estimateData.data?.total,
+          estimateData.data?.pricePerUnit,
+          estimateData.data?.subtotal,
+        ].find(v => typeof v === 'number') as number | undefined;
+
+        if (!estimateData.success || typeof costCandidate !== 'number') {
+          console.error('Estimate response missing cost:', estimateData);
+          return c.json(
+            {
+              success: false,
+              error: 'Failed to estimate file price from Slant3D V2 API',
+              details:
+                estimateData.error ??
+                (estimateData.success
+                  ? 'Estimated cost not returned'
+                  : 'Estimate call did not succeed'),
+            },
+            500,
+          );
         }
+
+        const estimatedCost = costCandidate;
+        console.log(`✓ Estimate obtained: $${estimatedCost}`);
 
         // Step 5: Save to database
         console.log('\nStep 5: Saving to database...');
@@ -952,9 +986,21 @@ const printer = factory
           publicFileServiceId,
           fileName: file.name,
           fileURL,
-          dimensionX: STLMetrics?.dimensionX || null,
-          dimensionY: STLMetrics?.dimensionY || null,
-          dimensionZ: STLMetrics?.dimensionZ || null,
+          dimensionX:
+            STLMetrics?.dimensionX ??
+            (STLMetrics as Record<string, number | undefined>)?.x ??
+            (STLMetrics as { boundingBox?: { x?: number } })?.boundingBox?.x ??
+            null,
+          dimensionY:
+            STLMetrics?.dimensionY ??
+            (STLMetrics as Record<string, number | undefined>)?.y ??
+            (STLMetrics as { boundingBox?: { y?: number } })?.boundingBox?.y ??
+            null,
+          dimensionZ:
+            STLMetrics?.dimensionZ ??
+            (STLMetrics as Record<string, number | undefined>)?.z ??
+            (STLMetrics as { boundingBox?: { z?: number } })?.boundingBox?.z ??
+            null,
           volume: STLMetrics?.volume || null,
           weight: STLMetrics?.weight || null,
           surfaceArea: STLMetrics?.surfaceArea || null,
@@ -963,12 +1009,59 @@ const printer = factory
           estimatedQuantity: 1,
         };
 
-        const dbResult = await c.var.db
-          .insert(uploadedFilesTable)
-          .values(uploadRecord)
-          .returning();
+        let savedRecord: typeof uploadedFilesTable.$inferSelect | undefined;
 
-        console.log('✓ Saved to database, ID:', dbResult[0]?.id);
+        try {
+          const dbResult = await c.var.db
+            .insert(uploadedFilesTable)
+            .values(uploadRecord)
+            .returning();
+
+          savedRecord = dbResult[0];
+        } catch (err) {
+          const isUniquePublicId =
+            err instanceof Error &&
+            err.message.includes(
+              'UNIQUE constraint failed: uploaded_files.public_file_service_id',
+            );
+
+          if (!isUniquePublicId) {
+            throw err;
+          }
+
+          console.warn(
+            'Duplicate publicFileServiceId detected, updating existing record instead of inserting',
+          );
+
+          const updatePayload = {
+            fileName: uploadRecord.fileName,
+            fileURL: uploadRecord.fileURL,
+            dimensionX: uploadRecord.dimensionX,
+            dimensionY: uploadRecord.dimensionY,
+            dimensionZ: uploadRecord.dimensionZ,
+            volume: uploadRecord.volume,
+            weight: uploadRecord.weight,
+            surfaceArea: uploadRecord.surfaceArea,
+            defaultFilamentId: uploadRecord.defaultFilamentId,
+            estimatedCost: uploadRecord.estimatedCost,
+            estimatedQuantity: uploadRecord.estimatedQuantity,
+            updatedAt: Math.floor(Date.now() / 1000),
+          } as const;
+
+          const updated = await c.var.db
+            .update(uploadedFilesTable)
+            .set(
+              uploadRecord.userId
+                ? { ...updatePayload, userId: uploadRecord.userId }
+                : updatePayload,
+            )
+            .where(eq(uploadedFilesTable.publicFileServiceId, publicFileServiceId))
+            .returning();
+
+          savedRecord = updated[0];
+        }
+
+        console.log('✓ Saved to database, ID:', savedRecord?.id);
         console.log('=== V2 Upload Workflow Completed ===\n');
 
         return c.json(
@@ -976,7 +1069,7 @@ const printer = factory
             success: true,
             message: 'File uploaded and estimate saved successfully',
             data: {
-              id: dbResult[0]?.id,
+              id: savedRecord?.id,
               publicFileServiceId,
               fileName: file.name,
               fileURL,
