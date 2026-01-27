@@ -1,0 +1,17 @@
+# V2 Add Product Endpoint - Test curl request
+# Run this curl command to test adding a product via the V2 API
+
+curl -X POST http://localhost:8787/v2/add-product \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
+  -d '{
+    "name": "Test Product V2",
+    "description": "A test 3D printed product using V2 API",
+    "image": "https://example.com/image.jpg",
+    "imageGallery": ["https://example.com/image1.jpg"],
+    "stl": "https://your-r2-bucket.r2.dev/test-model.stl",
+    "filamentType": "PLA",
+    "color": "Black",
+    "price": 0.15,
+    "categoryId": 1
+  }' | jq

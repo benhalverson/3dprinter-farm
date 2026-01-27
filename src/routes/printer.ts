@@ -464,7 +464,7 @@ const printer = factory
       );
     } catch (error: unknown) {
       console.error('=== V2 Estimate Catch Error ===');
-      console.error('Error:', error);
+      console.error('Error:', JSON.stringify(error));
       return c.json(
         {
           success: false,
@@ -1050,7 +1050,7 @@ const printer = factory
           defaultFilamentId: uploadRecord.defaultFilamentId,
           estimatedCost: uploadRecord.estimatedCost,
           estimatedQuantity: uploadRecord.estimatedQuantity,
-          updatedAt: Math.floor(Date.now() / 1000),
+          updatedAt: new Date(),
         } as const;
 
         const updated = await c.var.db
@@ -1105,6 +1105,7 @@ const printer = factory
       );
     }
   })
+  .use('/v2/upload', authMiddleware)
   .use('/v2/uploads/:id', authMiddleware)
   .get(
     '/v2/uploads/:id',
