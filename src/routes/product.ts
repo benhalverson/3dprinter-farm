@@ -455,7 +455,7 @@ const product = factory
 
       if (!slicingResponse.ok) {
         const error = (await slicingResponse.json()) as Error;
-        console.log('slicing error', error);
+        console.log('slicing error', JSON.stringify(error));
         return c.json(
           { error: 'Failed to slice file', details: error.message },
           500,
