@@ -1003,21 +1003,9 @@ const printer = factory
         publicFileServiceId,
         fileName: file.name,
         fileURL,
-        dimensionX:
-          STLMetrics?.dimensionX ??
-          (STLMetrics as Record<string, number | undefined>)?.x ??
-          (STLMetrics as { boundingBox?: { x?: number } })?.boundingBox?.x ??
-          null,
-        dimensionY:
-          STLMetrics?.dimensionY ??
-          (STLMetrics as Record<string, number | undefined>)?.y ??
-          (STLMetrics as { boundingBox?: { y?: number } })?.boundingBox?.y ??
-          null,
-        dimensionZ:
-          STLMetrics?.dimensionZ ??
-          (STLMetrics as Record<string, number | undefined>)?.z ??
-          (STLMetrics as { boundingBox?: { z?: number } })?.boundingBox?.z ??
-          null,
+        dimensionX: STLMetrics?.dimensionX || null,
+        dimensionY: STLMetrics?.dimensionY || null,
+        dimensionZ: STLMetrics?.dimensionZ || null,
         volume: STLMetrics?.volume || null,
         weight: STLMetrics?.weight || null,
         surfaceArea: STLMetrics?.surfaceArea || null,

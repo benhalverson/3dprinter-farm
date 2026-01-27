@@ -121,9 +121,9 @@ export const PresignedUploadResponseSchema = z.object({
 });
 
 export const STLMetricsSchema = z.object({
-  x: z.number().describe('Width in mm'),
-  y: z.number().describe('Depth in mm'),
-  z: z.number().describe('Height in mm'),
+  dimensionX: z.number().describe('Width in mm'),
+  dimensionY: z.number().describe('Depth in mm'),
+  dimensionZ: z.number().describe('Height in mm'),
   weight: z.number().describe('Weight in grams'),
   volume: z.number().describe('Volume in cubic cm'),
   surfaceArea: z.number().optional().describe('Surface area in sq mm'),
