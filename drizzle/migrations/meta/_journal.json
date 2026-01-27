@@ -43,6 +43,13 @@
       "when": 1765260462625,
       "tag": "0005_tiny_manta",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1769391269648,
+      "tag": "0006_lovely_the_captain",
+      "breakpoints": true
     }
   ]
 }

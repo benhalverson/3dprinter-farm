@@ -1,15 +1,16 @@
 import { zValidator } from '@hono/zod-validator';
-import { count, eq, like, or } from 'drizzle-orm';
+import { count, eq, inArray, like, or } from 'drizzle-orm';
 import { describeRoute } from 'hono-openapi';
 import { resolver } from 'hono-openapi/zod';
 import Stripe from 'stripe';
-import { z, ZodError } from 'zod';
+import { ZodError, z } from 'zod';
 
 type OpenAPISchema = Record<string, unknown>;
+
 import { BASE_URL, BASE_URL_V2 } from '../constants';
 import {
-  addProductSchema,
   addCategorySchema,
+  addProductSchema,
   categoryDataSchema,
   categoryTable,
   idSchema,
@@ -122,6 +123,7 @@ const product = factory
               filamentType: productsTable.filamentType,
               skuNumber: productsTable.skuNumber,
               color: productsTable.color,
+              categoryId: productsTable.categoryId,
             })
             .from(productsTable)
             .all();
@@ -376,7 +378,7 @@ const product = factory
       requestBody: {
         content: {
           'application/json': {
-            schema: resolver(addProductSchema) as any,
+            schema: resolver(addProductSchema) as unknown as OpenAPISchema,
           },
         },
         required: true,
@@ -385,7 +387,7 @@ const product = factory
         201: {
           content: {
             'application/json': {
-              schema: resolver(addProductSchema) as any,
+              schema: resolver(addProductSchema) as unknown as OpenAPISchema,
             },
           },
           description: 'The product was created successfully',
@@ -393,7 +395,7 @@ const product = factory
         400: {
           content: {
             'application/json': {
-              schema: resolver(addProductSchema) as any,
+              schema: resolver(addProductSchema) as unknown as OpenAPISchema,
             },
           },
           description: 'Missing or invalid parameters',
@@ -408,7 +410,7 @@ const product = factory
       const user = c.get('jwtPayload') as { id: number; email: string };
       if (!user) return c.json({ error: 'Unauthorized' }, 401);
       const data = await c.req.valid('json');
-      const { categoryIds, categoryId, imageGallery, ...rest } = data as any;
+      const { categoryIds, categoryId, imageGallery, ...rest } = data;
       // Normalize category inputs: accept categoryIds array, categoryId number, or categoryId array
       let normalizedCategoryIds: number[] | undefined;
       if (Array.isArray(categoryIds)) {
@@ -418,6 +420,18 @@ const product = factory
       } else if (typeof categoryId === 'number') {
         normalizedCategoryIds = [categoryId];
       }
+
+      // Check for duplicate category IDs
+      if (normalizedCategoryIds && normalizedCategoryIds.length > 0) {
+        const uniqueCategoryIds = new Set(normalizedCategoryIds);
+        if (uniqueCategoryIds.size !== normalizedCategoryIds.length) {
+          return c.json(
+            { error: 'Duplicate category IDs are not allowed' },
+            400,
+          );
+        }
+      }
+
       const skuNumber = generateSkuNumber(data.name);
 
       const stripeProduct = await stripe.products.create({
@@ -498,13 +512,13 @@ const product = factory
           Array.isArray(normalizedCategoryIds) &&
           normalizedCategoryIds.length > 0
         ) {
-          for (const [idx, catId] of normalizedCategoryIds.entries()) {
-            await c.var.db.insert(productsToCategories).values({
+          await c.var.db.insert(productsToCategories).values(
+            normalizedCategoryIds.map((catId, idx) => ({
               productId: created.id,
               categoryId: catId,
               orderIndex: idx,
-            });
-          }
+            })),
+          );
         }
 
         return c.json(response);
@@ -523,7 +537,7 @@ const product = factory
       requestBody: {
         content: {
           'application/json': {
-            schema: resolver(addProductSchema) as any,
+            schema: resolver(addProductSchema) as unknown as OpenAPISchema,
           },
         },
         required: true,
@@ -593,7 +607,7 @@ const product = factory
         if (!user) return c.json({ error: 'Unauthorized' }, 401);
 
         const data = await c.req.valid('json');
-        const { categoryIds, categoryId, imageGallery, ...rest } = data as any;
+        const { categoryIds, categoryId, imageGallery, ...rest } = data;
         let normalizedCategoryIds: number[] | undefined;
         if (Array.isArray(categoryIds)) {
           normalizedCategoryIds = categoryIds;
@@ -602,6 +616,18 @@ const product = factory
         } else if (typeof categoryId === 'number') {
           normalizedCategoryIds = [categoryId];
         }
+
+        // Check for duplicate category IDs
+        if (normalizedCategoryIds && normalizedCategoryIds.length > 0) {
+          const uniqueCategoryIds = new Set(normalizedCategoryIds);
+          if (uniqueCategoryIds.size !== normalizedCategoryIds.length) {
+            return c.json(
+              { error: 'Duplicate category IDs are not allowed' },
+              400,
+            );
+          }
+        }
+
         const skuNumber = generateSkuNumber(data.name);
 
         // Step 1: Create Stripe product
@@ -671,15 +697,17 @@ const product = factory
         try {
           const fileResponse = await fetch(data.stl);
           if (!fileResponse.ok) {
-            throw new Error(`Failed to fetch file from R2: ${fileResponse.statusText}`);
+            throw new Error(
+              `Failed to fetch file from R2: ${fileResponse.statusText}`,
+            );
           }
           fileBuffer = Buffer.from(await fileResponse.arrayBuffer());
-        } catch (err: any) {
+        } catch (err: unknown) {
           console.error('Failed to fetch file:', err);
           return c.json(
             {
               error: 'Failed to fetch STL file from storage',
-              details: err.message,
+              details: err instanceof Error ? err.message : 'Unknown error',
             },
             500,
           );
@@ -698,12 +726,12 @@ const product = factory
             throw new Error(`Upload failed: ${uploadResponse.statusText}`);
           }
           console.log('File uploaded to presigned URL');
-        } catch (err: any) {
+        } catch (err: unknown) {
           console.error('Failed to upload to presigned URL:', err);
           return c.json(
             {
               error: 'Failed to upload file to Slant3D',
-              details: err.message,
+              details: err instanceof Error ? err.message : 'Unknown error',
             },
             500,
           );
@@ -711,14 +739,17 @@ const product = factory
 
         // Step 4: Confirm the upload
         console.log('Confirming upload...');
-        const confirmResponse = await fetch(`${BASE_URL_V2}files/confirm-upload`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${c.env.SLANT_API_V2}`,
+        const confirmResponse = await fetch(
+          `${BASE_URL_V2}files/confirm-upload`,
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${c.env.SLANT_API_V2}`,
+            },
+            body: JSON.stringify({ filePlaceholder }),
           },
-          body: JSON.stringify({ filePlaceholder }),
-        });
+        );
 
         if (!confirmResponse.ok) {
           const errorText = await confirmResponse.text();
@@ -781,23 +812,33 @@ const product = factory
           );
         }
 
-        const estimateDataRaw = (await estimateResponse.json()) as any;
-        console.log('Slant3D estimate raw response:', JSON.stringify(estimateDataRaw));
+        const estimateDataRaw = (await estimateResponse.json()) as Record<
+          string,
+          unknown
+        >;
+        console.log(
+          'Slant3D estimate raw response:',
+          JSON.stringify(estimateDataRaw),
+        );
 
         // Handle both possible response structures from Slant3D
         // V2 API returns: { total, pricePerUnit, subtotal, etc }
-        const basePrice = estimateDataRaw.data?.total ?? 
-                         estimateDataRaw.data?.pricePerUnit ?? 
-                         estimateDataRaw.data?.subtotal ?? 
-                         estimateDataRaw.data?.estimatedCost ?? 
-                         estimateDataRaw.total ?? 
-                         estimateDataRaw.pricePerUnit ?? 
-                         estimateDataRaw.estimatedCost ?? 
-                         estimateDataRaw.cost;
+        const estimateData = estimateDataRaw.data as
+          | Record<string, unknown>
+          | undefined;
+        const basePrice =
+          (estimateData?.total as number | undefined) ??
+          (estimateData?.pricePerUnit as number | undefined) ??
+          (estimateData?.subtotal as number | undefined) ??
+          (estimateData?.estimatedCost as number | undefined) ??
+          (estimateDataRaw.total as number | undefined) ??
+          (estimateDataRaw.pricePerUnit as number | undefined) ??
+          (estimateDataRaw.estimatedCost as number | undefined) ??
+          (estimateDataRaw.cost as number | undefined);
 
         console.log('Slant3D estimated base price:', basePrice);
         console.log('Markup percentage from request:', data.price);
-        
+
         if (!basePrice || basePrice <= 0) {
           return c.json(
             {
@@ -807,16 +848,19 @@ const product = factory
             500,
           );
         }
-        
+
         let markupPrice: number;
         try {
           markupPrice = calculateMarkupPrice(basePrice, data.price);
-        } catch (err: any) {
-          console.error('Error calculating markup price:', err.message);
+        } catch (err: unknown) {
+          console.error(
+            'Error calculating markup price:',
+            err instanceof Error ? err.message : 'Unknown error',
+          );
           return c.json(
             {
               error: 'Failed to calculate product price',
-              details: err.message,
+              details: err instanceof Error ? err.message : 'Unknown error',
             },
             400,
           );
@@ -867,13 +911,13 @@ const product = factory
           Array.isArray(normalizedCategoryIds) &&
           normalizedCategoryIds.length > 0
         ) {
-          for (const [idx, catId] of normalizedCategoryIds.entries()) {
-            await c.var.db.insert(productsToCategories).values({
+          await c.var.db.insert(productsToCategories).values(
+            normalizedCategoryIds.map((catId, idx) => ({
               productId: created.id,
               categoryId: catId,
               orderIndex: idx,
-            });
-          }
+            })),
+          );
         }
 
         return c.json(
@@ -890,12 +934,12 @@ const product = factory
           },
           201,
         );
-      } catch (error: any) {
+      } catch (error: unknown) {
         console.error('V2 add-product error:', error);
         return c.json(
           {
             error: 'Failed to add product',
-            details: error.message || 'Unknown error',
+            details: error instanceof Error ? error.message : 'Unknown error',
           },
           500,
         );
@@ -915,17 +959,36 @@ const product = factory
       const response = await c.var.db
         .select()
         .from(productsTable)
-        .where(eq(productsTable.id, parsedData.id));
+        .where(eq(productsTable.id, parsedData.id))
+        .all();
       const rawProduct = response[0];
 
       if (!rawProduct) {
         return c.json({ error: 'Product not found' }, 404);
       }
 
+      // Get categories from join table
+      const categories = await c.var.db
+        .select({
+          categoryId: categoryTable.categoryId,
+          categoryName: categoryTable.categoryName,
+        })
+        .from(productsToCategories)
+        .innerJoin(
+          categoryTable,
+          eq(productsToCategories.categoryId, categoryTable.categoryId),
+        )
+        .where(eq(productsToCategories.productId, parsedData.id))
+        .orderBy(productsToCategories.orderIndex)
+        .all();
+
       // Parse imageGallery safely for individual product
+      const { categoryId: _categoryId, ...productWithoutCategoryId } =
+        rawProduct;
       const product = {
-        ...rawProduct,
+        ...productWithoutCategoryId,
         imageGallery: parseImageGallery(rawProduct.imageGallery),
+        categories: categories,
       };
 
       return c.json(product);
@@ -937,21 +1000,107 @@ const product = factory
       description: 'Update an existing product',
       tags: ['Products'],
     }),
+    zValidator('json', updateProductSchema),
     async c => {
       try {
-        const body = await c.req.json();
-        const parsedData = updateProductSchema.parse(body);
+        const parsedData = c.req.valid('json');
+
+        // Check if product exists
+        const existingProduct = await c.var.db
+          .select()
+          .from(productsTable)
+          .where(eq(productsTable.id, parsedData.id))
+          .get();
+
+        if (!existingProduct) {
+          return c.json({ error: 'Product not found' }, 404);
+        }
+
+        // Normalize category input: accept both categoryId and categoryIds
+        const normalizedCategoryIds =
+          parsedData.categoryIds || parsedData.categoryId;
+
+        // Validate categories exist if provided
+        if (normalizedCategoryIds && normalizedCategoryIds.length > 0) {
+          // Check for duplicate category IDs
+          const uniqueCategoryIds = new Set(normalizedCategoryIds);
+          if (uniqueCategoryIds.size !== normalizedCategoryIds.length) {
+            return c.json(
+              { error: 'Duplicate category IDs are not allowed' },
+              400,
+            );
+          }
+
+          // Validate all category IDs
+          const existingCategories = await c.var.db
+            .select({ categoryId: categoryTable.categoryId })
+            .from(categoryTable)
+            .where(inArray(categoryTable.categoryId, normalizedCategoryIds))
+            .all();
+
+          if (existingCategories.length !== normalizedCategoryIds.length) {
+            const existingCategoryIds = new Set(
+              existingCategories.map(c => c.categoryId),
+            );
+            const missingCategoryIds = normalizedCategoryIds.filter(
+              id => !existingCategoryIds.has(id),
+            );
+            const errorMessage =
+              missingCategoryIds.length === 1
+                ? `Category with ID ${missingCategoryIds[0]} does not exist`
+                : `Categories with IDs ${missingCategoryIds.join(', ')} do not exist`;
+            return c.json(
+              {
+                error: errorMessage,
+              },
+              400,
+            );
+          }
+        }
+
+        // Prepare update data
+        const updateData: {
+          name: string;
+          description: string;
+          price: number;
+          filamentType: string;
+          color: string;
+          image: string;
+          imageGallery: string;
+          categoryId?: number | null;
+        } = {
+          name: parsedData.name,
+          description: parsedData.description,
+          price: parsedData.price,
+          filamentType: parsedData.filamentType,
+          color: parsedData.color,
+          image: parsedData.image,
+          imageGallery: JSON.stringify(parsedData.imageGallery || []),
+        };
+
+        // Only set categoryId if categories are provided and not empty
+        if (normalizedCategoryIds && normalizedCategoryIds.length > 0) {
+          updateData.categoryId = normalizedCategoryIds[0];
+
+          // Delete existing category associations in join table
+          await c.var.db
+            .delete(productsToCategories)
+            .where(eq(productsToCategories.productId, parsedData.id));
+
+          // Insert new category associations
+          await c.var.db.insert(productsToCategories).values(
+            normalizedCategoryIds.map((catId, idx) => ({
+              productId: parsedData.id,
+              categoryId: catId,
+              orderIndex: idx,
+            })),
+          );
+        }
+
+        // Update the product
         const updateResult = await c.var.db
           .update(productsTable)
-          .set({
-            name: parsedData.name,
-            description: parsedData.description,
-            price: parsedData.price,
-            filamentType: parsedData.filamentType,
-            color: parsedData.color,
-            image: parsedData.image,
-            imageGallery: JSON.stringify(parsedData.imageGallery || []),
-          })
+          .set(updateData)
           .where(eq(productsTable.id, parsedData.id));
 
         if (updateResult) {
@@ -960,7 +1109,7 @@ const product = factory
             message: 'Product updated successfully',
           });
         } else {
-          return c.json({ error: 'Product not found or update failed' }, 404);
+          return c.json({ error: 'Product update failed' }, 500);
         }
       } catch (error) {
         if (error instanceof ZodError) {
@@ -970,6 +1119,7 @@ const product = factory
             400,
           );
         }
+        console.error('500 update-product error', error);
         return c.json({ error: 'Internal Server Error' }, 500);
       }
     },
@@ -1044,7 +1194,9 @@ const product = factory
         200: {
           content: {
             'application/json': {
-              schema: resolver(categoryDataSchema.array()) as unknown as OpenAPISchema,
+              schema: resolver(
+                categoryDataSchema.array(),
+              ) as unknown as OpenAPISchema,
             },
           },
           description: 'Category created successfully',
@@ -1052,9 +1204,11 @@ const product = factory
         500: {
           content: {
             'application/json': {
-              schema: resolver(z.object({
-                error: z.string(),
-              })) as unknown as OpenAPISchema,
+              schema: resolver(
+                z.object({
+                  error: z.string(),
+                }),
+              ) as unknown as OpenAPISchema,
             },
           },
           description: 'Failed to add category',
@@ -1086,7 +1240,9 @@ const product = factory
         200: {
           content: {
             'application/json': {
-              schema: resolver(categoryDataSchema.array()) as unknown as OpenAPISchema,
+              schema: resolver(
+                categoryDataSchema.array(),
+              ) as unknown as OpenAPISchema,
             },
           },
           description: 'List of categories retrieved successfully',
@@ -1094,9 +1250,11 @@ const product = factory
         500: {
           content: {
             'application/json': {
-              schema: resolver(z.object({
-                error: z.string(),
-              })) as unknown as OpenAPISchema,
+              schema: resolver(
+                z.object({
+                  error: z.string(),
+                }),
+              ) as unknown as OpenAPISchema,
             },
           },
           description: 'Failed to fetch categories',

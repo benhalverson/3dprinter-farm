@@ -9,7 +9,10 @@
     "lineWidth": 80,
     "attributePosition": "auto"
   },
-  "files": { "maxSize": 2097152 },
+  "files": {
+    "maxSize": 2097152,
+    "includes": ["**", "!!.wrangler", "!!node_modules", "!!drizzle"]
+  },
   "linter": {
     "enabled": true,
     "rules": {

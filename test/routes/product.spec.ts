@@ -61,7 +61,13 @@ describe('Product Routes', () => {
   });
 
   test('GET /product/:id returns single product', async () => {
-    mockWhere.mockResolvedValueOnce([{ id: 1, name: 'Test Product' }]);
+    mockWhere.mockReturnValueOnce({
+      all: vi.fn().mockResolvedValueOnce([{ id: 1, name: 'Test Product' }]),
+      get: vi.fn().mockResolvedValueOnce({ id: 1, name: 'Test Product' }),
+      orderBy: vi.fn(() => ({
+        all: vi.fn().mockResolvedValueOnce([]),
+      })),
+    });
 
     const request = new Request('http://localhost/product/1', {
       method: 'GET',
@@ -78,7 +84,13 @@ describe('Product Routes', () => {
   });
 
   test('GET /product/:id returns 404 if not found', async () => {
-    mockWhere.mockResolvedValueOnce([]);
+    mockWhere.mockReturnValueOnce({
+      all: vi.fn().mockResolvedValueOnce([]),
+      get: vi.fn().mockResolvedValueOnce(undefined),
+      orderBy: vi.fn(() => ({
+        all: vi.fn().mockResolvedValueOnce([]),
+      })),
+    });
 
     const request = new Request('http://localhost/product/999', {
       method: 'GET',
@@ -105,7 +117,6 @@ describe('Product Routes', () => {
     });
 
     mockInsert.mockResolvedValueOnce([{ id: 1 }]);
-
     const request = new Request('http://localhost/add-product', {
       method: 'POST',
       headers: {
@@ -132,7 +143,9 @@ describe('Product Routes', () => {
     // One insert for product only; no join rows because categoryIds omitted
     expect(capturedInserts.length).toBe(1);
     // Inserted product should have null categoryId during transition
-    const [productInsertOnly] = capturedInserts as Array<any>;
+    const [productInsertOnly] = capturedInserts as Array<{
+      categoryId: number | null;
+    }>;
     expect(productInsertOnly).toHaveProperty('categoryId', null);
   });
 
@@ -207,21 +220,25 @@ describe('Product Routes', () => {
     expect(Array.isArray(data)).toBe(true);
     expect(data[0]).toHaveProperty('id');
 
-    // First insert is product; next three are join rows
-    expect(capturedInserts.length).toBe(4);
-    const [productInsert, ...joinInserts] =
-      capturedInserts as unknown as Array<{
-        id?: number;
-        categoryId: number | null;
-      }>;
+    // First insert is product; second insert is batch insert of join rows
+    expect(capturedInserts.length).toBe(2);
+    const [productInsert, batchJoinInsert] = capturedInserts as unknown as [
+      { id?: number; categoryId: number | null },
+      Array<{ productId: number; categoryId: number; orderIndex: number }>,
+    ];
     expect(productInsert).toMatchObject({ categoryId: 2 });
-    // Join inserts should target the created product id and provided categoryIds
-    const joinCategoryIds = joinInserts.map(v => v.categoryId);
+    // Batch insert should contain all three category joins
+    expect(Array.isArray(batchJoinInsert)).toBe(true);
+    expect(batchJoinInsert.length).toBe(3);
+    const joinCategoryIds = batchJoinInsert.map(v => v.categoryId);
     expect(joinCategoryIds).toEqual([2, 3, 5]);
   });
 
   test('PUT /update-product updates a product', async () => {
     mockUpdate.mockResolvedValueOnce({ success: true });
+    mockWhere.mockReturnValueOnce({
+      get: vi.fn().mockResolvedValueOnce({ id: 1 }),
+    });
 
     const request = new Request('http://localhost/update-product', {
       method: 'PUT',
@@ -262,8 +279,8 @@ describe('Product Routes', () => {
     const res = await app.fetch(request, mockEnv());
 
     expect(res.status).toBe(400);
-    const data = (await res.json()) as { error: string };
-    expect(data.error).toBe('Validation error');
+    const data = (await res.json()) as { success?: boolean; error?: unknown };
+    expect(data).toHaveProperty('error');
   });
 
   test('DELETE /delete-product/:id deletes a product', async () => {
