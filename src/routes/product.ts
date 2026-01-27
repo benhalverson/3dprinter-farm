@@ -1,5 +1,5 @@
 import { zValidator } from '@hono/zod-validator';
-import { count, eq, like, or } from 'drizzle-orm';
+import { count, eq, inArray, like, or } from 'drizzle-orm';
 import { describeRoute } from 'hono-openapi';
 import { resolver } from 'hono-openapi/zod';
 import Stripe from 'stripe';
@@ -512,13 +512,13 @@ const product = factory
           Array.isArray(normalizedCategoryIds) &&
           normalizedCategoryIds.length > 0
         ) {
-          for (const [idx, catId] of normalizedCategoryIds.entries()) {
-            await c.var.db.insert(productsToCategories).values({
+          await c.var.db.insert(productsToCategories).values(
+            normalizedCategoryIds.map((catId, idx) => ({
               productId: created.id,
               categoryId: catId,
               orderIndex: idx,
-            });
-          }
+            })),
+          );
         }
 
         return c.json(response);
@@ -911,13 +911,13 @@ const product = factory
           Array.isArray(normalizedCategoryIds) &&
           normalizedCategoryIds.length > 0
         ) {
-          for (const [idx, catId] of normalizedCategoryIds.entries()) {
-            await c.var.db.insert(productsToCategories).values({
+          await c.var.db.insert(productsToCategories).values(
+            normalizedCategoryIds.map((catId, idx) => ({
               productId: created.id,
               categoryId: catId,
               orderIndex: idx,
-            });
-          }
+            })),
+          );
         }
 
         return c.json(
@@ -1032,19 +1032,29 @@ const product = factory
           }
 
           // Validate all category IDs
-          for (const catId of normalizedCategoryIds) {
-            const categoryExists = await c.var.db
-              .select({ categoryId: categoryTable.categoryId })
-              .from(categoryTable)
-              .where(eq(categoryTable.categoryId, catId))
-              .get();
+          const existingCategories = await c.var.db
+            .select({ categoryId: categoryTable.categoryId })
+            .from(categoryTable)
+            .where(inArray(categoryTable.categoryId, normalizedCategoryIds))
+            .all();
 
-            if (!categoryExists) {
-              return c.json(
-                { error: `Category with ID ${catId} does not exist` },
-                400,
-              );
-            }
+          if (existingCategories.length !== normalizedCategoryIds.length) {
+            const existingCategoryIds = new Set(
+              existingCategories.map(c => c.categoryId),
+            );
+            const missingCategoryIds = normalizedCategoryIds.filter(
+              id => !existingCategoryIds.has(id),
+            );
+            const errorMessage =
+              missingCategoryIds.length === 1
+                ? `Category with ID ${missingCategoryIds[0]} does not exist`
+                : `Categories with IDs ${missingCategoryIds.join(', ')} do not exist`;
+            return c.json(
+              {
+                error: errorMessage,
+              },
+              400,
+            );
           }
         }
 
@@ -1078,13 +1088,13 @@ const product = factory
             .where(eq(productsToCategories.productId, parsedData.id));
 
           // Insert new category associations
-          for (const [idx, catId] of normalizedCategoryIds.entries()) {
-            await c.var.db.insert(productsToCategories).values({
+          await c.var.db.insert(productsToCategories).values(
+            normalizedCategoryIds.map((catId, idx) => ({
               productId: parsedData.id,
               categoryId: catId,
               orderIndex: idx,
-            });
-          }
+            })),
+          );
         }
 
         // Update the product
