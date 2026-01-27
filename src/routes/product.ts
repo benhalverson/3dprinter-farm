@@ -1,5 +1,5 @@
 import { zValidator } from '@hono/zod-validator';
-import { count, eq, like, or } from 'drizzle-orm';
+import { count, eq, inArray, like, or } from 'drizzle-orm';
 import { describeRoute } from 'hono-openapi';
 import { resolver } from 'hono-openapi/zod';
 import Stripe from 'stripe';
@@ -1032,19 +1032,25 @@ const product = factory
           }
 
           // Validate all category IDs
-          for (const catId of normalizedCategoryIds) {
-            const categoryExists = await c.var.db
-              .select({ categoryId: categoryTable.categoryId })
-              .from(categoryTable)
-              .where(eq(categoryTable.categoryId, catId))
-              .get();
+          const existingCategories = await c.var.db
+            .select({ categoryId: categoryTable.categoryId })
+            .from(categoryTable)
+            .where(inArray(categoryTable.categoryId, normalizedCategoryIds))
+            .all();
 
-            if (!categoryExists) {
-              return c.json(
-                { error: `Category with ID ${catId} does not exist` },
-                400,
-              );
-            }
+          if (existingCategories.length !== normalizedCategoryIds.length) {
+            const existingCategoryIds = new Set(
+              existingCategories.map(c => c.categoryId),
+            );
+            const missingCategoryIds = normalizedCategoryIds.filter(
+              id => !existingCategoryIds.has(id),
+            );
+            return c.json(
+              {
+                error: `Category with ID ${missingCategoryIds[0]} does not exist`,
+              },
+              400,
+            );
           }
         }
 
