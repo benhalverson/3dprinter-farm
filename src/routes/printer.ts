@@ -1151,8 +1151,8 @@ const printer = factory
 
         const file = result[0];
 
-        // Optionally verify user owns this file (if userId is set)
-        if (userId && file.userId !== userId) {
+        // Enforce ownership: users can only access their own files
+        if (file.userId && file.userId !== userId) {
           return c.json(
             {
               success: false,
@@ -1191,14 +1191,11 @@ const printer = factory
       try {
         const userId = c.get('userId');
 
-        // Query files for this user
-        let query = c.var.db.select().from(uploadedFilesTable);
-
-        if (userId) {
-          query = query.where(eq(uploadedFilesTable.userId, userId));
-        }
-
-        const files = await query;
+        // Scope query to authenticated user's files
+        const files = await c.var.db
+          .select()
+          .from(uploadedFilesTable)
+          .where(eq(uploadedFilesTable.userId, userId));
 
         return c.json(
           {

@@ -12,6 +12,15 @@ export const authMiddleware = factory.createMiddleware(async (c, next) => {
   try {
     const payload = await verify(signedToken, c.env.JWT_SECRET);
     c.set('jwtPayload', payload);
+    // Standardize `userId` in context for downstream routes
+    const payloadObj = payload as unknown as {
+      id?: string | number;
+      sub?: string | number;
+    };
+    const id = payloadObj.id ?? payloadObj.sub;
+    if (id) {
+      c.set('userId', String(id));
+    }
     console.log('Verified JWT payload:', payload);
     return next();
   } catch (err) {
