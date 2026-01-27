@@ -220,16 +220,17 @@ describe('Product Routes', () => {
     expect(Array.isArray(data)).toBe(true);
     expect(data[0]).toHaveProperty('id');
 
-    // First insert is product; next three are join rows
-    expect(capturedInserts.length).toBe(4);
-    const [productInsert, ...joinInserts] =
-      capturedInserts as unknown as Array<{
-        id?: number;
-        categoryId: number | null;
-      }>;
+    // First insert is product; second insert is batch insert of join rows
+    expect(capturedInserts.length).toBe(2);
+    const [productInsert, batchJoinInsert] = capturedInserts as unknown as [
+      { id?: number; categoryId: number | null },
+      Array<{ productId: number; categoryId: number; orderIndex: number }>,
+    ];
     expect(productInsert).toMatchObject({ categoryId: 2 });
-    // Join inserts should target the created product id and provided categoryIds
-    const joinCategoryIds = joinInserts.map(v => v.categoryId);
+    // Batch insert should contain all three category joins
+    expect(Array.isArray(batchJoinInsert)).toBe(true);
+    expect(batchJoinInsert.length).toBe(3);
+    const joinCategoryIds = batchJoinInsert.map(v => v.categoryId);
     expect(joinCategoryIds).toEqual([2, 3, 5]);
   });
 
