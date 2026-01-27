@@ -1045,9 +1045,13 @@ const product = factory
             const missingCategoryIds = normalizedCategoryIds.filter(
               id => !existingCategoryIds.has(id),
             );
+            const errorMessage =
+              missingCategoryIds.length === 1
+                ? `Category with ID ${missingCategoryIds[0]} does not exist`
+                : `Categories with IDs ${missingCategoryIds.join(', ')} do not exist`;
             return c.json(
               {
-                error: `Category with ID ${missingCategoryIds[0]} does not exist`,
+                error: errorMessage,
               },
               400,
             );
