@@ -512,13 +512,13 @@ const product = factory
           Array.isArray(normalizedCategoryIds) &&
           normalizedCategoryIds.length > 0
         ) {
-          for (const [idx, catId] of normalizedCategoryIds.entries()) {
-            await c.var.db.insert(productsToCategories).values({
+          await c.var.db.insert(productsToCategories).values(
+            normalizedCategoryIds.map((catId, idx) => ({
               productId: created.id,
               categoryId: catId,
               orderIndex: idx,
-            });
-          }
+            })),
+          );
         }
 
         return c.json(response);
@@ -911,13 +911,13 @@ const product = factory
           Array.isArray(normalizedCategoryIds) &&
           normalizedCategoryIds.length > 0
         ) {
-          for (const [idx, catId] of normalizedCategoryIds.entries()) {
-            await c.var.db.insert(productsToCategories).values({
+          await c.var.db.insert(productsToCategories).values(
+            normalizedCategoryIds.map((catId, idx) => ({
               productId: created.id,
               categoryId: catId,
               orderIndex: idx,
-            });
-          }
+            })),
+          );
         }
 
         return c.json(
@@ -1088,13 +1088,13 @@ const product = factory
             .where(eq(productsToCategories.productId, parsedData.id));
 
           // Insert new category associations
-          for (const [idx, catId] of normalizedCategoryIds.entries()) {
-            await c.var.db.insert(productsToCategories).values({
+          await c.var.db.insert(productsToCategories).values(
+            normalizedCategoryIds.map((catId, idx) => ({
               productId: parsedData.id,
               categoryId: catId,
               orderIndex: idx,
-            });
-          }
+            })),
+          );
         }
 
         // Update the product
