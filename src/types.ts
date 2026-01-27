@@ -83,9 +83,9 @@ export interface FilamentV2Response {
 
 // Slant3D V2 File API Types
 export interface STLMetrics {
-  x: number;
-  y: number;
-  z: number;
+  dimensionX: number;
+  dimensionY: number;
+  dimensionZ: number;
   weight: number;
   volume: number;
   surfaceArea: number;
