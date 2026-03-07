@@ -62,8 +62,16 @@ describe('Auth Routes', () => {
     const res = await app.fetch(request, mockEnv());
     expect(res.status).toBe(200);
 
-    const json = (await res.json()) as { message: string };
-    expect(json.message).toMatch(/success/i);
+    const json = (await res.json()) as {
+      token: string;
+      user: { id: string; email: string; name: string };
+    };
+    expect(json.token).toBe('mock-session-token');
+    expect(json.user).toEqual({
+      id: 'user_123',
+      email: 'test@example.com',
+      name: 'Test User',
+    });
     expect(res.headers.get('set-cookie')).toContain('better-auth.session_token');
   });
 

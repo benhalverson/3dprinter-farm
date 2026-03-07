@@ -13,9 +13,13 @@ const authErrorSchema = z.object({
   details: z.unknown().optional(),
 });
 
-const signInSuccessSchema = z.object({
-  message: z.string(),
-});
+const signInSuccessSchema = z
+  .object({
+    message: z.string().optional(),
+    token: z.string().optional(),
+    user: z.any().optional(),
+  })
+  .passthrough();
 
 async function readAuthResponseBody(response: Response) {
   const body = (await response.json().catch(() => null)) as Record<string, unknown> | null;
@@ -219,7 +223,10 @@ const auth = factory
           );
         }
 
-        const response = c.json({ message: 'signin success' });
+        const response = jsonResponse(
+          Object.keys(body).length > 0 ? body : { message: 'signin success' },
+          authResponse.status,
+        );
 
         const setCookie = authResponse.headers.get('set-cookie');
         if (setCookie) {
