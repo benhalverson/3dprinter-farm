@@ -32,7 +32,7 @@
     "better-auth": "^1.5.4",
     "cipher-kit": "3.0.0",
     "drizzle-orm": "^0.43.1",
-    "hono": "^4.11.4",
+    "hono": "^4.12.4",
     "hono-openapi": "^0.4.8",
     "langchain": "^0.3.37",
     "openai": "^4.57.0",
