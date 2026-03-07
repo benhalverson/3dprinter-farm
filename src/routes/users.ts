@@ -1,17 +1,68 @@
-import type { WebApiKey } from 'cipher-kit';
-// cipher-kit (web API variant) for new encryption format on profile endpoints
-import {
-  decrypt as ckDecrypt,
-  encrypt as ckEncrypt,
-  createSecretKey,
-  isInWebApiEncryptionFormat,
-} from 'cipher-kit/web-api';
 import { eq } from 'drizzle-orm';
 import { describeRoute } from 'hono-openapi';
-import { ProfileDataSchema, users } from '../db/schema';
+import {
+  ProfileDataSchema,
+  users,
+  type ProfileData,
+} from '../db/schema';
 import factory from '../factory';
 import { authMiddleware } from '../utils/authMiddleware';
-import { decryptField } from '../utils/crypto';
+import {
+  buildEncryptedProfileUpdate,
+  decryptStoredProfileValue,
+  getCipherKitSecretKey,
+} from '../utils/profileCrypto';
+
+async function updateProfileRecord(
+  c: Parameters<typeof authMiddleware>[0],
+  userId: string,
+  profile: ProfileData,
+) {
+  const passphrase = c.env.ENCRYPTION_PASSPHRASE;
+
+  if (!passphrase) {
+    return c.json({ error: 'Encryption passphrase missing' }, 500);
+  }
+
+  try {
+    const secretKey = await getCipherKitSecretKey(passphrase);
+    const encryptedProfile = await buildEncryptedProfileUpdate(
+      profile,
+      secretKey,
+    );
+
+    const [userData] = await c.var.db
+      .update(users)
+      .set(encryptedProfile)
+      .where(eq(users.id, userId))
+      .returning();
+
+    if (!userData) {
+      return c.json({ error: 'User not found' }, 404);
+    }
+
+    return c.json({
+      id: userData.id,
+      email: userData.email,
+      firstName: profile.firstName,
+      lastName: profile.lastName,
+      shippingAddress: profile.shippingAddress,
+      city: profile.city,
+      state: profile.state,
+      zipCode: profile.zipCode,
+      country: profile.country,
+      phone: profile.phone,
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error('Error updating user data (profile update):', error);
+
+    return c.json(
+      { error: 'Internal Server Error', details: message },
+      500,
+    );
+  }
+}
 
 const userRouter = factory
   .createApp()
@@ -32,52 +83,6 @@ const userRouter = factory
       const user = c.get('jwtPayload') as { id: string; email: string };
       if (!user) return c.json({ error: 'Unauthorized' }, 401);
 
-      // In-memory cache for derived secret keys (scoped per module load)
-      const secretKeyCache: Map<string, WebApiKey> =
-        (globalThis as any).__profileSecretKeyCache || new Map();
-      (globalThis as any).__profileSecretKeyCache = secretKeyCache;
-
-      const getSecretKey = async (passphrase: string): Promise<WebApiKey> => {
-        if (secretKeyCache.has(passphrase))
-          return secretKeyCache.get(passphrase)!;
-        const res = await createSecretKey(passphrase);
-        if (!res.success)
-          throw new Error(
-            `cipher-kit key derivation failed: ${res.error.message} - ${res.error.description}`,
-          );
-        secretKeyCache.set(passphrase, res.secretKey);
-        return res.secretKey;
-      };
-
-      const decryptValue = async (
-        value: string | null,
-        passphrase: string,
-        secretKey: WebApiKey,
-      ): Promise<string | null> => {
-        if (value == null || value === '') return value;
-        try {
-          // New format detection (cipher-kit web API: iv.encrypted.)
-          if (isInWebApiEncryptionFormat(value)) {
-            const dec = await ckDecrypt(value, secretKey);
-            if (!dec.success)
-              throw new Error(`cipher-kit decrypt error: ${dec.error.message}`);
-            return dec.result as string;
-          }
-          // Legacy format (salt:iv:cipher) heuristic: contains two ':' separators
-          if (value.includes(':') && value.split(':').length === 3) {
-            return await decryptField(value, passphrase);
-          }
-          // Test/mocked or already-plaintext value (e.g. 'encrypted-test') => fall back to legacy decryptField for compatibility with mocks
-          return await decryptField(value, passphrase);
-        } catch (e) {
-          console.warn(
-            'Profile decrypt fallback triggered for value, returning empty string. Reason:',
-            e,
-          );
-          return '';
-        }
-      };
-
       try {
         const [userData] = await c.var.db
           .select()
@@ -92,32 +97,23 @@ const userRouter = factory
         console.log('passphrase:', passphrase ? '***' : '(missing)');
         if (!passphrase)
           return c.json({ error: 'Encryption passphrase missing' }, 500);
-        const secretKey = await getSecretKey(passphrase);
+        const secretKey = await getCipherKitSecretKey(passphrase);
 
         console.time('decrypt-profile');
         const decryptedProfile = {
           id: userData.id,
           email: userData.email,
-          firstName: await decryptValue(
-            userData.firstName,
-            passphrase,
-            secretKey,
-          ),
-          lastName: await decryptValue(
-            userData.lastName,
-            passphrase,
-            secretKey,
-          ),
-          address: await decryptValue(
+          firstName: await decryptStoredProfileValue(userData.firstName, secretKey),
+          lastName: await decryptStoredProfileValue(userData.lastName, secretKey),
+          address: await decryptStoredProfileValue(
             userData.shippingAddress,
-            passphrase,
             secretKey,
           ),
-          city: await decryptValue(userData.city, passphrase, secretKey),
-          state: await decryptValue(userData.state, passphrase, secretKey),
-          zipCode: await decryptValue(userData.zipCode, passphrase, secretKey),
-          country: await decryptValue(userData.country, passphrase, secretKey),
-          phone: await decryptValue(userData.phone, passphrase, secretKey),
+          city: await decryptStoredProfileValue(userData.city, secretKey),
+          state: await decryptStoredProfileValue(userData.state, secretKey),
+          zipCode: await decryptStoredProfileValue(userData.zipCode, secretKey),
+          country: await decryptStoredProfileValue(userData.country, secretKey),
+          phone: await decryptStoredProfileValue(userData.phone, secretKey),
         };
         console.log(
           'Decrypted profile for user ID:',
@@ -126,10 +122,11 @@ const userRouter = factory
         );
         console.timeEnd('decrypt-profile');
         return c.json(decryptedProfile);
-      } catch (error: any) {
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
         console.log('Error fetching user data:', error);
         return c.json(
-          { error: 'Internal Server Error', details: error.message },
+          { error: 'Internal Server Error', details: message },
           500,
         );
       }
@@ -173,76 +170,16 @@ const userRouter = factory
         country,
       } = validation.data;
 
-      const secretKeyCache: Map<string, WebApiKey> =
-        (globalThis as any).__profileSecretKeyCache || new Map();
-      (globalThis as any).__profileSecretKeyCache = secretKeyCache;
-      const passphrase = c.env.ENCRYPTION_PASSPHRASE;
-      if (!passphrase)
-        return c.json({ error: 'Encryption passphrase missing' }, 500);
-      const getSecretKey = async (): Promise<WebApiKey> => {
-        if (secretKeyCache.has(passphrase))
-          return secretKeyCache.get(passphrase)!;
-        const res = await createSecretKey(passphrase);
-        if (!res.success)
-          throw new Error(
-            `cipher-kit key derivation failed: ${res.error.message} - ${res.error.description}`,
-          );
-        secretKeyCache.set(passphrase, res.secretKey);
-        return res.secretKey;
-      };
-
-      const encryptValue = async (
-        value: string | null,
-        secretKey: WebApiKey,
-      ): Promise<string | null> => {
-        if (value == null || value === '') return value; // store empty/nullable as-is
-        const enc = await ckEncrypt(value, secretKey);
-        if (!enc.success)
-          throw new Error(
-            `cipher-kit encrypt error: ${enc.error.message} - ${enc.error.description}`,
-          );
-        return enc.result as string;
-      };
-
-      try {
-        const secretKey = await getSecretKey();
-        const [userData] = await c.var.db
-          .update(users)
-          .set({
-            firstName: (await encryptValue(firstName, secretKey)) ?? '',
-            lastName: (await encryptValue(lastName, secretKey)) ?? '',
-            shippingAddress:
-              (await encryptValue(shippingAddress, secretKey)) ?? '',
-            city: (await encryptValue(city, secretKey)) ?? '',
-            state: (await encryptValue(state, secretKey)) ?? '',
-            zipCode: (await encryptValue(zipCode, secretKey)) ?? '',
-            country: (await encryptValue(country, secretKey)) ?? '',
-            phone: (await encryptValue(phone, secretKey)) ?? '',
-          })
-          .where(eq(users.id, authUser.id))
-          .returning();
-
-        if (!userData) return c.json({ error: 'User not found' }, 404);
-
-        return c.json({
-          id: userData.id,
-          email: userData.email,
-          firstName,
-          lastName,
-          shippingAddress,
-          city,
-          state,
-          zipCode,
-          country,
-          phone,
-        });
-      } catch (error: any) {
-        console.error('Error updating user data (self profile):', error);
-        return c.json(
-          { error: 'Internal Server Error', details: error.message },
-          500,
-        );
-      }
+      return updateProfileRecord(c, authUser.id, {
+        firstName,
+        lastName,
+        shippingAddress,
+        city,
+        state,
+        zipCode,
+        phone,
+        country,
+      });
     },
   )
 
@@ -292,79 +229,18 @@ const userRouter = factory
         country,
       } = validation.data;
 
-      // Reuse global cache from GET path to avoid re-deriving secret key
-      const secretKeyCache: Map<string, WebApiKey> =
-        (globalThis as any).__profileSecretKeyCache || new Map();
-      (globalThis as any).__profileSecretKeyCache = secretKeyCache;
-      const passphrase = c.env.ENCRYPTION_PASSPHRASE;
-      if (!passphrase)
-        return c.json({ error: 'Encryption passphrase missing' }, 500);
-      const getSecretKey = async (): Promise<WebApiKey> => {
-        if (secretKeyCache.has(passphrase))
-          return secretKeyCache.get(passphrase)!;
-        const res = await createSecretKey(passphrase);
-        if (!res.success)
-          throw new Error(
-            `cipher-kit key derivation failed: ${res.error.message} - ${res.error.description}`,
-          );
-        secretKeyCache.set(passphrase, res.secretKey);
-        return res.secretKey;
-      };
-
-      const encryptValue = async (
-        value: string | null,
-        secretKey: WebApiKey,
-      ): Promise<string | null> => {
-        if (value == null || value === '') return value; // store empty/nullable as-is
-        const enc = await ckEncrypt(value, secretKey);
-        if (!enc.success)
-          throw new Error(
-            `cipher-kit encrypt error: ${enc.error.message} - ${enc.error.description}`,
-          );
-        return enc.result as string;
-      };
-
-      try {
-        const secretKey = await getSecretKey();
-        const [userData] = await c.var.db
-          .update(users)
-          .set({
-            firstName: (await encryptValue(firstName, secretKey)) ?? '',
-            lastName: (await encryptValue(lastName, secretKey)) ?? '',
-            shippingAddress:
-              (await encryptValue(shippingAddress, secretKey)) ?? '',
-            city: (await encryptValue(city, secretKey)) ?? '',
-            state: (await encryptValue(state, secretKey)) ?? '',
-            zipCode: (await encryptValue(zipCode, secretKey)) ?? '',
-            country: (await encryptValue(country, secretKey)) ?? '',
-            phone: (await encryptValue(phone, secretKey)) ?? '',
-          })
-          .where(eq(users.id, userId))
-          .returning();
-        console.log('Updated user data for ID:', userId);
-
-        if (!userData) return c.json({ error: 'User not found' }, 404);
-
-        return c.json({
-          id: userData.id,
-          email: userData.email,
-          firstName,
-          lastName,
-          shippingAddress,
-          city,
-          state,
-          zipCode,
-          country,
-          phone,
-        });
-      } catch (error: unknown) {
-        if (error instanceof Error) {
-          return c.json(
-            { error: 'Internal Server Error', details: error.message },
-            500,
-          );
-        }
-      }
+      const response = await updateProfileRecord(c, userId, {
+        firstName,
+        lastName,
+        shippingAddress,
+        city,
+        state,
+        zipCode,
+        phone,
+        country,
+      });
+      console.log('Updated user data for ID:', userId);
+      return response;
     },
   );
 

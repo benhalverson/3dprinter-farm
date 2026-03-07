@@ -1,9 +1,3 @@
-import type { WebApiKey } from 'cipher-kit';
-import {
-  decrypt as ckDecrypt,
-  createSecretKey,
-  isInWebApiEncryptionFormat,
-} from 'cipher-kit/web-api';
 import { eq } from 'drizzle-orm';
 import type { Context } from 'hono';
 import { describeRoute } from 'hono-openapi';
@@ -18,9 +12,12 @@ import type {
   Slant3DOrderData,
   Slant3DOrderResponse,
 } from '../types';
-import { decryptField } from '../utils/crypto';
 import { generateOrderNumber } from '../utils/generateOrderNumber';
 import { getPayPalAccessToken } from '../utils/payPalAccess';
+import {
+  decryptStoredProfileValue,
+  getCipherKitSecretKey,
+} from '../utils/profileCrypto';
 
 // Schemas
 const _stripeCheckoutSchema = z.object({
@@ -353,89 +350,31 @@ const paymentsRouter = factory
             if (userRow) {
               email = userRow.email;
 
-              // Setup cipher-kit decryption (same as /profile endpoint)
-              const secretKeyCache: Map<string, WebApiKey> =
-                (globalThis as any).__profileSecretKeyCache || new Map();
-              (globalThis as any).__profileSecretKeyCache = secretKeyCache;
-
-              const getSecretKey = async (pass: string): Promise<WebApiKey> => {
-                if (secretKeyCache.has(pass)) return secretKeyCache.get(pass)!;
-                const res = await createSecretKey(pass);
-                if (!res.success)
-                  throw new Error(
-                    `cipher-kit key derivation failed: ${res.error.message}`,
-                  );
-                secretKeyCache.set(pass, res.secretKey);
-                return res.secretKey;
-              };
-
-              const decryptValue = async (
-                value: string | null,
-                pass: string,
-                secretKey: WebApiKey,
-              ): Promise<string | null> => {
-                if (value == null || value === '') return value;
-                try {
-                  // New format (cipher-kit: iv.encrypted.)
-                  if (isInWebApiEncryptionFormat(value)) {
-                    const dec = await ckDecrypt(value, secretKey);
-                    if (!dec.success)
-                      throw new Error(
-                        `cipher-kit decrypt error: ${dec.error.message}`,
-                      );
-                    return dec.result as string;
-                  }
-                  // Legacy format (salt:iv:cipher)
-                  if (value.includes(':') && value.split(':').length === 3) {
-                    return await decryptField(value, pass);
-                  }
-                  // Fallback
-                  return await decryptField(value, pass);
-                } catch (e) {
-                  console.warn(
-                    'Webhook decrypt error for value, returning empty string. Reason:',
-                    e,
-                  );
-                  return '';
-                }
-              };
-
               try {
-                const secretKey = await getSecretKey(passphrase);
+                const secretKey = await getCipherKitSecretKey(passphrase);
 
                 firstName =
-                  (await decryptValue(
-                    userRow.firstName,
-                    passphrase,
-                    secretKey,
-                  )) || firstName;
+                  (await decryptStoredProfileValue(userRow.firstName, secretKey)) ||
+                  firstName;
                 lastName =
-                  (await decryptValue(
-                    userRow.lastName,
-                    passphrase,
-                    secretKey,
-                  )) || lastName;
+                  (await decryptStoredProfileValue(userRow.lastName, secretKey)) ||
+                  lastName;
                 shippingAddress =
-                  (await decryptValue(
+                  (await decryptStoredProfileValue(
                     userRow.shippingAddress,
-                    passphrase,
                     secretKey,
                   )) || shippingAddress;
                 city =
-                  (await decryptValue(userRow.city, passphrase, secretKey)) ||
+                  (await decryptStoredProfileValue(userRow.city, secretKey)) ||
                   city;
                 state =
-                  (await decryptValue(userRow.state, passphrase, secretKey)) ||
+                  (await decryptStoredProfileValue(userRow.state, secretKey)) ||
                   state;
                 zipCode =
-                  (await decryptValue(
-                    userRow.zipCode,
-                    passphrase,
-                    secretKey,
-                  )) || zipCode;
-                const decryptedPhone = await decryptValue(
+                  (await decryptStoredProfileValue(userRow.zipCode, secretKey)) ||
+                  zipCode;
+                const decryptedPhone = await decryptStoredProfileValue(
                   userRow.phone,
-                  passphrase,
                   secretKey,
                 );
                 phone = normalizePhone(decryptedPhone || phone);
@@ -617,17 +556,23 @@ const paymentsRouter = factory
 
           // Decrypt user information
           const passphrase = c.env.ENCRYPTION_PASSPHRASE;
+          const secretKey = await getCipherKitSecretKey(passphrase);
           const email = userRow.email; // Email is not encrypted
-          const firstName = await decryptField(userRow.firstName, passphrase);
-          const lastName = await decryptField(userRow.lastName, passphrase);
-          const shippingAddress = await decryptField(
-            userRow.shippingAddress,
-            passphrase,
-          );
-          const city = await decryptField(userRow.city, passphrase);
-          const state = await decryptField(userRow.state, passphrase);
-          const zipCode = await decryptField(userRow.zipCode, passphrase);
-          const phone = await decryptField(userRow.phone, passphrase);
+          const firstName =
+            (await decryptStoredProfileValue(userRow.firstName, secretKey)) || '';
+          const lastName =
+            (await decryptStoredProfileValue(userRow.lastName, secretKey)) || '';
+          const shippingAddress =
+            (await decryptStoredProfileValue(userRow.shippingAddress, secretKey)) ||
+            '';
+          const city =
+            (await decryptStoredProfileValue(userRow.city, secretKey)) || '';
+          const state =
+            (await decryptStoredProfileValue(userRow.state, secretKey)) || '';
+          const zipCode =
+            (await decryptStoredProfileValue(userRow.zipCode, secretKey)) || '';
+          const phone =
+            (await decryptStoredProfileValue(userRow.phone, secretKey)) || '';
 
           // Create order data for Slant3D API (using the same logic from shipping endpoint)
           const allowedColors = new Set([

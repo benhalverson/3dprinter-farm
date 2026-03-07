@@ -1,10 +1,4 @@
 import { zValidator } from '@hono/zod-validator';
-import type { WebApiKey } from 'cipher-kit';
-import {
-  decrypt as ckDecrypt,
-  createSecretKey,
-  isInWebApiEncryptionFormat,
-} from 'cipher-kit/web-api';
 import { and, eq } from 'drizzle-orm';
 import { describeRoute } from 'hono-openapi';
 import Stripe from 'stripe';
@@ -13,8 +7,11 @@ import { BASE_URL } from '../constants';
 import { addCartItemSchema, cart, productsTable, users } from '../db/schema';
 import factory from '../factory';
 import { authMiddleware } from '../utils/authMiddleware';
-import { decryptField } from '../utils/crypto';
 import { generateOrderNumber } from '../utils/generateOrderNumber';
+import {
+  decryptStoredProfileValue,
+  getCipherKitSecretKey,
+} from '../utils/profileCrypto';
 
 // Schema for update cart item
 const updateCartItemSchema = z.object({
@@ -114,96 +111,24 @@ const shoppingCart = factory
         const passphrase = c.env.ENCRYPTION_PASSPHRASE;
         if (!passphrase)
           return c.json({ error: 'Encryption passphrase missing' }, 500);
+        const secretKey = await getCipherKitSecretKey(passphrase);
 
-        // Cache derived cipher-kit secret key across requests in worker lifetime
-        const secretKeyCache: Map<string, WebApiKey> =
-          (globalThis as any).__shippingSecretKeyCache || new Map();
-        (globalThis as any).__shippingSecretKeyCache = secretKeyCache;
-        const getSecretKey = async () => {
-          if (secretKeyCache.has(passphrase))
-            return secretKeyCache.get(passphrase)!;
-          const res = await createSecretKey(passphrase);
-          if (!res.success)
-            throw new Error(
-              `cipher-kit key derivation failed: ${res.error.message}`,
-            );
-          secretKeyCache.set(passphrase, res.secretKey);
-          return res.secretKey;
-        };
-        let secretKey: WebApiKey | undefined;
-
-        const decryptMaybe = async (
-          value: unknown,
-          field: string,
-        ): Promise<string> => {
-          if (typeof value !== 'string' || value.length === 0) return '';
-          // cipher-kit format detection
-          if (isInWebApiEncryptionFormat(value)) {
-            try {
-              secretKey = secretKey || (await getSecretKey());
-              const dec = await ckDecrypt(value, secretKey);
-              if (dec.success) return dec.result as string;
-              console.warn(
-                `[decryptMaybe] cipher-kit decrypt failed for ${field}:`,
-                dec.error?.message,
-              );
-              return '';
-            } catch (e) {
-              console.warn(
-                `[decryptMaybe] cipher-kit exception for ${field}:`,
-                (e as Error).message,
-              );
-              return '';
-            }
-          }
-          // legacy salt:iv:cipher
-          if (value.includes(':') && value.split(':').length === 3) {
-            try {
-              return await decryptField(value, passphrase);
-            } catch (e) {
-              console.warn(
-                `[decryptMaybe] legacy decrypt failed for ${field}:`,
-                (e as Error).message,
-              );
-              return '';
-            }
-          }
-          // treat as plaintext
-          return value;
-        };
-
-        const firstName = await decryptMaybe(userRow.firstName, 'firstName');
-        const lastName = await decryptMaybe(userRow.lastName, 'lastName');
-        const email =
-          (await decryptMaybe(userRow.email, 'email')) || userRow.email || '';
-        const shippingAddress = await decryptMaybe(
-          userRow.shippingAddress,
-          'shippingAddress',
-        );
-        const city = await decryptMaybe(userRow.city, 'city');
-        const state = await decryptMaybe(userRow.state, 'state');
-        const zipCode = await decryptMaybe(userRow.zipCode, 'zipCode');
-        const _country = await decryptMaybe(userRow.country, 'country');
-        let phone = await decryptMaybe(userRow.phone, 'phone');
-        // Additional heuristic: if phone still looks like an encoded blob (contains '.' segments, not many digits)
-        if (
-          phone?.includes('.') &&
-          !/\d{5,}/.test(phone) &&
-          phone.length > 15
-        ) {
-          try {
-            secretKey = secretKey || (await getSecretKey());
-            const dec2 = await ckDecrypt(phone, secretKey);
-            if (dec2.success && typeof dec2.result === 'string') {
-              phone = dec2.result as string;
-            }
-          } catch (e) {
-            console.warn(
-              '[phone decrypt] Heuristic decrypt attempt failed:',
-              (e as Error).message,
-            );
-          }
-        }
+        const firstName =
+          (await decryptStoredProfileValue(userRow.firstName, secretKey)) || '';
+        const lastName =
+          (await decryptStoredProfileValue(userRow.lastName, secretKey)) || '';
+        const email = userRow.email || '';
+        const shippingAddress =
+          (await decryptStoredProfileValue(userRow.shippingAddress, secretKey)) ||
+          '';
+        const city =
+          (await decryptStoredProfileValue(userRow.city, secretKey)) || '';
+        const state =
+          (await decryptStoredProfileValue(userRow.state, secretKey)) || '';
+        const zipCode =
+          (await decryptStoredProfileValue(userRow.zipCode, secretKey)) || '';
+        let phone =
+          (await decryptStoredProfileValue(userRow.phone, secretKey)) || '';
         // Sanitize phone - keep digits and leading +, enforce <=20 chars
         phone = phone ? phone.replace(/[^+0-9]/g, '') : '';
         if (phone.length > 20) phone = phone.slice(0, 20);

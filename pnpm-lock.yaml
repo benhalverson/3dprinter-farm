@@ -34,8 +34,8 @@ importers:
         specifier: ^1.5.4
         version: 1.5.4(@prisma/client@7.4.2(prisma@7.4.2(@types/react@19.2.14)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(typescript@5.9.3))(typescript@5.9.3))(drizzle-kit@0.31.8)(drizzle-orm@0.43.1(@electric-sql/pglite@0.3.15)(@libsql/client@0.14.0)(@prisma/client@7.4.2(prisma@7.4.2(@types/react@19.2.14)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(typescript@5.9.3))(typescript@5.9.3))(kysely@0.28.11)(mysql2@3.15.3)(postgres@3.4.7)(prisma@7.4.2(@types/react@19.2.14)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(typescript@5.9.3)))(mongodb@7.1.0)(mysql2@3.15.3)(prisma@7.4.2(@types/react@19.2.14)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(typescript@5.9.3))(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(vitest@3.1.2(@types/node@22.19.7)(jiti@2.6.1)(yaml@2.8.2))
       cipher-kit:
-        specifier: ^1.0.1
-        version: 1.0.1
+        specifier: 3.0.0
+        version: 3.0.0
       drizzle-orm:
         specifier: ^0.43.1
         version: 0.43.1(@electric-sql/pglite@0.3.15)(@libsql/client@0.14.0)(@prisma/client@7.4.2(prisma@7.4.2(@types/react@19.2.14)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(typescript@5.9.3))(typescript@5.9.3))(kysely@0.28.11)(mysql2@3.15.3)(postgres@3.4.7)(prisma@7.4.2(@types/react@19.2.14)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(typescript@5.9.3))
@@ -1940,8 +1940,9 @@ packages:
     resolution: {integrity: sha512-Qgzu8kfBvo+cA4962jnP1KkS6Dop5NS6g7R5LFYJr4b8Ub94PPQXUksCw9PvXoeXPRRddRNC5C1JQUR2SMGtnA==}
     engines: {node: '>= 14.16.0'}
 
-  cipher-kit@1.0.1:
-    resolution: {integrity: sha512-0I+kJEppy+uRl2iNpl4Z4iN8eIGgIBoKsfYfZvjvRECx5dmpFLc7t2a5fXP1Tk/D7duSQWTaSdYvZUVk/ckjpg==}
+  cipher-kit@3.0.0:
+    resolution: {integrity: sha512-A+MkROCRctzXGWaW+Snyz1PavY8TZ/1eubSAkBhcJcwO5pstmM1BFft5qlXQuEO+wb11OjYzD8swsWjzfb08vg==}
+    engines: {node: '>=18.0.0'}
 
   citty@0.1.6:
     resolution: {integrity: sha512-tskPPKEs8D2KPafUypv2gxwJP8h/OaJmC82QQGGDQcHvXX43xF2VDACcJVmZ0EuSxkpO9Kc4MlrA3q0+FG58AQ==}
@@ -4752,7 +4753,7 @@ snapshots:
     dependencies:
       readdirp: 4.1.2
 
-  cipher-kit@1.0.1: {}
+  cipher-kit@3.0.0: {}
 
   citty@0.1.6:
     dependencies:
