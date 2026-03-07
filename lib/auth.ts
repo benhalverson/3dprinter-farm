@@ -5,6 +5,10 @@ import { openAPI } from 'better-auth/plugins';
 import { drizzle } from 'drizzle-orm/d1';
 import * as schema from '../src/db/schema';
 import type { Bindings } from '../src/types';
+import {
+  hashPassword as hashLegacyPassword,
+  verifyPassword as verifyLegacyPassword,
+} from '../src/utils/crypto';
 
 function getAuthSecret(env?: Bindings) {
   const secret = env?.BETTER_AUTH_SECRET?.trim();
@@ -29,6 +33,27 @@ function getCookieAttributes(baseURL: string) {
   };
 }
 
+async function hashWorkerPassword(password: string) {
+  const { salt, hash } = await hashLegacyPassword(password);
+  return `${salt}:${hash}`;
+}
+
+async function verifyWorkerPassword({
+  hash,
+  password,
+}: {
+  hash: string;
+  password: string;
+}) {
+  const [salt, derivedHash] = hash.split(':');
+
+  if (!salt || !derivedHash) {
+    return false;
+  }
+
+  return verifyLegacyPassword(password, salt, derivedHash);
+}
+
 export function createAuth(database: Bindings['DB'], env?: Bindings) {
   const db = drizzle(database, { schema });
   const baseURL = env?.DOMAIN || 'http://localhost:8787';
@@ -45,6 +70,10 @@ export function createAuth(database: Bindings['DB'], env?: Bindings) {
     baseURL,
     emailAndPassword: {
       enabled: true,
+      password: {
+        hash: hashWorkerPassword,
+        verify: verifyWorkerPassword,
+      },
     },
     user: {
       modelName: 'users',

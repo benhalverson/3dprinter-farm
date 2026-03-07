@@ -113,30 +113,25 @@ const auth = factory
       const displayName = name || email.split('@')[0] || 'User';
 
       try {
-        const result = await betterAuth.api.signUpEmail({
-          body: { email, password, name: displayName },
-          headers: c.req.raw.headers,
-        });
-
-        const signInResponse = await betterAuth.handler(
-          new Request(new URL('/api/auth/sign-in/email', c.req.url), {
+        const signUpResponse = await betterAuth.handler(
+          new Request(new URL('/api/auth/sign-up/email', c.req.url), {
             method: 'POST',
             headers: new Headers({
               'content-type': 'application/json',
               origin: c.req.header('origin') || new URL(c.req.url).origin,
             }),
-            body: JSON.stringify({ email, password }),
+            body: JSON.stringify({ email, password, name: displayName }),
           }),
         );
 
-        const signInBody = await readAuthResponseBody(signInResponse);
+        const signUpBody = await readAuthResponseBody(signUpResponse);
 
-        if (!signInResponse.ok) {
+        if (!signUpResponse.ok) {
           return jsonResponse(
-            Object.keys(signInBody).length > 0
-              ? signInBody
-              : { error: 'User created but session could not be established' },
-            signInResponse.status,
+            Object.keys(signUpBody).length > 0
+              ? signUpBody
+              : { error: 'Failed to create user' },
+            signUpResponse.status,
           );
         }
 
@@ -144,12 +139,12 @@ const auth = factory
           {
             success: true,
             message: 'User created successfully',
-            user: result.user,
+            user: signUpBody.user,
           },
           200,
         );
 
-        const setCookie = signInResponse.headers.get('set-cookie');
+        const setCookie = signUpResponse.headers.get('set-cookie');
         if (setCookie) {
           response.headers.set('set-cookie', setCookie);
         }
