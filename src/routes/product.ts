@@ -999,6 +999,116 @@ const product = factory
     describeRoute({
       description: 'Update an existing product',
       tags: ['Products'],
+      requestBody: {
+        content: {
+          'application/json': {
+            schema: {
+              type: 'object',
+              required: [
+                'id',
+                'name',
+                'description',
+                'price',
+                'filamentType',
+                'color',
+                'image',
+              ],
+              properties: {
+                id: {
+                  type: 'number',
+                  description: 'Product ID (required)',
+                },
+                name: {
+                  type: 'string',
+                  description: 'Product name (required)',
+                },
+                description: {
+                  type: 'string',
+                  description: 'Product description (required)',
+                },
+                price: {
+                  type: 'number',
+                  description: 'Product price (required)',
+                },
+                filamentType: {
+                  type: 'string',
+                  description: 'Filament type (required)',
+                },
+                color: {
+                  type: 'string',
+                  description: 'Product color (required)',
+                },
+                image: {
+                  type: 'string',
+                  description: 'Product image URL (required)',
+                },
+                imageGallery: {
+                  type: 'array',
+                  items: {
+                    type: 'string',
+                  },
+                  description:
+                    'Array of image URLs (optional). If provided, must contain at least 1 image. Send empty array [] or omit this field to exclude images.',
+                },
+                categoryIds: {
+                  type: 'array',
+                  items: {
+                    type: 'number',
+                  },
+                  description:
+                    'Array of category IDs (optional). If provided, must contain at least 1 category ID.',
+                },
+                categoryId: {
+                  type: 'array',
+                  items: {
+                    type: 'number',
+                  },
+                  description:
+                    'Alternative to categoryIds: array of category IDs (optional). If provided, must contain at least 1 category ID.',
+                },
+              },
+            } as OpenAPISchema,
+          },
+        },
+        required: true,
+      },
+      responses: {
+        200: {
+          description: 'Product updated successfully',
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                properties: {
+                  success: { type: 'boolean' },
+                  message: { type: 'string' },
+                },
+              },
+            },
+          },
+        },
+        400: {
+          description:
+            'Validation error. imageGallery must have at least 1 item if provided.',
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                properties: {
+                  error: { type: 'string' },
+                  details: { type: 'array' },
+                },
+              },
+            },
+          },
+        },
+        404: {
+          description: 'Product not found',
+        },
+        500: {
+          description: 'Internal server error',
+        },
+      },
     }),
     zValidator('json', updateProductSchema),
     async c => {
