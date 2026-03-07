@@ -62,8 +62,18 @@ describe('Auth Routes', () => {
     const res = await app.fetch(request, mockEnv());
     expect(res.status).toBe(200);
 
-    const json = (await res.json()) as { message: string };
-    expect(json.message).toMatch(/success/i);
+    const json = (await res.json()) as {
+      message: string;
+      user: { id: string; email: string; name: string; role: string };
+    };
+    expect(json.message).toBe('signin success');
+    expect(json.user).toEqual({
+      id: 'user_123',
+      email: 'test@example.com',
+      name: 'Test User',
+      role: 'user',
+    });
+    expect(json).not.toHaveProperty('token');
     expect(res.headers.get('set-cookie')).toContain('better-auth.session_token');
   });
 
@@ -88,6 +98,34 @@ describe('Auth Routes', () => {
     expect(res.status).toBe(401);
     expect(await res.json()).toEqual({ error: 'Invalid credentials' });
     expect(res.headers.get('set-cookie')).toBeNull();
+  });
+
+  test('POST /auth/signin fails when Better Auth returns malformed user data', async () => {
+    mockBetterAuth.handler.mockResolvedValueOnce(
+      new Response(JSON.stringify({ token: 'mock-session-token', user: { email: 'test@example.com' } }), {
+        status: 200,
+        headers: {
+          'content-type': 'application/json',
+          'set-cookie': 'better-auth.session_token=mock-session-token; HttpOnly; Path=/; SameSite=None; Secure',
+        },
+      }),
+    );
+
+    const request = new Request('http://localhost/auth/signin', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        email: 'user@example.com',
+        password: 'securepassword123',
+      }),
+    });
+
+    const res = await app.fetch(request, mockEnv());
+    expect(res.status).toBe(502);
+    expect(await res.json()).toEqual({
+      error: 'Invalid auth response',
+      details: 'Missing or malformed user in auth provider response',
+    });
   });
 
   test('POST /auth/signup returns non-2xx when session creation fails', async () => {

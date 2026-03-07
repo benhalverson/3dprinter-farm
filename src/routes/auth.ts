@@ -15,6 +15,12 @@ const authErrorSchema = z.object({
 
 const signInSuccessSchema = z.object({
   message: z.string(),
+  user: z.object({
+    id: z.string(),
+    email: z.string(),
+    name: z.string(),
+    role: z.string(),
+  }),
 });
 
 async function readAuthResponseBody(response: Response) {
@@ -34,6 +40,31 @@ function jsonResponse(body: Record<string, unknown>, status = 200) {
       'content-type': 'application/json',
     },
   });
+}
+
+function getSafeUser(body: Record<string, unknown>) {
+  const user = body.user;
+
+  if (!user || typeof user !== 'object' || Array.isArray(user)) {
+    return null;
+  }
+
+  const record = user as Record<string, unknown>;
+
+  if (
+    typeof record.id !== 'string' ||
+    typeof record.email !== 'string' ||
+    typeof record.name !== 'string'
+  ) {
+    return null;
+  }
+
+  return {
+    id: record.id,
+    email: record.email,
+    name: record.name,
+    role: typeof record.role === 'string' ? record.role : 'user',
+  };
 }
 
 const signOutRouteDescription = describeRoute({
@@ -191,6 +222,14 @@ const auth = factory
           },
           description: 'Invalid credentials',
         },
+        502: {
+          content: {
+            'application/json': {
+              schema: resolver(authErrorSchema),
+            },
+          },
+          description: 'The auth provider returned an invalid signin response',
+        },
       },
     }),
     zValidator('json', signInSchema),
@@ -219,7 +258,24 @@ const auth = factory
           );
         }
 
-        const response = c.json({ message: 'signin success' });
+        const safeUser = getSafeUser(body);
+
+        if (!safeUser) {
+          return c.json(
+            {
+              error: 'Invalid auth response',
+              details: 'Missing or malformed user in auth provider response',
+            },
+            502,
+          );
+        }
+
+        const responseBody = {
+          message: 'signin success',
+          user: safeUser,
+        };
+
+        const response = c.json(responseBody, 200);
 
         const setCookie = authResponse.headers.get('set-cookie');
         if (setCookie) {
