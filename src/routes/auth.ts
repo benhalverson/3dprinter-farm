@@ -222,6 +222,14 @@ const auth = factory
           },
           description: 'Invalid credentials',
         },
+        502: {
+          content: {
+            'application/json': {
+              schema: resolver(authErrorSchema),
+            },
+          },
+          description: 'The auth provider returned an invalid signin response',
+        },
       },
     }),
     zValidator('json', signInSchema),
@@ -250,15 +258,21 @@ const auth = factory
           );
         }
 
+        const safeUser = getSafeUser(body);
+
+        if (!safeUser) {
+          return c.json(
+            {
+              error: 'Invalid auth response',
+              details: 'Missing or malformed user in auth provider response',
+            },
+            502,
+          );
+        }
+
         const responseBody = {
           message: 'signin success',
-          user:
-            getSafeUser(body) || {
-              id: '',
-              email,
-              name: email.split('@')[0] || 'User',
-              role: 'user',
-            },
+          user: safeUser,
         };
 
         const response = c.json(responseBody, 200);
