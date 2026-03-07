@@ -30,7 +30,7 @@
     "@scalar/hono-api-reference": "^0.9.1",
     "@simplewebauthn/server": "^13.1.1",
     "better-auth": "^1.5.4",
-    "cipher-kit": "^1.0.1",
+    "cipher-kit": "3.0.0",
     "drizzle-orm": "^0.43.1",
     "hono": "^4.11.4",
     "hono-openapi": "^0.4.8",
@@ -47,7 +47,9 @@
       "vite@>=6.3.0 <=6.3.3": ">=6.3.4"
     },
     "onlyBuiltDependencies": [
+      "@prisma/engines",
       "esbuild",
+      "prisma",
       "sharp",
       "workerd"
     ]

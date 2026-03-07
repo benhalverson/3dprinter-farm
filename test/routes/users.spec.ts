@@ -116,4 +116,51 @@ describe('Profile Endpoints', () => {
       email: 'test2@test.com',
     });
   });
+
+  test('POST /profile updates profile with shared encryption flow', async () => {
+    mockUpdate.mockResolvedValueOnce([
+      {
+        id: 'user_123',
+        email: 'test@example.com',
+        firstName: 'Test',
+        lastName: 'User',
+        shippingAddress: '123 Main St',
+        city: 'Testville',
+        state: 'TS',
+        zipCode: '12345',
+        country: 'USA',
+        phone: '123-456-7890',
+      },
+    ]);
+
+    const profileData = {
+      firstName: 'Test',
+      lastName: 'User',
+      shippingAddress: '123 Main St',
+      city: 'Testville',
+      state: 'TS',
+      zipCode: '12345',
+      country: 'USA',
+      phone: '123-456-7890',
+    };
+
+    const res = await app.fetch(
+      new Request('http://localhost/profile', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Cookie: 'better-auth.session_token=mock-session-token',
+        },
+        body: JSON.stringify(profileData),
+      }),
+      env,
+    );
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({
+      email: 'test2@test.com',
+      firstName: 'Test',
+      shippingAddress: '123 Main St',
+    });
+  });
 });
