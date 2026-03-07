@@ -3,7 +3,7 @@ import type { orderSchema } from './db/schema';
 
 export type Bindings = {
   BUCKET: R2Bucket;
-  PHOTOS_BUCKET: R2Bucket;
+  PHOTO_BUCKET: R2Bucket;
   SLANT_API: string;
   SLANT_API_V2: string;
   SLANT_PLATFORM_ID: string;
@@ -14,6 +14,7 @@ export type Bindings = {
   DB: D1Database;
   COLOR_CACHE: Cache;
   JWT_SECRET: string;
+  BETTER_AUTH_SECRET: string;
   RP_ID: string;
   RP_NAME: string;
   RATE_LIMIT_KV: KVNamespace;

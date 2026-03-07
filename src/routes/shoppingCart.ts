@@ -890,7 +890,7 @@ const shoppingCart = factory
         content: {
           'application/json': {
             schema: z.object({
-              userId: z.number().optional(),
+              userId: z.string().optional(),
               customerEmail: z.string().email().optional(),
               shippingAddress: z
                 .object({

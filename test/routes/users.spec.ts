@@ -1,43 +1,9 @@
-import { testClient } from 'hono/testing';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import app from '../../src';
 import { mockAuth } from '../mocks/auth';
 import { mockDrizzle, mockUpdate, mockWhere } from '../mocks/drizzle';
 import { mockEnv } from '../mocks/env';
 import { mockGlobalFetch } from '../mocks/fetch';
-
-vi.mock('@simplewebauthn/server', async () => {
-  const actual = await vi.importActual<typeof import('@simplewebauthn/server')>(
-    '@simplewebauthn/server',
-  );
-  return {
-    ...actual,
-    generateRegistrationOptions: vi.fn(async () => ({
-      rp: { id: 'example.com', name: 'ExampleApp' },
-      user: {
-        id: 'user-id',
-        name: 'test@example.com',
-        displayName: 'Test User',
-      },
-      challenge: 'fake-challenge',
-      pubKeyCredParams: [],
-    })),
-    generateAuthenticationOptions: vi.fn(async () => ({
-      challenge: 'fake-challenge',
-      allowCredentials: [],
-    })),
-    verifyRegistrationResponse: vi.fn(async () => ({
-      verified: true,
-      registrationInfo: {
-        credential: {
-          id: 'credential-id-abc',
-          publicKey: 'fake-public-key',
-          counter: 0,
-        },
-      },
-    })),
-  };
-});
 
 // Mock crypto functions
 vi.mock('../../src/utils/crypto', async () => {
@@ -71,14 +37,13 @@ mockGlobalFetch();
 const env = mockEnv();
 
 describe('Profile Endpoints', () => {
-  const _client = testClient(app, { env });
   beforeEach(() => {
     vi.clearAllMocks();
 
     mockWhere
       .mockResolvedValueOnce([
         {
-          id: 1,
+          id: 'user_123',
           email: 'test@example.com',
           firstName: 'encrypted-test',
           lastName: 'encrypted-user',
@@ -89,12 +54,11 @@ describe('Profile Endpoints', () => {
           country: 'encrypted-usa',
           phone: 'encrypted-123-456-7890',
         },
-      ])
-      .mockResolvedValueOnce([{ credentialId: 'credential-id-abc' }]);
+      ]);
 
     // Mock the update for the profile update endpoint
     const updatedUser = {
-      id: 1,
+      id: 'user_123',
       email: 'test2@test.com',
       firstName: 'Test',
       lastName: 'User',
@@ -113,7 +77,7 @@ describe('Profile Endpoints', () => {
       new Request('http://localhost/profile', {
         method: 'GET',
         headers: {
-          Cookie: 'token=s.mocked.signed.cookie',
+          Cookie: 'better-auth.session_token=mock-session-token',
         },
       }),
       env,
@@ -134,9 +98,12 @@ describe('Profile Endpoints', () => {
       email: 'test2@test.com',
     };
     const res = await app.fetch(
-      new Request('http://localhost/profile/1', {
+      new Request('http://localhost/profile/user_123', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          Cookie: 'better-auth.session_token=mock-session-token',
+        },
         body: JSON.stringify(profileData),
       }),
       env,

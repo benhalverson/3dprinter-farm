@@ -1,66 +1,37 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import app from '../../src/index';
-import { hashPassword, signJWT } from '../../src/utils/crypto';
+import type { Bindings } from '../../src/types';
+import { mockAuth, mockBetterAuth } from '../mocks/auth';
+import { mockDrizzle } from '../mocks/drizzle';
 
-// Shared dynamic mock for select().from().where()
-const mockWhere = vi.fn();
-
-// drizzle-orm mock
-vi.mock('drizzle-orm/d1', () => {
-  return {
-    drizzle: vi.fn(() => ({
-      select: () => ({
-        from: () => ({ where: mockWhere }),
-      }),
-      insert: () => ({
-        values: () => ({
-          returning: () => Promise.resolve([{ id: 1, email: 'mock@test.com' }]),
-        }),
-      }),
-    })),
-  };
-});
-
-// Mock crypto
-vi.mock('../../src/utils/crypto', async importOriginal => {
-  const actual = await importOriginal();
-  return {
-    ...actual,
-    hashPassword: vi.fn(() =>
-      Promise.resolve({ salt: 'mock-salt', hash: 'mock-hash' }),
-    ),
-    verifyPassword: vi.fn(() => Promise.resolve(true)),
-    signJWT: vi.fn(() => Promise.resolve('mock.jwt.token')),
-  };
-});
-
-import { verifyPassword } from '../../src/utils/crypto';
+mockAuth();
+mockDrizzle();
 
 function mockEnv() {
   return {
+    DB: {} as Bindings['DB'],
     JWT_SECRET: 'test-secret',
+    BETTER_AUTH_SECRET: 'test-secret-key-minimum-32-characters-long',
     RATE_LIMIT_KV: {
       get: vi.fn().mockResolvedValue(null),
       put: vi.fn().mockResolvedValue(undefined),
     },
-  };
+  } as Bindings;
 }
 
 describe('Auth Routes', () => {
-  const testEmail = 'user@example.com';
-  const testPassword = 'securepassword123';
-
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
   test('POST /auth/signup creates a new user', async () => {
-    mockWhere.mockResolvedValueOnce([]); // simulate user does not exist
-
     const request = new Request('http://localhost/auth/signup', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: testEmail, password: testPassword }),
+      body: JSON.stringify({
+        email: 'user@example.com',
+        password: 'securepassword123',
+      }),
     });
 
     const res = await app.fetch(request, mockEnv());
@@ -68,47 +39,20 @@ describe('Auth Routes', () => {
 
     const json = (await res.json()) as { message: string };
     expect(json.message).toMatch(/success/i);
-    expect(json).toHaveProperty('token');
-
-    expect(hashPassword).toHaveBeenCalledWith(testPassword);
-    expect(signJWT).toHaveBeenCalled();
+    expect(mockBetterAuth.signUpEmail).toHaveBeenCalled();
 
     const setCookieHeader = res.headers.get('set-cookie');
-    expect(setCookieHeader).toMatch(/token=mock\.jwt\.token/);
-    expect(setCookieHeader).toMatch(/HttpOnly/);
+    expect(setCookieHeader).toContain('better-auth.session_token=mock-session-token');
   });
 
-  test('POST /auth/signup returns 409 if user already exists', async () => {
-    mockWhere.mockResolvedValueOnce([{ id: 1, email: testEmail }]); // simulate user exists
-
-    const request = new Request('http://localhost/auth/signup', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: testEmail, password: testPassword }),
-    });
-
-    const res = await app.fetch(request, mockEnv());
-    expect(res.status).toBe(409);
-    const json = (await res.json()) as { error: string };
-    expect(json.error).toMatch(/already exists/i);
-  });
-
-  test('POST /auth/signin with existing user and valid password', async () => {
-    mockWhere.mockResolvedValueOnce([
-      {
-        id: 1,
-        email: testEmail,
-        passwordHash: 'mock-hash',
-        passwordSalt: 'mock-salt',
-      },
-    ]);
-    vi.mocked(verifyPassword).mockResolvedValueOnce(true);
-
+  test('POST /auth/signin returns success and session cookie', async () => {
     const request = new Request('http://localhost/auth/signin', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-
-      body: JSON.stringify({ email: testEmail, password: testPassword }),
+      body: JSON.stringify({
+        email: 'user@example.com',
+        password: 'securepassword123',
+      }),
     });
 
     const res = await app.fetch(request, mockEnv());
@@ -116,43 +60,63 @@ describe('Auth Routes', () => {
 
     const json = (await res.json()) as { message: string };
     expect(json.message).toMatch(/success/i);
+    expect(res.headers.get('set-cookie')).toContain('better-auth.session_token');
   });
 
-  test('POST /auth/signin with invalid password returns 401', async () => {
-    mockWhere.mockResolvedValueOnce([
-      {
-        id: 1,
-        email: testEmail,
-        passwordHash: 'mock-hash',
-        passwordSalt: 'mock-salt',
-      },
-    ]);
-    vi.mocked(verifyPassword).mockResolvedValueOnce(false);
+  test('POST /auth/signin propagates Better Auth failures', async () => {
+    mockBetterAuth.handler.mockResolvedValueOnce(
+      new Response(JSON.stringify({ error: 'Invalid credentials' }), {
+        status: 401,
+        headers: { 'content-type': 'application/json' },
+      }),
+    );
 
     const request = new Request('http://localhost/auth/signin', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: testEmail, password: 'wrong-password' }),
+      body: JSON.stringify({
+        email: 'user@example.com',
+        password: 'wrong-password',
+      }),
     });
 
     const res = await app.fetch(request, mockEnv());
     expect(res.status).toBe(401);
-    const json = (await res.json()) as { error: string };
-    expect(json.error).toMatch(/invalid/i);
+    expect(await res.json()).toEqual({ error: 'Invalid credentials' });
+    expect(res.headers.get('set-cookie')).toBeNull();
   });
 
-  test('POST /auth/signin with unknown user returns 401', async () => {
-    mockWhere.mockResolvedValueOnce([]); // simulate user not found
+  test('POST /auth/signup returns non-2xx when session creation fails', async () => {
+    mockBetterAuth.handler.mockResolvedValueOnce(
+      new Response(JSON.stringify({ error: 'Session creation failed' }), {
+        status: 500,
+        headers: { 'content-type': 'application/json' },
+      }),
+    );
 
-    const request = new Request('http://localhost/auth/signin', {
+    const request = new Request('http://localhost/auth/signup', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: 'unknown@example.com', password: 'pw' }),
+      body: JSON.stringify({
+        email: 'user@example.com',
+        password: 'securepassword123',
+      }),
     });
 
     const res = await app.fetch(request, mockEnv());
-    expect(res.status).toBe(401);
-    const json = (await res.json()) as { error: string };
-    expect(json.error).toMatch(/invalid/i);
+    expect(res.status).toBe(500);
+    expect(await res.json()).toEqual({ error: 'Session creation failed' });
+    expect(res.headers.get('set-cookie')).toBeNull();
+  });
+
+  test('GET /auth/signout clears the session cookie', async () => {
+    const request = new Request('http://localhost/auth/signout', {
+      method: 'GET',
+      headers: { Cookie: 'better-auth.session_token=mock-session-token' },
+    });
+
+    const res = await app.fetch(request, mockEnv());
+    expect(res.status).toBe(200);
+    expect(res.headers.get('set-cookie')).toContain('Max-Age=0');
   });
 });

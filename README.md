@@ -17,10 +17,50 @@ A Cloudflare Workers-based API for managing 3D printer products, built with Hono
 - **Framework**: Hono
 - **Database**: Cloudflare D1 (SQLite)
 - **ORM**: Drizzle ORM
-- **Authentication**: JWT with signed cookies
+- **Authentication**: Better Auth with session cookies and passkeys/WebAuthn
 - **Payment Processing**: Stripe
 - **Validation**: Zod
 - **Testing**: Vitest
+
+## Authentication
+
+The API now uses Better Auth for session-based authentication.
+
+- Browser sessions use the `better-auth.session_token` cookie.
+- Compatibility routes remain available at `/auth/signup`, `/auth/signin`, and `/auth/signout`.
+- Native Better Auth routes are mounted under `/api/auth/*`.
+
+### Native Better Auth reference docs
+
+When the local dev server is running, Better Auth exposes an interactive native API reference at:
+
+- `http://localhost:8787/api/auth/reference`
+
+If you are using the dev server on a different host, use that host with the same path.
+
+### Native auth endpoints
+
+Common native auth endpoints exposed by this API include:
+
+- `GET /api/auth/get-session`
+- `POST /api/auth/sign-in/email`
+- `POST /api/auth/sign-out`
+
+### Passkey endpoints
+
+Passkey routes are exposed under `/api/auth/passkey/*`.
+
+- `GET /api/auth/passkey/generate-register-options`
+- `POST /api/auth/passkey/verify-registration`
+- `GET /api/auth/passkey/generate-authenticate-options`
+- `POST /api/auth/passkey/verify-authentication`
+- `GET /api/auth/passkey/list-user-passkeys`
+
+Notes:
+
+- `POST /api/auth/passkey/verify-registration` requires a valid WebAuthn credential response.
+- Invalid registration payloads missing a credential ID now return `400 Bad Request` instead of `500 Internal Server Error`.
+- `/api/auth/passkey/register` and `/api/auth/passkey/authenticate` are client helper names in Better Auth, not server routes in this API.
 
 ## Database Migrations
 
@@ -199,8 +239,18 @@ npx wrangler d1 export DB_NAME                         # Export database
 1. Clone the repository
 2. Install dependencies: `pnpm install`
 3. Set up environment variables (copy `.dev.vars.example` to `.dev.vars`)
-4. Run migrations: `npx drizzle-kit push`
-5. Start development server: `pnpm run dev`
+4. Add a strong `BETTER_AUTH_SECRET` and set `DOMAIN` for local Better Auth callbacks/docs
+	 - Example local values:
+		 - `BETTER_AUTH_SECRET=<random 32+ byte secret>`
+		 - `DOMAIN=http://localhost:8787`
+		 - `RP_ID=localhost`
+5. Run migrations: `npx drizzle-kit push`
+6. Start development server: `pnpm run dev`
+
+After the dev server starts, you can open:
+
+- App docs: `http://localhost:8787/docs`
+- Better Auth native reference: `http://localhost:8787/api/auth/reference`
 
 ## Deployment
 
@@ -215,3 +265,7 @@ pnpm run deploy
 - `GET /product/:id` - Get specific product
 - `POST /add-product` - Add new product (authenticated)
 - `PUT /update-product` - Update product (authenticated)
+- `POST /auth/signup` - Create a user and issue a session cookie
+- `POST /auth/signin` - Sign in and issue a session cookie
+- `GET|POST /auth/signout` - Clear the current session cookie
+- `GET /api/auth/get-session` - Return the active Better Auth session

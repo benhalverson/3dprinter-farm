@@ -4,11 +4,12 @@ export function mockEnv(): Bindings {
   return {
     DB: {} as D1Database,
     JWT_SECRET: 'test-secret',
+    BETTER_AUTH_SECRET: 'test-secret-key-minimum-32-characters-long',
     SLANT_API: 'fake-api-key',
     SLANT_API_V2: 'fake-api-key-v2',
     SLANT_PLATFORM_ID: 'test-platform-id',
     BUCKET: {} as R2Bucket,
-    PHOTOS_BUCKET: {} as R2Bucket,
+    PHOTO_BUCKET: {} as R2Bucket,
     STRIPE_PUBLISHABLE_KEY: 'pk_test_123',
     STRIPE_SECRET_KEY: 'sk_test_123',
     STRIPE_WEBHOOK_SECRET: 'whsec_123',

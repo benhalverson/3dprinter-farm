@@ -10,6 +10,15 @@ export type WorkerEnv = {
   Bindings: Env;
   Variables: {
     db: DrizzleD1Database<typeof schema>;
+    user?: unknown;
+    session?: unknown;
+    jwtPayload?: {
+      id?: string;
+      email?: string;
+      name?: string | null;
+      role?: string | null;
+    };
+    userId?: string;
   };
 };
 

@@ -1,12 +1,10 @@
 import { relations, sql } from 'drizzle-orm';
 import {
-  blob,
   integer,
   primaryKey,
   real,
   sqliteTable,
   text,
-  uniqueIndex,
 } from 'drizzle-orm/sqlite-core';
 import { z } from 'zod';
 
@@ -126,10 +124,19 @@ export const ProductsDataSchema = z
   .omit({ id: true, skuNumber: true });
 
 export const users = sqliteTable('users', {
-  id: integer('id').primaryKey(),
+  id: text('id').primaryKey(),
+  name: text('name').notNull(),
   email: text('email').notNull().unique(),
-  passwordHash: text('password_hash').notNull(),
-  salt: text('salt').notNull(),
+  emailVerified: integer('email_verified', { mode: 'boolean' })
+    .default(false)
+    .notNull(),
+  image: text('image'),
+  createdAt: integer('created_at', { mode: 'timestamp_ms' })
+    .default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`)
+    .notNull(),
+  updatedAt: integer('updated_at', { mode: 'timestamp_ms' })
+    .default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`)
+    .notNull(),
   firstName: text('first_name').default('').notNull(),
   lastName: text('last_name').default('').notNull(),
   shippingAddress: text('shipping_address').default('').notNull(),
@@ -142,9 +149,80 @@ export const users = sqliteTable('users', {
   role: text('role').default('user').notNull(),
 });
 
+export const session = sqliteTable('session', {
+  id: text('id').primaryKey(),
+  expiresAt: integer('expires_at', { mode: 'timestamp_ms' }).notNull(),
+  token: text('token').notNull().unique(),
+  createdAt: integer('created_at', { mode: 'timestamp_ms' })
+    .default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`)
+    .notNull(),
+  updatedAt: integer('updated_at', { mode: 'timestamp_ms' })
+    .default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`)
+    .notNull(),
+  ipAddress: text('ip_address'),
+  userAgent: text('user_agent'),
+  userId: text('user_id')
+    .notNull()
+    .references(() => users.id, { onDelete: 'cascade' }),
+  impersonatedBy: text('impersonated_by'),
+});
+
+export const account = sqliteTable('account', {
+  id: text('id').primaryKey(),
+  accountId: text('account_id').notNull(),
+  providerId: text('provider_id').notNull(),
+  userId: text('user_id')
+    .notNull()
+    .references(() => users.id, { onDelete: 'cascade' }),
+  accessToken: text('access_token'),
+  refreshToken: text('refresh_token'),
+  idToken: text('id_token'),
+  accessTokenExpiresAt: integer('access_token_expires_at', {
+    mode: 'timestamp_ms',
+  }),
+  refreshTokenExpiresAt: integer('refresh_token_expires_at', {
+    mode: 'timestamp_ms',
+  }),
+  scope: text('scope'),
+  password: text('password'),
+  createdAt: integer('created_at', { mode: 'timestamp_ms' })
+    .default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`)
+    .notNull(),
+  updatedAt: integer('updated_at', { mode: 'timestamp_ms' })
+    .default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`)
+    .notNull(),
+});
+
+export const verification = sqliteTable('verification', {
+  id: text('id').primaryKey(),
+  identifier: text('identifier').notNull(),
+  value: text('value').notNull(),
+  expiresAt: integer('expires_at', { mode: 'timestamp_ms' }).notNull(),
+  createdAt: integer('created_at', { mode: 'timestamp_ms' })
+    .default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`),
+  updatedAt: integer('updated_at', { mode: 'timestamp_ms' })
+    .default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`),
+});
+
+export const passkey = sqliteTable('passkey', {
+  id: text('id').primaryKey(),
+  name: text('name'),
+  publicKey: text('public_key').notNull(),
+  userId: text('user_id')
+    .notNull()
+    .references(() => users.id, { onDelete: 'cascade' }),
+  credentialID: text('credential_id').notNull(),
+  counter: integer('counter').notNull(),
+  deviceType: text('device_type').notNull(),
+  backedUp: integer('backed_up', { mode: 'boolean' }).notNull(),
+  transports: text('transports'),
+  createdAt: integer('created_at', { mode: 'timestamp_ms' }),
+  aaguid: text('aaguid'),
+});
+
 const OrderDataSchema = z.object({
   id: z.number(),
-  userId: z.number(),
+  userId: z.string(),
   orderNumber: z.string(),
   filename: z.string().trim(),
   fileURL: z.string(),
@@ -175,7 +253,7 @@ export type ProfileData = z.infer<typeof ProfileDataSchema>;
 
 export const ordersTable = sqliteTable('ordersTable', {
   id: integer('id').primaryKey(),
-  userId: integer('user_id')
+  userId: text('user_id')
     .references(() => users.id, { onDelete: 'cascade' }) // Establish relationship with users table
     .notNull(),
   orderNumber: text('order_number').notNull().unique(),
@@ -200,43 +278,6 @@ export const ordersTable = sqliteTable('ordersTable', {
   billToCountryISO: text('bill_to_country_iso'),
 });
 
-export const authenticators = sqliteTable(
-  'authenticators',
-  {
-    id: integer().primaryKey().notNull(),
-    userId: integer('user_id')
-      .notNull()
-      .references(() => users.id, { onDelete: 'cascade' }),
-    credentialId: text('credential_id').notNull(),
-    credentialPublicKey: blob('credential_public_key', {
-      mode: 'buffer',
-    }).notNull(),
-    counter: integer('counter').notNull().default(0),
-  },
-  table => {
-    return {
-      userCredUnique: uniqueIndex('authenticators_user_credential_unique').on(
-        table.userId,
-        table.credentialId,
-      ),
-    };
-  },
-);
-
-export const webauthnChallenges = sqliteTable(
-  'webauthn_challenges',
-  {
-    userId: integer('user_id')
-      .notNull()
-      .references(() => users.id, { onDelete: 'cascade' }),
-    challenge: text('challenge').notNull(),
-  },
-  table => {
-    return {
-      pk: primaryKey(table.userId),
-    };
-  },
-);
 export const leadsSchema = z.object({
   email: z.string(),
   name: z.string(),
@@ -341,7 +382,7 @@ export const updateProductSchema = z.object({
 });
 
 export const ProfileDataSchema = z.object({
-  id: z.number().optional(),
+  id: z.string().optional(),
   firstName: z.string().min(1, 'First name is required'),
   lastName: z.string().min(1, 'Last name is required'),
   shippingAddress: z.string().trim().min(10, 'Shipping address is required'),
@@ -363,7 +404,7 @@ export const addCartItemSchema = z.object({
 // Table for storing uploaded STL files with estimates from Slant3D
 export const uploadedFilesTable = sqliteTable('uploaded_files', {
   id: integer('id').primaryKey({ autoIncrement: true }),
-  userId: integer('user_id').references(() => users.id, {
+  userId: text('user_id').references(() => users.id, {
     onDelete: 'cascade',
   }),
   publicFileServiceId: text('public_file_service_id').notNull().unique(), // Slant3D UUID
