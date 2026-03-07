@@ -34,6 +34,26 @@ const signUpEmail = vi.fn(async ({ body }: { body: Record<string, unknown> }) =>
 const handler = vi.fn(async (request: Request) => {
   const url = new URL(request.url);
 
+  if (url.pathname.endsWith('/sign-up/email')) {
+    return new Response(
+      JSON.stringify({
+        token: 'mock-session-token',
+        user: {
+          id: 'user_123',
+          email: 'test@example.com',
+          name: 'Test User',
+        },
+      }),
+      {
+        status: 200,
+        headers: {
+          'content-type': 'application/json',
+          'set-cookie': 'better-auth.session_token=mock-session-token; HttpOnly; Path=/; SameSite=None; Secure',
+        },
+      },
+    );
+  }
+
   if (url.pathname.endsWith('/sign-in/email')) {
     return new Response(
       JSON.stringify({

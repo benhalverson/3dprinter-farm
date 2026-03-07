@@ -39,7 +39,11 @@ describe('Auth Routes', () => {
 
     const json = (await res.json()) as { message: string };
     expect(json.message).toMatch(/success/i);
-    expect(mockBetterAuth.signUpEmail).toHaveBeenCalled();
+    expect(mockBetterAuth.handler).toHaveBeenCalledWith(
+      expect.objectContaining({
+        url: 'http://localhost/api/auth/sign-up/email',
+      }),
+    );
 
     const setCookieHeader = res.headers.get('set-cookie');
     expect(setCookieHeader).toContain('better-auth.session_token=mock-session-token');
