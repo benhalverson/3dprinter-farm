@@ -24,7 +24,7 @@ preview_bucket_name = "preview-photos"
 [[d1_databases]]
 binding = "DB"
 database_name = "ecommerce"
-database_id = "ec1d6de0-2452-4506-8108-0aed31575e60"
+database_id = "8ea08f02-696c-4410-a690-2bf1fa0333dc"
 migrations_dir = "./drizzle/migrations"
 
 [[d1_databases]]
