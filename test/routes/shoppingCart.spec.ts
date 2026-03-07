@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import app from '../../src/index';
-import { mockAuth } from '../mocks/auth';
+import { mockAuth, mockBetterAuth } from '../mocks/auth';
 import {
   mockDrizzle,
   mockInsert,
@@ -295,9 +295,7 @@ describe('Shopping Cart Routes', () => {
     });
 
     test('returns 401 when not authenticated', async () => {
-      // Temporarily mock getSignedCookie to return undefined for this test
-      const { getSignedCookie } = await import('hono/cookie');
-      vi.mocked(getSignedCookie).mockResolvedValueOnce(undefined);
+      mockBetterAuth.getSession.mockResolvedValueOnce(null);
 
       const request = new Request(
         `http://localhost/cart/shipping?cartId=${mockCartId}`,

@@ -300,7 +300,7 @@ const paymentsRouter = factory
               const [found] = await db
                 .select()
                 .from(users)
-                .where(eq(users.id, parseInt(userId, 10)));
+                .where(eq(users.id, userId));
               userRow = found;
               if (userRow) {
                 console.log('✓ User found by userId:', {
@@ -608,7 +608,7 @@ const paymentsRouter = factory
           const [userRow] = await db
             .select()
             .from(users)
-            .where(eq(users.id, parseInt(userId, 10)));
+            .where(eq(users.id, userId));
 
           if (!userRow) {
             console.error('User not found for userId:', userId);

@@ -1,18 +1,45 @@
+import { createAuth } from '../../lib/auth';
 import { zValidator } from '@hono/zod-validator';
-import { eq } from 'drizzle-orm';
-import { deleteCookie, setSignedCookie } from 'hono/cookie';
+import type { Context } from 'hono';
 import { describeRoute } from 'hono-openapi';
 import { resolver } from 'hono-openapi/zod';
-import { ZodError, z } from 'zod';
-import { signInSchema, signUpSchema, users } from '../db/schema';
+import { z } from 'zod';
+import { signInSchema, signUpSchema } from '../db/schema';
 import factory from '../factory';
-import {
-  encryptField,
-  hashPassword,
-  signJWT,
-  verifyPassword,
-} from '../utils/crypto';
 import { rateLimit } from '../utils/rateLimit';
+
+const signOutRouteDescription = describeRoute({
+  description: 'User signout endpoint',
+  tags: ['Auth'],
+  security: [{ cookieAuth: [] }],
+  responses: {
+    200: {
+      content: {
+        'application/json': {
+          schema: resolver(z.object({ message: z.string() })),
+        },
+      },
+      description: 'The current session was cleared successfully',
+    },
+  },
+});
+
+const signOutHandler = async (c: Context<{ Bindings: Env }>) => {
+  const betterAuth = createAuth(c.env.DB, c.env);
+  const authResponse = await betterAuth.handler(
+    new Request(new URL('/api/auth/sign-out', c.req.url), {
+      method: 'POST',
+      headers: c.req.raw.headers,
+    }),
+  );
+
+  const response = c.json({ message: 'signout success' });
+  const setCookie = authResponse.headers.get('set-cookie');
+  if (setCookie) {
+    response.headers.set('set-cookie', setCookie);
+  }
+  return response;
+};
 
 const auth = factory
   .createApp()
@@ -25,7 +52,13 @@ const auth = factory
         200: {
           content: {
             'application/json': {
-              schema: resolver(signInSchema),
+              schema: resolver(
+                z.object({
+                  success: z.boolean(),
+                  message: z.string(),
+                  user: z.any().optional(),
+                }),
+              ),
             },
           },
           description: 'The user was created successfully',
@@ -33,10 +66,9 @@ const auth = factory
         400: {
           content: {
             'application/json': {
-              schema: resolver(signInSchema),
+              schema: resolver(z.object({ error: z.string() })),
             },
           },
-
           description: 'Missing or invalid parameters',
         },
       },
@@ -46,97 +78,52 @@ const auth = factory
       maxRequests: 3,
       keyPrefix: 'signup',
     }),
-    zValidator('json', signUpSchema),
+    zValidator('json', signUpSchema.extend({ name: z.string().optional() })),
     async c => {
-      const db = c.var.db;
+      const betterAuth = createAuth(c.env.DB, c.env);
+      const { email, password, name } = c.req.valid('json');
+      const displayName = name || email.split('@')[0] || 'User';
+
       try {
-        const { email, password } = c.req.valid('json');
-        const [existingUser] = await db
-          .select()
-          .from(users)
-          .where(eq(users.email, email));
-        if (existingUser) {
-          return c.json({ error: 'User already exists' }, 409);
-        }
-
-        const { salt, hash } = await hashPassword(password);
-        const passphrase = c.env.ENCRYPTION_PASSPHRASE;
-
-        const [
-          encryptedFirstName,
-          encryptedLastName,
-          encryptedShippingAddress,
-          encryptedBillingAddress,
-          encryptedCity,
-          encryptedState,
-          encryptedZipCode,
-          encryptedCountry,
-          encryptedPhone,
-        ] = await Promise.all([
-          encryptField('', passphrase),
-          encryptField('', passphrase),
-          encryptField('', passphrase),
-          encryptField('', passphrase),
-          encryptField('', passphrase),
-          encryptField('', passphrase),
-          encryptField('', passphrase),
-          encryptField('', passphrase),
-          encryptField('', passphrase),
-        ]);
-
-        const [insertedUser] = await db
-          .insert(users)
-          .values({
-            email,
-            passwordHash: hash,
-            salt,
-            firstName: encryptedFirstName,
-            lastName: encryptedLastName,
-            shippingAddress: encryptedShippingAddress,
-            billingAddress: encryptedBillingAddress,
-            city: encryptedCity,
-            state: encryptedState,
-            zipCode: encryptedZipCode,
-            country: encryptedCountry,
-            phone: encryptedPhone,
-          })
-          .returning();
-
-        const iat = Math.floor(Date.now() / 1000);
-        const exp = iat + 60 * 60 * 24; // Token expiration time (1 day)
-
-        const token = await signJWT({
-          payload: { id: insertedUser.id, email: insertedUser.email },
-          secret: c.env.JWT_SECRET,
-          iat,
-          exp,
+        const result = await betterAuth.api.signUpEmail({
+          body: { email, password, name: displayName },
+          headers: c.req.raw.headers,
         });
 
-        await setSignedCookie(c, 'token', token, c.env.JWT_SECRET, {
-          httpOnly: true,
-          sameSite: 'None',
-          path: '/',
-          secure: true,
-          maxAge: 60 * 60 * 24, // 1 day
-        });
+        const signInResponse = await betterAuth.handler(
+          new Request(new URL('/api/auth/sign-in/email', c.req.url), {
+            method: 'POST',
+            headers: new Headers({
+              'content-type': 'application/json',
+              origin: c.req.header('origin') || new URL(c.req.url).origin,
+            }),
+            body: JSON.stringify({ email, password }),
+          }),
+        );
 
-        return c.json(
+        const response = c.json(
           {
             success: true,
             message: 'User created successfully',
-            token,
+            user: result.user,
           },
           200,
         );
-      } catch (error) {
-        if (error instanceof ZodError) {
-          return c.json(
-            { error: 'Validation error', details: error.errors },
-            400,
-          );
+
+        const setCookie = signInResponse.headers.get('set-cookie');
+        if (setCookie) {
+          response.headers.set('set-cookie', setCookie);
         }
-        console.error('Error during signup:', error);
-        return c.json({ error: 'Internal Server Error' }, 500);
+
+        return response;
+      } catch (error) {
+        return c.json(
+          {
+            error:
+              error instanceof Error ? error.message : 'Failed to create user',
+          },
+          400,
+        );
       }
     },
   )
@@ -149,7 +136,7 @@ const auth = factory
         200: {
           content: {
             'application/json': {
-              schema: resolver(signInSchema),
+              schema: resolver(z.object({ message: z.string() })),
             },
           },
           description: 'The user was authenticated successfully',
@@ -157,96 +144,57 @@ const auth = factory
         400: {
           content: {
             'application/json': {
-              schema: resolver(signInSchema),
+              schema: resolver(z.object({ error: z.string() })),
             },
           },
           description: 'Missing or invalid parameters',
         },
       },
     }),
-
+    zValidator('json', signInSchema),
     async c => {
+      const betterAuth = createAuth(c.env.DB, c.env);
+      const { email, password } = c.req.valid('json');
+
       try {
-        const { email, password } = signInSchema.parse(await c.req.json());
-        const [user] = await c.var.db
-          .select()
-          .from(users)
-          .where(eq(users.email, email));
-        if (!user) {
-          return c.json({ error: 'Invalid Credentials' }, 401);
-        }
-
-        const isValid = await verifyPassword(
-          password,
-          user.salt,
-          user.passwordHash,
+        const authResponse = await betterAuth.handler(
+          new Request(new URL('/api/auth/sign-in/email', c.req.url), {
+            method: 'POST',
+            headers: new Headers({
+              'content-type': 'application/json',
+              origin: c.req.header('origin') || new URL(c.req.url).origin,
+            }),
+            body: JSON.stringify({ email, password }),
+          }),
         );
-        if (!isValid) {
-          return c.json({ error: 'Invalid credentials' }, 401);
+
+        const body = (await authResponse.json().catch(() => ({}))) as Record<
+          string,
+          unknown
+        >;
+        const response = c.json({
+          message: 'signin success',
+          ...body,
+        });
+
+        const setCookie = authResponse.headers.get('set-cookie');
+        if (setCookie) {
+          response.headers.set('set-cookie', setCookie);
         }
 
-        const iat = Math.floor(Date.now() / 1000);
-        const exp = iat + 60 * 60 * 24;
-        const token = await signJWT({
-          payload: { id: user.id, email: user.email },
-          secret: c.env.JWT_SECRET,
-          iat,
-          exp,
-        });
-
-        console.log('Generated JWT for user ID:', user);
-
-        await setSignedCookie(c, 'token', token, c.env.JWT_SECRET, {
-          httpOnly: true,
-          sameSite: 'None',
-          path: '/',
-          secure: true,
-          maxAge: 60 * 60 * 24,
-        });
-        return c.json({ message: 'signin success' });
+        return response;
       } catch (error) {
-        if (error instanceof ZodError) {
-          return c.json(
-            { error: 'Validation error', details: error.errors },
-            400,
-          );
-        }
-
         return c.json(
-          { error: 'Internal Server Error', details: (error as Error).message },
+          {
+            error: 'Internal Server Error',
+            details: error instanceof Error ? error.message : String(error),
+          },
           500,
         );
       }
     },
   )
-  .get(
-    '/signout',
-    describeRoute({
-      description: 'User signout endpoint',
-      tags: ['Auth'],
-      responses: {
-        200: {
-          content: {
-            'application/json': {
-              schema: z.object({
-                message: z.string(),
-              }),
-            },
-          },
-          description: 'User signed out successfully',
-        },
-      },
-    }),
-
-    async c => {
-      deleteCookie(c, 'token', {
-        path: '/',
-        secure: true,
-        httpOnly: true,
-      });
-
-      return c.json({ message: 'signout success' });
-    },
-  );
+  .get('/signout', signOutRouteDescription, signOutHandler)
+  .post('/signout', signOutRouteDescription, signOutHandler);
 
 export default auth;

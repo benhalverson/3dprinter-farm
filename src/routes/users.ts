@@ -29,7 +29,7 @@ const userRouter = factory
     }),
     authMiddleware,
     async c => {
-      const user = c.get('jwtPayload') as { id: number; email: string };
+      const user = c.get('jwtPayload') as { id: string; email: string };
       if (!user) return c.json({ error: 'Unauthorized' }, 401);
 
       // In-memory cache for derived secret keys (scoped per module load)
@@ -150,7 +150,7 @@ const userRouter = factory
       },
     }),
     async c => {
-      const authUser = c.get('jwtPayload') as { id: number; email: string };
+      const authUser = c.get('jwtPayload') as { id: string; email: string };
       if (!authUser) return c.json({ error: 'Unauthorized' }, 401);
 
       const body = await c.req.json();
@@ -262,10 +262,10 @@ const userRouter = factory
       },
     }),
     async c => {
-      const authUser = c.get('jwtPayload') as { id: number; email: string };
-      const userIdParam = Number(c.req.param('id'));
+      const authUser = c.get('jwtPayload') as { id: string; email: string };
+      const userIdParam = c.req.param('id');
       if (!authUser) return c.json({ error: 'Unauthorized' }, 401);
-      if (Number.isNaN(userIdParam)) {
+      if (!userIdParam) {
         return c.json({ error: 'Invalid user id' }, 400);
       }
       if (authUser.id !== userIdParam) {
