@@ -13,13 +13,15 @@ const authErrorSchema = z.object({
   details: z.unknown().optional(),
 });
 
-const signInSuccessSchema = z
-  .object({
-    message: z.string().optional(),
-    token: z.string().optional(),
-    user: z.any().optional(),
-  })
-  .passthrough();
+const signInSuccessSchema = z.object({
+  message: z.string(),
+  user: z.object({
+    id: z.string(),
+    email: z.string(),
+    name: z.string(),
+    role: z.string(),
+  }),
+});
 
 async function readAuthResponseBody(response: Response) {
   const body = (await response.json().catch(() => null)) as Record<string, unknown> | null;
@@ -38,6 +40,31 @@ function jsonResponse(body: Record<string, unknown>, status = 200) {
       'content-type': 'application/json',
     },
   });
+}
+
+function getSafeUser(body: Record<string, unknown>) {
+  const user = body.user;
+
+  if (!user || typeof user !== 'object' || Array.isArray(user)) {
+    return null;
+  }
+
+  const record = user as Record<string, unknown>;
+
+  if (
+    typeof record.id !== 'string' ||
+    typeof record.email !== 'string' ||
+    typeof record.name !== 'string'
+  ) {
+    return null;
+  }
+
+  return {
+    id: record.id,
+    email: record.email,
+    name: record.name,
+    role: typeof record.role === 'string' ? record.role : 'user',
+  };
 }
 
 const signOutRouteDescription = describeRoute({
@@ -223,10 +250,18 @@ const auth = factory
           );
         }
 
-        const response = jsonResponse(
-          Object.keys(body).length > 0 ? body : { message: 'signin success' },
-          authResponse.status,
-        );
+        const responseBody = {
+          message: 'signin success',
+          user:
+            getSafeUser(body) || {
+              id: '',
+              email,
+              name: email.split('@')[0] || 'User',
+              role: 'user',
+            },
+        };
+
+        const response = c.json(responseBody, 200);
 
         const setCookie = authResponse.headers.get('set-cookie');
         if (setCookie) {

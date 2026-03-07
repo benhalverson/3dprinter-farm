@@ -62,6 +62,7 @@ const handler = vi.fn(async (request: Request) => {
           id: 'user_123',
           email: 'test@example.com',
           name: 'Test User',
+          role: 'user',
         },
       }),
       {
