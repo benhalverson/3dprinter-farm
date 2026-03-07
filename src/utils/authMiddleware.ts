@@ -29,6 +29,6 @@ export const authMiddleware = factory.createMiddleware(async (c, next) => {
     return next();
   } catch (err) {
     console.error('Auth session verification error:', err);
-    return c.json({ error: 'Invalid or expired token' }, 401);
+    return c.json({ error: 'Invalid or expired session' }, 401);
   }
 });

@@ -8,6 +8,34 @@ import { signInSchema, signUpSchema } from '../db/schema';
 import factory from '../factory';
 import { rateLimit } from '../utils/rateLimit';
 
+const authErrorSchema = z.object({
+  error: z.string(),
+  details: z.unknown().optional(),
+});
+
+const signInSuccessSchema = z.object({
+  message: z.string(),
+});
+
+async function readAuthResponseBody(response: Response) {
+  const body = (await response.json().catch(() => null)) as Record<string, unknown> | null;
+
+  if (!body || Array.isArray(body)) {
+    return {};
+  }
+
+  return body;
+}
+
+function jsonResponse(body: Record<string, unknown>, status = 200) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: {
+      'content-type': 'application/json',
+    },
+  });
+}
+
 const signOutRouteDescription = describeRoute({
   description: 'User signout endpoint',
   tags: ['Auth'],
@@ -24,7 +52,7 @@ const signOutRouteDescription = describeRoute({
   },
 });
 
-const signOutHandler = async (c: Context<{ Bindings: Env }>) => {
+const signOutHandler = async (c: Context) => {
   const betterAuth = createAuth(c.env.DB, c.env);
   const authResponse = await betterAuth.handler(
     new Request(new URL('/api/auth/sign-out', c.req.url), {
@@ -66,7 +94,7 @@ const auth = factory
         400: {
           content: {
             'application/json': {
-              schema: resolver(z.object({ error: z.string() })),
+              schema: resolver(authErrorSchema),
             },
           },
           description: 'Missing or invalid parameters',
@@ -100,6 +128,17 @@ const auth = factory
             body: JSON.stringify({ email, password }),
           }),
         );
+
+        const signInBody = await readAuthResponseBody(signInResponse);
+
+        if (!signInResponse.ok) {
+          return jsonResponse(
+            Object.keys(signInBody).length > 0
+              ? signInBody
+              : { error: 'User created but session could not be established' },
+            signInResponse.status,
+          );
+        }
 
         const response = c.json(
           {
@@ -136,7 +175,7 @@ const auth = factory
         200: {
           content: {
             'application/json': {
-              schema: resolver(z.object({ message: z.string() })),
+              schema: resolver(signInSuccessSchema),
             },
           },
           description: 'The user was authenticated successfully',
@@ -144,10 +183,18 @@ const auth = factory
         400: {
           content: {
             'application/json': {
-              schema: resolver(z.object({ error: z.string() })),
+              schema: resolver(authErrorSchema),
             },
           },
           description: 'Missing or invalid parameters',
+        },
+        401: {
+          content: {
+            'application/json': {
+              schema: resolver(authErrorSchema),
+            },
+          },
+          description: 'Invalid credentials',
         },
       },
     }),
@@ -168,14 +215,16 @@ const auth = factory
           }),
         );
 
-        const body = (await authResponse.json().catch(() => ({}))) as Record<
-          string,
-          unknown
-        >;
-        const response = c.json({
-          message: 'signin success',
-          ...body,
-        });
+        const body = await readAuthResponseBody(authResponse);
+
+        if (!authResponse.ok) {
+          return jsonResponse(
+            Object.keys(body).length > 0 ? body : { error: 'Signin failed' },
+            authResponse.status,
+          );
+        }
+
+        const response = c.json({ message: 'signin success' });
 
         const setCookie = authResponse.headers.get('set-cookie');
         if (setCookie) {

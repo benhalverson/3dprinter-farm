@@ -6,6 +6,29 @@ import { drizzle } from 'drizzle-orm/d1';
 import * as schema from '../src/db/schema';
 import type { Bindings } from '../src/types';
 
+function getAuthSecret(env?: Bindings) {
+  const secret = env?.BETTER_AUTH_SECRET?.trim();
+
+  if (!secret) {
+    throw new Error('BETTER_AUTH_SECRET is required');
+  }
+
+  if (secret.length < 32) {
+    throw new Error('BETTER_AUTH_SECRET must be at least 32 characters long');
+  }
+
+  return secret;
+}
+
+function getCookieAttributes(baseURL: string) {
+  const isSecure = new URL(baseURL).protocol === 'https:';
+
+  return {
+    sameSite: isSecure ? ('none' as const) : ('lax' as const),
+    secure: isSecure,
+  };
+}
+
 export function createAuth(database: Bindings['DB'], env?: Bindings) {
   const db = drizzle(database, { schema });
   const baseURL = env?.DOMAIN || 'http://localhost:8787';
@@ -18,7 +41,7 @@ export function createAuth(database: Bindings['DB'], env?: Bindings) {
         user: schema.users,
       },
     }),
-    secret: env?.BETTER_AUTH_SECRET || env?.JWT_SECRET,
+    secret: getAuthSecret(env),
     baseURL,
     emailAndPassword: {
       enabled: true,
@@ -89,10 +112,7 @@ export function createAuth(database: Bindings['DB'], env?: Bindings) {
       'https://race-forge.com',
     ],
     advanced: {
-      defaultCookieAttributes: {
-        sameSite: 'none',
-        secure: true,
-      },
+      defaultCookieAttributes: getCookieAttributes(baseURL),
     },
     plugins: [
       openAPI(),

@@ -14,7 +14,7 @@ export type Bindings = {
   DB: D1Database;
   COLOR_CACHE: Cache;
   JWT_SECRET: string;
-  BETTER_AUTH_SECRET?: string;
+  BETTER_AUTH_SECRET: string;
   RP_ID: string;
   RP_NAME: string;
   RATE_LIMIT_KV: KVNamespace;
