@@ -6,6 +6,7 @@ import type {
 } from '../../src/types';
 import { mockAuth } from '../mocks/auth';
 import {
+  capturedInserts,
   mockDrizzle,
   mockInsert,
   mockUpdate,
@@ -73,6 +74,9 @@ describe('Payments Routes', () => {
     mockUpdate.mockReset();
     mockStripeCreate.mockReset();
     mockStripeWebhooks.constructEventAsync.mockReset();
+
+    // Clear captured inserts between tests
+    capturedInserts.length = 0;
 
     // Default fetch mock for external APIs
     global.fetch = vi.fn();
@@ -244,9 +248,16 @@ describe('Payments Routes', () => {
       mockStripeWebhooks.constructEventAsync.mockResolvedValue(
         mockWebhookPayload,
       );
+      // Default: order insert returns a created record
+      mockInsert.mockResolvedValue([
+        { id: 1, orderNumber: 'ORDER-20240909-123456' },
+      ]);
     });
 
     test('processes successful payment webhook', async () => {
+      // Mock idempotency check: no existing order for this event
+      mockWhere.mockResolvedValueOnce([]);
+
       // Mock cart items query
       mockWhere.mockResolvedValueOnce([
         {
@@ -281,10 +292,6 @@ describe('Payments Routes', () => {
         json: () => Promise.resolve({ orderId: 'slant3d-order-123' }),
       });
 
-      // Mock cart deletion
-      const mockDelete = vi.fn().mockResolvedValue({ changes: 1 });
-      mockWhere.mockResolvedValueOnce({ delete: mockDelete });
-
       const res = await app.fetch(
         new Request('http://localhost/webhook/stripe', {
           method: 'POST',
@@ -311,9 +318,17 @@ describe('Payments Routes', () => {
         'whsec_123',
       );
 
-      // Verify Slant3D API was called
+      // Verify a local order record was inserted before calling Slant3D
+      expect(capturedInserts.length).toBeGreaterThan(0);
+      const insertedOrder = capturedInserts[0] as any;
+      expect(insertedOrder).toMatchObject({
+        status: 'payment_confirmed',
+        cartId: mockCartId,
+      });
+
+      // Verify Slant3D order API (not estimate) was called
       expect(global.fetch).toHaveBeenCalledWith(
-        expect.stringContaining('estimate'),
+        expect.stringContaining('/api/order'),
         expect.objectContaining({
           method: 'POST',
           headers: {
@@ -323,6 +338,10 @@ describe('Payments Routes', () => {
           body: expect.stringContaining('test@example.com'),
         }),
       );
+
+      // Verify the URL is the real order endpoint, not the estimate endpoint
+      const fetchCall = (global.fetch as any).mock.calls[0];
+      expect(fetchCall[0]).not.toContain('estimate');
     });
 
     test('returns error when signature is missing', async () => {
@@ -403,6 +422,8 @@ describe('Payments Routes', () => {
     });
 
     test('returns error when cart is not found', async () => {
+      // Mock idempotency check: no existing order
+      mockWhere.mockResolvedValueOnce([]);
       // Mock empty cart
       mockWhere.mockResolvedValueOnce([]);
 
@@ -426,6 +447,8 @@ describe('Payments Routes', () => {
     });
 
     test('returns error when user is not found', async () => {
+      // Mock idempotency check: no existing order
+      mockWhere.mockResolvedValueOnce([]);
       // Mock cart items
       mockWhere.mockResolvedValueOnce([
         {
@@ -464,6 +487,7 @@ describe('Payments Routes', () => {
     test('returns error when Slant3D API fails', async () => {
       // Mock cart and user data
       mockWhere
+        .mockResolvedValueOnce([]) // idempotency check
         .mockResolvedValueOnce([
           {
             id: 1,
@@ -551,6 +575,7 @@ describe('Payments Routes', () => {
     test('handles network errors during order creation', async () => {
       // Mock cart and user data
       mockWhere
+        .mockResolvedValueOnce([]) // idempotency check
         .mockResolvedValueOnce([
           {
             id: 1,
@@ -595,6 +620,130 @@ describe('Payments Routes', () => {
       const data = (await res.json()) as any;
       expect(data).toEqual({
         error: 'Order creation failed',
+      });
+    });
+
+    test('returns cached result for duplicate fulfilled webhook delivery', async () => {
+      // Mock idempotency check returning an already-fulfilled order
+      mockWhere.mockResolvedValueOnce([
+        {
+          id: 1,
+          status: 'fulfilled',
+          slant3dOrderId: 'slant3d-order-123',
+        },
+      ]);
+
+      const res = await app.fetch(
+        new Request('http://localhost/webhook/stripe', {
+          method: 'POST',
+          headers: {
+            'stripe-signature': 'valid-signature',
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(mockWebhookPayload),
+        }),
+        env,
+      );
+
+      expect(res.status).toBe(200);
+      const data = (await res.json()) as any;
+      expect(data).toEqual({
+        success: true,
+        orderId: 'slant3d-order-123',
+      });
+
+      // Verify no external Slant3D API was called (idempotent - no duplicate order)
+      expect(global.fetch).not.toHaveBeenCalled();
+    });
+
+    test('acknowledges receipt for duplicate in-progress webhook delivery', async () => {
+      // Mock idempotency check returning an order that is still being processed
+      mockWhere.mockResolvedValueOnce([
+        {
+          id: 1,
+          status: 'payment_confirmed',
+          slant3dOrderId: null,
+        },
+      ]);
+
+      const res = await app.fetch(
+        new Request('http://localhost/webhook/stripe', {
+          method: 'POST',
+          headers: {
+            'stripe-signature': 'valid-signature',
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(mockWebhookPayload),
+        }),
+        env,
+      );
+
+      expect(res.status).toBe(200);
+      const data = (await res.json()) as any;
+      expect(data).toEqual({ received: true });
+
+      // Verify no external API call was made
+      expect(global.fetch).not.toHaveBeenCalled();
+    });
+
+    test('persists local order record before Slant3D API call fails', async () => {
+      // Mock idempotency check: no existing order
+      mockWhere
+        .mockResolvedValueOnce([]) // idempotency check
+        .mockResolvedValueOnce([
+          {
+            id: 1,
+            skuNumber: 'TEST-SKU-001',
+            quantity: 1,
+            color: '#000000',
+            filamentType: 'PLA',
+            productName: 'Test Product',
+            stl: 'http://example.com/test.stl',
+          },
+        ])
+        .mockResolvedValueOnce([
+          {
+            id: mockUserId,
+            email: 'encrypted-test@example.com',
+            firstName: 'encrypted-John',
+            lastName: 'encrypted-Doe',
+            shippingAddress: 'encrypted-123 Main St',
+            city: 'encrypted-Test City',
+            state: 'encrypted-TS',
+            zipCode: 'encrypted-12345',
+            phone: 'encrypted-555-0123',
+          },
+        ]);
+
+      // Mock Slant3D API failure
+      (global.fetch as any).mockResolvedValueOnce({
+        ok: false,
+        status: 503,
+        text: () => Promise.resolve('Service Unavailable'),
+      });
+
+      const res = await app.fetch(
+        new Request('http://localhost/webhook/stripe', {
+          method: 'POST',
+          headers: {
+            'stripe-signature': 'valid-signature',
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(mockWebhookPayload),
+        }),
+        env,
+      );
+
+      expect(res.status).toBe(502);
+      const data = (await res.json()) as any;
+      expect(data).toEqual({ error: 'Order creation failed' });
+
+      // Verify a local order record was created (durably persisted) before the failure
+      expect(capturedInserts.length).toBeGreaterThan(0);
+      const insertedOrder = capturedInserts[0] as any;
+      expect(insertedOrder).toMatchObject({
+        status: 'payment_confirmed',
+        cartId: mockCartId,
       });
     });
   });

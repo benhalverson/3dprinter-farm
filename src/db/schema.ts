@@ -260,6 +260,23 @@ export const ordersTable = sqliteTable('ordersTable', {
   filename: text('filename'),
   fileURL: text('file_url').notNull(),
 
+  // Idempotency keys from Stripe
+  stripeEventId: text('stripe_event_id').unique(),
+  stripeSessionId: text('stripe_session_id'),
+  stripePaymentIntentId: text('stripe_payment_intent_id'),
+
+  // Order lifecycle status: pending_payment | payment_confirmed | submitted_to_fulfillment | fulfilled | failed
+  status: text('status').notNull().default('pending_payment'),
+
+  // Reference back to the cart used for this order
+  cartId: text('cart_id'),
+
+  // Slant3D fulfillment order ID returned after submission
+  slant3dOrderId: text('slant3d_order_id'),
+
+  // Failure details for observability and incident recovery
+  failureReason: text('failure_reason'),
+
   // Shipping address fields specific to each order
   shipToName: text('ship_to_name').notNull(),
   shipToStreet1: text('ship_to_street_1').notNull(),

@@ -4,7 +4,7 @@ import { describeRoute } from 'hono-openapi';
 import Stripe from 'stripe';
 import { z } from 'zod';
 import { BASE_URL } from '../constants';
-import { cart, productsTable, users } from '../db/schema';
+import { cart, ordersTable, productsTable, users } from '../db/schema';
 import factory from '../factory';
 import type {
   CartItemWithProduct,
@@ -238,6 +238,7 @@ const paymentsRouter = factory
         // Handle Payment Intent succeeded (embedded checkout flow)
         if (event.type === 'payment_intent.succeeded') {
           const paymentIntent = event.data.object as Stripe.PaymentIntent;
+          const stripeEventId = event.id;
 
           // Extract metadata from payment intent
           const cartId = paymentIntent.metadata?.cartId;
@@ -251,6 +252,26 @@ const paymentsRouter = factory
 
           // Get cart items
           const db = c.var.db;
+
+          // Idempotency check: skip processing if this Stripe event was already handled
+          const [existingOrderPI] = await db
+            .select()
+            .from(ordersTable)
+            .where(eq(ordersTable.stripeEventId, stripeEventId));
+
+          if (existingOrderPI) {
+            console.log(
+              `Duplicate payment_intent.succeeded event ${stripeEventId}, order status: ${existingOrderPI.status}`,
+            );
+            if (existingOrderPI.status === 'fulfilled') {
+              return c.json({
+                success: true,
+                orderId: existingOrderPI.slant3dOrderId || 'created',
+              });
+            }
+            return c.json({ received: true });
+          }
+
           const cartItems = await db
             .select({
               id: cart.id,
@@ -414,6 +435,9 @@ const paymentsRouter = factory
               return 'black';
             };
 
+            const piOrderNumber = generateOrderNumber();
+            const piFullName = `${firstName} ${lastName}`.trim() || email;
+
             // Build Slant3D order data
             const orderDataArray: Slant3DOrderData[] = cartItems.map(
               (item: CartItemWithProduct): Slant3DOrderData => {
@@ -424,8 +448,8 @@ const paymentsRouter = factory
                 return {
                   email,
                   phone,
-                  name: `${firstName} ${lastName}`.trim() || email,
-                  orderNumber: generateOrderNumber(),
+                  name: piFullName,
+                  orderNumber: piOrderNumber,
                   filename: filenameCandidate,
                   fileURL: stlPath,
                   bill_to_street_1: shippingAddress,
@@ -436,7 +460,7 @@ const paymentsRouter = factory
                   bill_to_zip: zipCode,
                   bill_to_country_as_iso: 'US',
                   bill_to_is_US_residential: 'true',
-                  ship_to_name: `${firstName} ${lastName}`.trim() || email,
+                  ship_to_name: piFullName,
                   ship_to_street_1: shippingAddress,
                   ship_to_street_2: '',
                   ship_to_street_3: '',
@@ -455,11 +479,36 @@ const paymentsRouter = factory
               },
             );
 
+            // Persist a local order record BEFORE calling the external API
+            const piUserId = userId || userRow?.id || 'guest';
+            const [piLocalOrder] = await db
+              .insert(ordersTable)
+              .values({
+                userId: piUserId,
+                orderNumber: piOrderNumber,
+                fileURL: cartItems[0]?.stl || '',
+                stripeEventId,
+                stripePaymentIntentId: paymentIntent.id,
+                status: 'payment_confirmed',
+                cartId,
+                shipToName: piFullName,
+                shipToStreet1: shippingAddress,
+                shipToCity: city,
+                shipToState: state,
+                shipToZip: zipCode,
+                shipToCountryISO: 'US',
+              })
+              .returning();
+
+            await db
+              .update(ordersTable)
+              .set({ status: 'submitted_to_fulfillment' })
+              .where(eq(ordersTable.id, piLocalOrder.id));
+
             console.log('Creating Slant3D order with data:', orderDataArray);
 
-            // Create order with Slant3D (using /estimate for testing since V1 has no test API)
-            // TODO: Change to ${BASE_URL}order when ready for production
-            const response = await fetch(`${BASE_URL}order/estimate`, {
+            // Submit order to Slant3D (real order endpoint, not estimate)
+            const response = await fetch(`${BASE_URL}order`, {
               method: 'POST',
               headers: {
                 'Content-Type': 'application/json',
@@ -468,7 +517,7 @@ const paymentsRouter = factory
               body: JSON.stringify(orderDataArray),
             });
 
-            console.log('Slant3D estimate response status:', response.status);
+            console.log('Slant3D order response status:', response.status);
 
             if (!response.ok) {
               const errorText = await response.text();
@@ -477,11 +526,13 @@ const paymentsRouter = factory
                 response.status,
                 errorText,
               );
-              // Store failed order for manual review/retry
-              console.error(
-                'Failed order data:',
-                JSON.stringify(orderDataArray, null, 2),
-              );
+              await db
+                .update(ordersTable)
+                .set({
+                  status: 'failed',
+                  failureReason: `Slant3D API error: ${response.status}`,
+                })
+                .where(eq(ordersTable.id, piLocalOrder.id));
               return c.json({ error: 'Order creation failed' }, 502);
             }
 
@@ -489,7 +540,16 @@ const paymentsRouter = factory
               (await response.json()) as Slant3DOrderResponse;
             console.log('Slant3D order created successfully:', orderResponse);
 
-            // Clear the cart after successful order
+            // Mark order as fulfilled with the Slant3D order ID
+            await db
+              .update(ordersTable)
+              .set({
+                status: 'fulfilled',
+                slant3dOrderId: orderResponse.orderId,
+              })
+              .where(eq(ordersTable.id, piLocalOrder.id));
+
+            // Clear the cart only after the order is durably recorded as fulfilled
             await db.delete(cart).where(eq(cart.cartId, cartId));
             console.log('Cart cleared for cartId:', cartId);
 
@@ -506,6 +566,7 @@ const paymentsRouter = factory
         // Handle Checkout Session completed (redirect checkout flow)
         if (event.type === 'checkout.session.completed') {
           const session = event.data.object as Stripe.Checkout.Session;
+          const stripeEventId = event.id;
 
           // Extract metadata from session (cartId, userId)
           const cartId = session.metadata?.cartId;
@@ -519,8 +580,29 @@ const paymentsRouter = factory
             return c.json({ error: 'Missing required metadata' }, 400);
           }
 
-          // Get cart items and user information
           const db = c.var.db;
+
+          // Idempotency check: skip processing if this Stripe event was already handled
+          const [existingOrder] = await db
+            .select()
+            .from(ordersTable)
+            .where(eq(ordersTable.stripeEventId, stripeEventId));
+
+          if (existingOrder) {
+            console.log(
+              `Duplicate webhook event ${stripeEventId}, order status: ${existingOrder.status}`,
+            );
+            if (existingOrder.status === 'fulfilled') {
+              return c.json({
+                success: true,
+                orderId: existingOrder.slant3dOrderId || 'created',
+              });
+            }
+            // For in-progress or failed orders acknowledge receipt to stop Stripe retries
+            return c.json({ received: true });
+          }
+
+          // Get cart items and user information
           const cartItems = await db
             .select({
               id: cart.id,
@@ -559,22 +641,27 @@ const paymentsRouter = factory
           const secretKey = await getCipherKitSecretKey(passphrase);
           const email = userRow.email; // Email is not encrypted
           const firstName =
-            (await decryptStoredProfileValue(userRow.firstName, secretKey)) || '';
-          const lastName =
-            (await decryptStoredProfileValue(userRow.lastName, secretKey)) || '';
-          const shippingAddress =
-            (await decryptStoredProfileValue(userRow.shippingAddress, secretKey)) ||
+            (await decryptStoredProfileValue(userRow.firstName, secretKey)) ||
             '';
+          const lastName =
+            (await decryptStoredProfileValue(userRow.lastName, secretKey)) ||
+            '';
+          const shippingAddress =
+            (await decryptStoredProfileValue(
+              userRow.shippingAddress,
+              secretKey,
+            )) || '';
           const city =
             (await decryptStoredProfileValue(userRow.city, secretKey)) || '';
           const state =
             (await decryptStoredProfileValue(userRow.state, secretKey)) || '';
           const zipCode =
-            (await decryptStoredProfileValue(userRow.zipCode, secretKey)) || '';
+            (await decryptStoredProfileValue(userRow.zipCode, secretKey)) ||
+            '';
           const phone =
             (await decryptStoredProfileValue(userRow.phone, secretKey)) || '';
 
-          // Create order data for Slant3D API (using the same logic from shipping endpoint)
+          // Create order data for Slant3D API
           const allowedColors = new Set([
             'black',
             'white',
@@ -604,6 +691,19 @@ const paymentsRouter = factory
             return 'black';
           };
 
+          const orderNumber = generateOrderNumber();
+          const fullName = `${firstName} ${lastName}`.trim();
+
+          // Validate that required shipping fields are present before creating order record.
+          // Incomplete profiles will result in rejected orders; fail early to keep the
+          // database free of unfulfillable records.
+          if (!shippingAddress || !city || !state || !zipCode) {
+            console.error(
+              `Incomplete shipping profile for userId ${userId}: address=${shippingAddress} city=${city} state=${state} zip=${zipCode}`,
+            );
+            return c.json({ error: 'Incomplete shipping profile' }, 400);
+          }
+
           const orderDataArray: Slant3DOrderData[] = cartItems.map(
             (item: CartItemWithProduct): Slant3DOrderData => {
               const stlPath = item.stl;
@@ -613,8 +713,8 @@ const paymentsRouter = factory
               return {
                 email,
                 phone,
-                name: `${firstName} ${lastName}`.trim(),
-                orderNumber: generateOrderNumber(),
+                name: fullName,
+                orderNumber,
                 filename: filenameCandidate,
                 fileURL: stlPath,
                 bill_to_street_1: shippingAddress,
@@ -625,7 +725,7 @@ const paymentsRouter = factory
                 bill_to_zip: zipCode,
                 bill_to_country_as_iso: 'US',
                 bill_to_is_US_residential: 'true',
-                ship_to_name: `${firstName} ${lastName}`.trim(),
+                ship_to_name: fullName,
                 ship_to_street_1: shippingAddress,
                 ship_to_street_2: '',
                 ship_to_street_3: '',
@@ -644,12 +744,39 @@ const paymentsRouter = factory
             },
           );
 
+          // Persist a local order record BEFORE calling the external API so we
+          // have a durable record even if the downstream call fails.
+          const [localOrder] = await db
+            .insert(ordersTable)
+            .values({
+              userId,
+              orderNumber,
+              fileURL: cartItems[0]?.stl || '',
+              stripeEventId,
+              stripeSessionId: session.id,
+              status: 'payment_confirmed',
+              cartId,
+              shipToName: fullName || email,
+              shipToStreet1: shippingAddress,
+              shipToCity: city,
+              shipToState: state,
+              shipToZip: zipCode,
+              shipToCountryISO: 'US',
+            })
+            .returning();
+
+          console.log('Local order record created:', localOrder?.id);
+
+          // Transition to submitted_to_fulfillment before the external call
+          await db
+            .update(ordersTable)
+            .set({ status: 'submitted_to_fulfillment' })
+            .where(eq(ordersTable.id, localOrder.id));
+
           console.log('Creating Slant3D order with data:', orderDataArray);
 
-          // Create order with Slant3D (using /estimate for testing since V1 has no test API)
-          // TODO: Change to ${BASE_URL}order when ready for production
           try {
-            const response = await fetch(`${BASE_URL}order/estimate`, {
+            const response = await fetch(`${BASE_URL}order`, {
               method: 'POST',
               headers: {
                 'Content-Type': 'application/json',
@@ -659,16 +786,19 @@ const paymentsRouter = factory
             });
 
             if (!response.ok) {
+              const errorText = await response.text();
               console.error(
                 'Slant3D order creation failed:',
                 response.status,
-                await response.text(),
+                errorText,
               );
-              // Store failed order for manual review/retry
-              console.error(
-                'Failed order data:',
-                JSON.stringify(orderDataArray, null, 2),
-              );
+              await db
+                .update(ordersTable)
+                .set({
+                  status: 'failed',
+                  failureReason: `Slant3D API error: ${response.status}`,
+                })
+                .where(eq(ordersTable.id, localOrder.id));
               return c.json({ error: 'Order creation failed' }, 502);
             }
 
@@ -676,11 +806,18 @@ const paymentsRouter = factory
               (await response.json()) as Slant3DOrderResponse;
             console.log('Slant3D order created successfully:', orderResponse);
 
-            // Clear the cart after successful order
-            await db.delete(cart).where(eq(cart.cartId, cartId));
+            // Mark order as fulfilled with the Slant3D order ID
+            await db
+              .update(ordersTable)
+              .set({
+                status: 'fulfilled',
+                slant3dOrderId: orderResponse.orderId,
+              })
+              .where(eq(ordersTable.id, localOrder.id));
 
-            // TODO: Store order record in your database for tracking
-            // TODO: Send confirmation email to customer
+            // Clear the cart only after the order is durably recorded as fulfilled
+            await db.delete(cart).where(eq(cart.cartId, cartId));
+            console.log('Cart cleared for cartId:', cartId);
 
             return c.json({
               success: true,
@@ -688,6 +825,13 @@ const paymentsRouter = factory
             });
           } catch (error) {
             console.error('Error creating Slant3D order:', error);
+            await db
+              .update(ordersTable)
+              .set({
+                status: 'failed',
+                failureReason: `Network error: ${error instanceof Error ? error.message : 'Unknown error'}`,
+              })
+              .where(eq(ordersTable.id, localOrder.id));
             return c.json({ error: 'Order creation failed' }, 500);
           }
         }
