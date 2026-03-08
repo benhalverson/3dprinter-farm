@@ -41,16 +41,29 @@ vi.mock('../../src/utils/payPalAccess', () => ({
   getPayPalAccessToken: vi.fn().mockResolvedValue('mock-paypal-access-token'),
 }));
 
-// Mock crypto utilities
-vi.mock('../../src/utils/crypto', () => ({
-  decryptField: vi
+// Mock profile crypto utilities
+vi.mock('../../src/utils/profileCrypto', () => ({
+  getCipherKitSecretKey: vi.fn().mockResolvedValue('mock-secret-key'),
+  decryptStoredProfileValue: vi
     .fn()
-    .mockImplementation(async (value: string) =>
-      value.replace('encrypted-', ''),
+    .mockImplementation(async (value: string | null) =>
+      (value || '').replace('encrypted-', ''),
     ),
-  encryptField: vi
+  decryptStoredShippingProfile: vi
     .fn()
-    .mockImplementation(async (value: string) => `encrypted-${value}`),
+    .mockImplementation(async (userRow: Record<string, string>) => ({
+      email: userRow.email || '',
+      firstName: (userRow.firstName || '').replace('encrypted-', ''),
+      lastName: (userRow.lastName || '').replace('encrypted-', ''),
+      shippingAddress: (userRow.shippingAddress || '').replace(
+        'encrypted-',
+        '',
+      ),
+      city: (userRow.city || '').replace('encrypted-', ''),
+      state: (userRow.state || '').replace('encrypted-', ''),
+      zipCode: (userRow.zipCode || '').replace('encrypted-', ''),
+      phone: (userRow.phone || '').replace('encrypted-', ''),
+    })),
 }));
 
 // Mock generateOrderNumber

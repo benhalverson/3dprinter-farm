@@ -15,8 +15,7 @@ import type {
 import { generateOrderNumber } from '../utils/generateOrderNumber';
 import { getPayPalAccessToken } from '../utils/payPalAccess';
 import {
-  decryptStoredProfileValue,
-  getCipherKitSecretKey,
+  decryptStoredShippingProfile,
 } from '../utils/profileCrypto';
 
 // Schemas
@@ -348,35 +347,21 @@ const paymentsRouter = factory
 
             // Decrypt and load user profile if found
             if (userRow) {
-              email = userRow.email;
-
               try {
-                const secretKey = await getCipherKitSecretKey(passphrase);
-
-                firstName =
-                  (await decryptStoredProfileValue(userRow.firstName, secretKey)) ||
-                  firstName;
-                lastName =
-                  (await decryptStoredProfileValue(userRow.lastName, secretKey)) ||
-                  lastName;
-                shippingAddress =
-                  (await decryptStoredProfileValue(
-                    userRow.shippingAddress,
-                    secretKey,
-                  )) || shippingAddress;
-                city =
-                  (await decryptStoredProfileValue(userRow.city, secretKey)) ||
-                  city;
-                state =
-                  (await decryptStoredProfileValue(userRow.state, secretKey)) ||
-                  state;
-                zipCode =
-                  (await decryptStoredProfileValue(userRow.zipCode, secretKey)) ||
-                  zipCode;
-                const decryptedPhone = await decryptStoredProfileValue(
-                  userRow.phone,
-                  secretKey,
+                const decryptedProfile = await decryptStoredShippingProfile(
+                  userRow,
+                  passphrase,
                 );
+
+                email = decryptedProfile.email || email;
+                firstName = decryptedProfile.firstName || firstName;
+                lastName = decryptedProfile.lastName || lastName;
+                shippingAddress =
+                  decryptedProfile.shippingAddress || shippingAddress;
+                city = decryptedProfile.city || city;
+                state = decryptedProfile.state || state;
+                zipCode = decryptedProfile.zipCode || zipCode;
+                const decryptedPhone = decryptedProfile.phone;
                 phone = normalizePhone(decryptedPhone || phone);
               } catch (e) {
                 console.error('Error decrypting user profile:', e);
@@ -556,23 +541,16 @@ const paymentsRouter = factory
 
           // Decrypt user information
           const passphrase = c.env.ENCRYPTION_PASSPHRASE;
-          const secretKey = await getCipherKitSecretKey(passphrase);
-          const email = userRow.email; // Email is not encrypted
-          const firstName =
-            (await decryptStoredProfileValue(userRow.firstName, secretKey)) || '';
-          const lastName =
-            (await decryptStoredProfileValue(userRow.lastName, secretKey)) || '';
-          const shippingAddress =
-            (await decryptStoredProfileValue(userRow.shippingAddress, secretKey)) ||
-            '';
-          const city =
-            (await decryptStoredProfileValue(userRow.city, secretKey)) || '';
-          const state =
-            (await decryptStoredProfileValue(userRow.state, secretKey)) || '';
-          const zipCode =
-            (await decryptStoredProfileValue(userRow.zipCode, secretKey)) || '';
-          const phone =
-            (await decryptStoredProfileValue(userRow.phone, secretKey)) || '';
+          const {
+            email,
+            firstName,
+            lastName,
+            shippingAddress,
+            city,
+            state,
+            zipCode,
+            phone,
+          } = await decryptStoredShippingProfile(userRow, passphrase);
 
           // Create order data for Slant3D API (using the same logic from shipping endpoint)
           const allowedColors = new Set([

@@ -5,28 +5,37 @@ import { mockDrizzle, mockUpdate, mockWhere } from '../mocks/drizzle';
 import { mockEnv } from '../mocks/env';
 import { mockGlobalFetch } from '../mocks/fetch';
 
-// Mock crypto functions
-vi.mock('../../src/utils/crypto', async () => {
-  const actual = await vi.importActual<typeof import('../../src/utils/crypto')>(
-    '../../src/utils/crypto',
-  );
+// Mock profile crypto functions
+vi.mock('../../src/utils/profileCrypto', async () => {
+  const actual = await vi.importActual<
+    typeof import('../../src/utils/profileCrypto')
+  >('../../src/utils/profileCrypto');
   return {
     ...actual,
-    decryptField: vi.fn().mockImplementation(async (encryptedData: string) => {
-      // Return mock decrypted data based on the field
-      if (encryptedData === 'encrypted-test') return 'Test';
-      if (encryptedData === 'encrypted-user') return 'User';
-      if (encryptedData === 'encrypted-123-main-st') return '123 Main St';
-      if (encryptedData === 'encrypted-testville') return 'Testville';
-      if (encryptedData === 'encrypted-ts') return 'TS';
-      if (encryptedData === 'encrypted-12345') return '12345';
-      if (encryptedData === 'encrypted-usa') return 'USA';
-      if (encryptedData === 'encrypted-123-456-7890') return '123-456-7890';
-      return 'decrypted-value';
-    }),
-    encryptField: vi.fn().mockImplementation(async (plaintext: string) => {
-      return `encrypted-${plaintext.toLowerCase().replace(/\s+/g, '-')}`;
-    }),
+    getCipherKitSecretKey: vi.fn().mockResolvedValue('mock-secret-key'),
+    decryptStoredProfileValue: vi
+      .fn()
+      .mockImplementation(async (encryptedData: string | null) => {
+        if (encryptedData === 'encrypted-test') return 'Test';
+        if (encryptedData === 'encrypted-user') return 'User';
+        if (encryptedData === 'encrypted-123-main-st') return '123 Main St';
+        if (encryptedData === 'encrypted-testville') return 'Testville';
+        if (encryptedData === 'encrypted-ts') return 'TS';
+        if (encryptedData === 'encrypted-12345') return '12345';
+        if (encryptedData === 'encrypted-usa') return 'USA';
+        if (encryptedData === 'encrypted-123-456-7890') return '123-456-7890';
+        return encryptedData || 'decrypted-value';
+      }),
+    buildEncryptedProfileUpdate: vi.fn().mockImplementation(async (profile) => ({
+      firstName: `encrypted-${profile.firstName.toLowerCase().replace(/\s+/g, '-')}`,
+      lastName: `encrypted-${profile.lastName.toLowerCase().replace(/\s+/g, '-')}`,
+      shippingAddress: `encrypted-${profile.shippingAddress.toLowerCase().replace(/\s+/g, '-')}`,
+      city: `encrypted-${profile.city.toLowerCase().replace(/\s+/g, '-')}`,
+      state: `encrypted-${profile.state.toLowerCase().replace(/\s+/g, '-')}`,
+      zipCode: `encrypted-${profile.zipCode.toLowerCase().replace(/\s+/g, '-')}`,
+      country: `encrypted-${profile.country.toLowerCase().replace(/\s+/g, '-')}`,
+      phone: `encrypted-${profile.phone.toLowerCase().replace(/\s+/g, '-')}`,
+    })),
   };
 });
 
