@@ -58,8 +58,8 @@ Passkey routes are exposed under `/api/auth/passkey/*`.
 
 Notes:
 
-- `POST /api/auth/passkey/verify-registration` requires a valid WebAuthn credential response.
-- Invalid registration payloads missing a credential ID now return `400 Bad Request` instead of `500 Internal Server Error`.
+- `POST /api/auth/passkey/verify-registration` is handled directly by Better Auth.
+- Validation errors and response payloads for registration verification follow Better Auth defaults.
 - `/api/auth/passkey/register` and `/api/auth/passkey/authenticate` are client helper names in Better Auth, not server routes in this API.
 
 ## Database Migrations
@@ -244,6 +244,7 @@ npx wrangler d1 export DB_NAME                         # Export database
 		 - `BETTER_AUTH_SECRET=<random 32+ byte secret>`
 		 - `DOMAIN=http://localhost:8787`
 		 - `RP_ID=localhost`
+		 - Optional when frontend runs on another origin (for example `http://localhost:3000`): `PASSKEY_ORIGIN=http://localhost:3000`
 5. Run migrations: `npx drizzle-kit push`
 6. Start development server: `pnpm run dev`
 

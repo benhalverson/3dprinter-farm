@@ -57,6 +57,7 @@ async function verifyWorkerPassword({
 export function createAuth(database: Bindings['DB'], env?: Bindings) {
   const db = drizzle(database, { schema });
   const baseURL = env?.DOMAIN || 'http://localhost:8787';
+  const passkeyOrigin = env?.PASSKEY_ORIGIN?.trim();
 
   return betterAuth({
     database: drizzleAdapter(db, {
@@ -148,7 +149,7 @@ export function createAuth(database: Bindings['DB'], env?: Bindings) {
       passkey({
         rpID: env?.RP_ID || 'localhost',
         rpName: env?.RP_NAME || '3D Printer Web API',
-        origin: baseURL,
+        ...(passkeyOrigin ? { origin: passkeyOrigin } : {}),
       }),
     ],
   });
