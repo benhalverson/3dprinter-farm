@@ -11,7 +11,6 @@ import printer from './routes/printer';
 import product from './routes/product';
 import shoppingCart from './routes/shoppingCart';
 import userRouter from './routes/users';
-import webhookRoutes from './routes/webhooks';
 
 const app = factory
   .createApp()
@@ -40,8 +39,7 @@ const app = factory
   .route('/', printer)
   .route('/', email)
   .route('/', paymentsRouter)
-  .route('/', shoppingCart)
-  .route('/', webhookRoutes);
+  .route('/', shoppingCart);
 
 app.get(
   '/open-api',

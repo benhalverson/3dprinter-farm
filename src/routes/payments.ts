@@ -3,16 +3,17 @@ import type { Context } from 'hono';
 import { describeRoute } from 'hono-openapi';
 import Stripe from 'stripe';
 import { z } from 'zod';
-import { BASE_URL } from '../constants';
-import { cart, productsTable, users } from '../db/schema';
+import { users } from '../db/schema';
 import factory from '../factory';
-import type {
-  CartItemWithProduct,
-  PayPalOrderResponse,
-  Slant3DOrderData,
-  Slant3DOrderResponse,
-} from '../types';
-import { generateOrderNumber } from '../utils/generateOrderNumber';
+import {
+  buildOrderData,
+  clearCart,
+  fetchCartItems,
+  normalizePhone,
+  Slant3DApiError,
+  submitOrderToSlant3D,
+} from '../services/stripeWebhookFulfillment';
+import type { PayPalOrderResponse } from '../types';
 import { getPayPalAccessToken } from '../utils/payPalAccess';
 import {
   decryptStoredProfileValue,
@@ -243,40 +244,19 @@ const paymentsRouter = factory
           const cartId = paymentIntent.metadata?.cartId;
           const userId = paymentIntent.metadata?.userId;
           const customerEmail = paymentIntent.metadata?.customerEmail;
-          // If no cartId, this might be a Payment Intent not created by our system
-          // Just acknowledge receipt and return
+
+          // If no cartId, this is a Payment Intent not created by our system
           if (!cartId) {
             return c.json({ received: true });
           }
 
-          // Get cart items
           const db = c.var.db;
-          const cartItems = await db
-            .select({
-              id: cart.id,
-              skuNumber: cart.skuNumber,
-              quantity: cart.quantity,
-              color: cart.color,
-              filamentType: cart.filamentType,
-              productName: productsTable.name,
-              stl: productsTable.stl,
-            })
-            .from(cart)
-            .leftJoin(
-              productsTable,
-              eq(cart.skuNumber, productsTable.skuNumber),
-            )
-            .where(eq(cart.cartId, cartId));
+          const cartItems = await fetchCartItems(db, cartId);
 
           if (cartItems.length === 0) {
             console.error('No cart items found for cartId:', cartId);
             return c.json({ error: 'Cart not found' }, 404);
           }
-
-          const normalizePhone = (value: string) => {
-            const digits = (value || '').replace(/\D/g, '');
-            return digits.length >= 10 ? digits : '0000000000';
-          };
 
           try {
             const passphrase = c.env.ENCRYPTION_PASSPHRASE;
@@ -354,11 +334,15 @@ const paymentsRouter = factory
                 const secretKey = await getCipherKitSecretKey(passphrase);
 
                 firstName =
-                  (await decryptStoredProfileValue(userRow.firstName, secretKey)) ||
-                  firstName;
+                  (await decryptStoredProfileValue(
+                    userRow.firstName,
+                    secretKey,
+                  )) || firstName;
                 lastName =
-                  (await decryptStoredProfileValue(userRow.lastName, secretKey)) ||
-                  lastName;
+                  (await decryptStoredProfileValue(
+                    userRow.lastName,
+                    secretKey,
+                  )) || lastName;
                 shippingAddress =
                   (await decryptStoredProfileValue(
                     userRow.shippingAddress,
@@ -368,11 +352,15 @@ const paymentsRouter = factory
                   (await decryptStoredProfileValue(userRow.city, secretKey)) ||
                   city;
                 state =
-                  (await decryptStoredProfileValue(userRow.state, secretKey)) ||
-                  state;
+                  (await decryptStoredProfileValue(
+                    userRow.state,
+                    secretKey,
+                  )) || state;
                 zipCode =
-                  (await decryptStoredProfileValue(userRow.zipCode, secretKey)) ||
-                  zipCode;
+                  (await decryptStoredProfileValue(
+                    userRow.zipCode,
+                    secretKey,
+                  )) || zipCode;
                 const decryptedPhone = await decryptStoredProfileValue(
                   userRow.phone,
                   secretKey,
@@ -384,122 +372,32 @@ const paymentsRouter = factory
               }
             }
 
-            // Normalize color function
-            const allowedColors = new Set([
-              'black',
-              'white',
-              'gray',
-              'grey',
-              'yellow',
-              'red',
-              'gold',
-              'purple',
-              'blue',
-              'orange',
-              'green',
-              'pink',
-              'matteBlack',
-              'lunarRegolith',
-              'petgBlack',
-            ]);
-
-            const normalizeColor = (raw: string | null | undefined): string => {
-              if (!raw) return 'black';
-              const trimmed = raw.trim();
-              if (allowedColors.has(trimmed)) return trimmed;
-              const lower = trimmed.toLowerCase();
-              for (const c of allowedColors) {
-                if (c.toLowerCase() === lower) return c;
-              }
-              return 'black';
-            };
-
-            // Build Slant3D order data
-            const orderDataArray: Slant3DOrderData[] = cartItems.map(
-              (item: CartItemWithProduct): Slant3DOrderData => {
-                const stlPath = item.stl;
-                const filenameCandidate = stlPath?.split('/').pop();
-                const normalizedColor = normalizeColor(item.color);
-
-                return {
-                  email,
-                  phone,
-                  name: `${firstName} ${lastName}`.trim() || email,
-                  orderNumber: generateOrderNumber(),
-                  filename: filenameCandidate,
-                  fileURL: stlPath,
-                  bill_to_street_1: shippingAddress,
-                  bill_to_street_2: '',
-                  bill_to_street_3: '',
-                  bill_to_city: city,
-                  bill_to_state: state,
-                  bill_to_zip: zipCode,
-                  bill_to_country_as_iso: 'US',
-                  bill_to_is_US_residential: 'true',
-                  ship_to_name: `${firstName} ${lastName}`.trim() || email,
-                  ship_to_street_1: shippingAddress,
-                  ship_to_street_2: '',
-                  ship_to_street_3: '',
-                  ship_to_city: city,
-                  ship_to_state: state,
-                  ship_to_zip: zipCode,
-                  ship_to_country_as_iso: 'US',
-                  ship_to_is_US_residential: 'true',
-                  order_item_name: item.productName,
-                  order_quantity: String(item.quantity),
-                  order_image_url: '',
-                  order_sku: item.skuNumber,
-                  order_item_color: normalizedColor,
-                  profile: item.filamentType,
-                };
-              },
-            );
+            const orderDataArray = buildOrderData(cartItems, {
+              email,
+              firstName,
+              lastName,
+              shippingAddress,
+              city,
+              state,
+              zipCode,
+              phone,
+            });
 
             console.log('Creating Slant3D order with data:', orderDataArray);
 
-            // Create order with Slant3D (using /estimate for testing since V1 has no test API)
-            // TODO: Change to ${BASE_URL}order when ready for production
-            const response = await fetch(`${BASE_URL}order/estimate`, {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                'api-key': c.env.SLANT_API,
-              },
-              body: JSON.stringify(orderDataArray),
-            });
+            const { orderId } = await submitOrderToSlant3D(
+              orderDataArray,
+              c.env.SLANT_API,
+            );
+            await clearCart(db, cartId);
 
-            console.log('Slant3D estimate response status:', response.status);
-
-            if (!response.ok) {
-              const errorText = await response.text();
-              console.error(
-                'Slant3D order creation failed:',
-                response.status,
-                errorText,
-              );
-              // Store failed order for manual review/retry
-              console.error(
-                'Failed order data:',
-                JSON.stringify(orderDataArray, null, 2),
-              );
-              return c.json({ error: 'Order creation failed' }, 502);
-            }
-
-            const orderResponse =
-              (await response.json()) as Slant3DOrderResponse;
-            console.log('Slant3D order created successfully:', orderResponse);
-
-            // Clear the cart after successful order
-            await db.delete(cart).where(eq(cart.cartId, cartId));
-            console.log('Cart cleared for cartId:', cartId);
-
-            return c.json({
-              success: true,
-              orderId: orderResponse.orderId || 'created',
-            });
+            return c.json({ success: true, orderId });
           } catch (error) {
             console.error('Error processing payment_intent.succeeded:', error);
-            return c.json({ error: 'Order processing failed' }, 500);
+            if (error instanceof Slant3DApiError) {
+              return c.json({ error: 'Order creation failed' }, 502);
+            }
+            return c.json({ error: 'Order creation failed' }, 500);
           }
         }
 
@@ -519,24 +417,8 @@ const paymentsRouter = factory
             return c.json({ error: 'Missing required metadata' }, 400);
           }
 
-          // Get cart items and user information
           const db = c.var.db;
-          const cartItems = await db
-            .select({
-              id: cart.id,
-              skuNumber: cart.skuNumber,
-              quantity: cart.quantity,
-              color: cart.color,
-              filamentType: cart.filamentType,
-              productName: productsTable.name,
-              stl: productsTable.stl,
-            })
-            .from(cart)
-            .leftJoin(
-              productsTable,
-              eq(cart.skuNumber, productsTable.skuNumber),
-            )
-            .where(eq(cart.cartId, cartId));
+          const cartItems = await fetchCartItems(db, cartId);
 
           if (cartItems.length === 0) {
             console.error('No cart items found for cartId:', cartId);
@@ -557,137 +439,50 @@ const paymentsRouter = factory
           // Decrypt user information
           const passphrase = c.env.ENCRYPTION_PASSPHRASE;
           const secretKey = await getCipherKitSecretKey(passphrase);
-          const email = userRow.email; // Email is not encrypted
-          const firstName =
-            (await decryptStoredProfileValue(userRow.firstName, secretKey)) || '';
-          const lastName =
-            (await decryptStoredProfileValue(userRow.lastName, secretKey)) || '';
-          const shippingAddress =
-            (await decryptStoredProfileValue(userRow.shippingAddress, secretKey)) ||
-            '';
-          const city =
-            (await decryptStoredProfileValue(userRow.city, secretKey)) || '';
-          const state =
-            (await decryptStoredProfileValue(userRow.state, secretKey)) || '';
-          const zipCode =
-            (await decryptStoredProfileValue(userRow.zipCode, secretKey)) || '';
-          const phone =
-            (await decryptStoredProfileValue(userRow.phone, secretKey)) || '';
 
-          // Create order data for Slant3D API (using the same logic from shipping endpoint)
-          const allowedColors = new Set([
-            'black',
-            'white',
-            'gray',
-            'grey',
-            'yellow',
-            'red',
-            'gold',
-            'purple',
-            'blue',
-            'orange',
-            'green',
-            'pink',
-            'matteBlack',
-            'lunarRegolith',
-            'petgBlack',
-          ]);
-
-          const normalizeColor = (raw: string | null | undefined): string => {
-            if (!raw) return 'black';
-            const trimmed = raw.trim();
-            if (allowedColors.has(trimmed)) return trimmed;
-            const lower = trimmed.toLowerCase();
-            for (const c of allowedColors) {
-              if (c.toLowerCase() === lower) return c;
-            }
-            return 'black';
-          };
-
-          const orderDataArray: Slant3DOrderData[] = cartItems.map(
-            (item: CartItemWithProduct): Slant3DOrderData => {
-              const stlPath = item.stl;
-              const filenameCandidate = stlPath?.split('/').pop();
-              const normalizedColor = normalizeColor(item.color);
-
-              return {
-                email,
-                phone,
-                name: `${firstName} ${lastName}`.trim(),
-                orderNumber: generateOrderNumber(),
-                filename: filenameCandidate,
-                fileURL: stlPath,
-                bill_to_street_1: shippingAddress,
-                bill_to_street_2: '',
-                bill_to_street_3: '',
-                bill_to_city: city,
-                bill_to_state: state,
-                bill_to_zip: zipCode,
-                bill_to_country_as_iso: 'US',
-                bill_to_is_US_residential: 'true',
-                ship_to_name: `${firstName} ${lastName}`.trim(),
-                ship_to_street_1: shippingAddress,
-                ship_to_street_2: '',
-                ship_to_street_3: '',
-                ship_to_city: city,
-                ship_to_state: state,
-                ship_to_zip: zipCode,
-                ship_to_country_as_iso: 'US',
-                ship_to_is_US_residential: 'true',
-                order_item_name: item.productName,
-                order_quantity: String(item.quantity),
-                order_image_url: '',
-                order_sku: item.skuNumber,
-                order_item_color: normalizedColor,
-                profile: item.filamentType,
-              };
-            },
-          );
+          const orderDataArray = buildOrderData(cartItems, {
+            email: userRow.email,
+            firstName:
+              (await decryptStoredProfileValue(
+                userRow.firstName,
+                secretKey,
+              )) || '',
+            lastName:
+              (await decryptStoredProfileValue(userRow.lastName, secretKey)) ||
+              '',
+            shippingAddress:
+              (await decryptStoredProfileValue(
+                userRow.shippingAddress,
+                secretKey,
+              )) || '',
+            city:
+              (await decryptStoredProfileValue(userRow.city, secretKey)) || '',
+            state:
+              (await decryptStoredProfileValue(userRow.state, secretKey)) ||
+              '',
+            zipCode:
+              (await decryptStoredProfileValue(userRow.zipCode, secretKey)) ||
+              '',
+            phone:
+              (await decryptStoredProfileValue(userRow.phone, secretKey)) ||
+              '',
+          });
 
           console.log('Creating Slant3D order with data:', orderDataArray);
 
-          // Create order with Slant3D (using /estimate for testing since V1 has no test API)
-          // TODO: Change to ${BASE_URL}order when ready for production
           try {
-            const response = await fetch(`${BASE_URL}order/estimate`, {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                'api-key': c.env.SLANT_API,
-              },
-              body: JSON.stringify(orderDataArray),
-            });
+            const { orderId } = await submitOrderToSlant3D(
+              orderDataArray,
+              c.env.SLANT_API,
+            );
+            await clearCart(db, cartId);
 
-            if (!response.ok) {
-              console.error(
-                'Slant3D order creation failed:',
-                response.status,
-                await response.text(),
-              );
-              // Store failed order for manual review/retry
-              console.error(
-                'Failed order data:',
-                JSON.stringify(orderDataArray, null, 2),
-              );
-              return c.json({ error: 'Order creation failed' }, 502);
-            }
-
-            const orderResponse =
-              (await response.json()) as Slant3DOrderResponse;
-            console.log('Slant3D order created successfully:', orderResponse);
-
-            // Clear the cart after successful order
-            await db.delete(cart).where(eq(cart.cartId, cartId));
-
-            // TODO: Store order record in your database for tracking
-            // TODO: Send confirmation email to customer
-
-            return c.json({
-              success: true,
-              orderId: orderResponse.orderId || 'created',
-            });
+            return c.json({ success: true, orderId });
           } catch (error) {
             console.error('Error creating Slant3D order:', error);
+            if (error instanceof Slant3DApiError) {
+              return c.json({ error: 'Order creation failed' }, 502);
+            }
             return c.json({ error: 'Order creation failed' }, 500);
           }
         }
