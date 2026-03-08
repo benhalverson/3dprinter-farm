@@ -261,8 +261,8 @@ pnpm run deploy
 
 Notes:
 
-- `pnpm run deploy` deploys with the `production` Wrangler environment.
-- Ensure production passkey variables are set in `wrangler.toml` under `[env.production.vars]`:
+- `pnpm run deploy` deploys the default Wrangler worker (`name = "3dprinter-web-api"`).
+- Ensure passkey variables are set in `wrangler.toml` under `[vars]`:
 	- `DOMAIN=https://rc-store.benhalverson.dev`
 	- `RP_ID=rc-store.benhalverson.dev`
 	- `PASSKEY_ORIGIN=https://rc-store.benhalverson.dev`

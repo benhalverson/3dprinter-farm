@@ -38,11 +38,9 @@ binding = "RATE_LIMIT_KV"
 id = "81516966d6ad4902bf63e82b284c0617"
 preview_id = "c7d43c86ba9c4f5c9419970c12bb2fca"
 
-[env.production.vars]
+[vars]
 DOMAIN = "https://rc-store.benhalverson.dev"
 RP_ID = "rc-store.benhalverson.dev"
 PASSKEY_ORIGIN = "https://rc-store.benhalverson.dev"
-
-[vars]
 R2_PUBLIC_BASE_URL = "https://uploads.benhalverson.dev"
 R2_PHOTO_BASE_URL = "https://photos.benhalverson.dev"
