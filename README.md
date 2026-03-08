@@ -259,6 +259,14 @@ After the dev server starts, you can open:
 pnpm run deploy
 ```
 
+Notes:
+
+- `pnpm run deploy` deploys with the `production` Wrangler environment.
+- Ensure production passkey variables are set in `wrangler.toml` under `[env.production.vars]`:
+	- `DOMAIN=https://rc-store.benhalverson.dev`
+	- `RP_ID=rc-store.benhalverson.dev`
+	- `PASSKEY_ORIGIN=https://rc-store.benhalverson.dev`
+
 ## API Endpoints
 
 - `GET /products` - List all products (with optional pagination)

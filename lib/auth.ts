@@ -33,6 +33,41 @@ function getCookieAttributes(baseURL: string) {
   };
 }
 
+function isLocalHost(hostname: string) {
+  return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1';
+}
+
+function getPasskeyRpId(baseURL: string, env?: Bindings) {
+  const configuredRpId = env?.RP_ID?.trim();
+
+  if (configuredRpId) {
+    return configuredRpId;
+  }
+
+  const baseHost = new URL(baseURL).hostname;
+
+  if (isLocalHost(baseHost)) {
+    return 'localhost';
+  }
+
+  throw new Error('RP_ID is required for non-local environments');
+}
+
+function validatePasskeyOrigin(rpID: string, passkeyOrigin?: string) {
+  if (!passkeyOrigin) {
+    return;
+  }
+
+  const originHost = new URL(passkeyOrigin).hostname;
+  const isValidRpRelation = originHost === rpID || originHost.endsWith(`.${rpID}`);
+
+  if (!isValidRpRelation) {
+    throw new Error(
+      `PASSKEY_ORIGIN host (${originHost}) must equal RP_ID (${rpID}) or be its subdomain`,
+    );
+  }
+}
+
 async function hashWorkerPassword(password: string) {
   const { salt, hash } = await hashLegacyPassword(password);
   return `${salt}:${hash}`;
@@ -58,6 +93,9 @@ export function createAuth(database: Bindings['DB'], env?: Bindings) {
   const db = drizzle(database, { schema });
   const baseURL = env?.DOMAIN || 'http://localhost:8787';
   const passkeyOrigin = env?.PASSKEY_ORIGIN?.trim();
+  const rpID = getPasskeyRpId(baseURL, env);
+
+  validatePasskeyOrigin(rpID, passkeyOrigin);
 
   return betterAuth({
     database: drizzleAdapter(db, {
@@ -147,7 +185,7 @@ export function createAuth(database: Bindings['DB'], env?: Bindings) {
     plugins: [
       openAPI(),
       passkey({
-        rpID: env?.RP_ID || 'localhost',
+        rpID,
         rpName: env?.RP_NAME || '3D Printer Web API',
         ...(passkeyOrigin ? { origin: passkeyOrigin } : {}),
       }),
