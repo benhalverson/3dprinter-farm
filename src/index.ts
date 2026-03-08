@@ -12,7 +12,6 @@ import product from './routes/product';
 import shoppingCart from './routes/shoppingCart';
 import userRouter from './routes/users';
 import webhookRoutes from './routes/webhooks';
-import { authMiddleware } from './utils/authMiddleware';
 
 const app = factory
   .createApp()
@@ -36,7 +35,6 @@ const app = factory
     createAuth(c.env.DB, c.env).handler(c.req.raw),
   )
   .route('/auth', auth)
-  .use('/product', authMiddleware)
   .route('/', product)
   .route('/', userRouter)
   .route('/', printer)

@@ -207,7 +207,6 @@ const product = factory
       }
     },
   )
-  .use('/products/search', authMiddleware)
   .get(
     '/products/search',
     describeRoute({
@@ -368,10 +367,9 @@ const product = factory
       }
     },
   )
-  .use('/add-product', authMiddleware)
-  .use('/update-product', authMiddleware)
   .post(
     '/add-product',
+    authMiddleware,
     describeRoute({
       description: 'Add a new product',
       tags: ['Products'],
@@ -407,7 +405,7 @@ const product = factory
       const stripe = new Stripe(c.env.STRIPE_SECRET_KEY, {
         telemetry: false,
       });
-      const user = c.get('jwtPayload') as { id: number; email: string };
+      const user = c.get('jwtPayload') as { id: string; email: string } | undefined;
       if (!user) return c.json({ error: 'Unauthorized' }, 401);
       const data = await c.req.valid('json');
       const { categoryIds, categoryId, imageGallery, ...rest } = data;
@@ -528,9 +526,9 @@ const product = factory
       }
     },
   )
-  .use('/v2/add-product', authMiddleware)
   .post(
     '/v2/add-product',
+    authMiddleware,
     describeRoute({
       description: 'Add a new product using Slant3D V2 API',
       tags: ['Products'],
@@ -603,7 +601,7 @@ const product = factory
         const stripe = new Stripe(c.env.STRIPE_SECRET_KEY, {
           telemetry: false,
         });
-        const user = c.get('jwtPayload') as { id: number; email: string };
+        const user = c.get('jwtPayload') as { id: string; email: string } | undefined;
         if (!user) return c.json({ error: 'Unauthorized' }, 401);
 
         const data = await c.req.valid('json');
@@ -996,6 +994,7 @@ const product = factory
   )
   .put(
     '/update-product',
+    authMiddleware,
     describeRoute({
       description: 'Update an existing product',
       tags: ['Products'],
@@ -1096,7 +1095,13 @@ const product = factory
                 type: 'object',
                 properties: {
                   error: { type: 'string' },
-                  details: { type: 'array' },
+                  details: {
+                    type: 'array',
+                    items: {
+                      type: 'object',
+                      additionalProperties: true,
+                    },
+                  },
                 },
               },
             },
@@ -1288,6 +1293,7 @@ const product = factory
   )
   .post(
     '/add-category',
+    authMiddleware,
     describeRoute({
       summary: 'Add a new product category',
       description: 'Creates a new category and returns the created record.',

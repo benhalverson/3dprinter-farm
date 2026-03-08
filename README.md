@@ -30,6 +30,16 @@ The API now uses Better Auth for session-based authentication.
 - Compatibility routes remain available at `/auth/signup`, `/auth/signin`, and `/auth/signout`.
 - Native Better Auth routes are mounted under `/api/auth/*`.
 
+### Route auth policy
+
+The API uses the following route protection rules:
+
+- **Public read routes**: product browsing and read-only catalog endpoints such as `GET /products`, `GET /products/search`, `GET /product/:id`, `GET /categories`, and public printer metadata endpoints.
+- **Authenticated user routes**: profile endpoints, saved upload endpoints, shipping/payment-intent helpers tied to a signed-in user, and product/category mutation routes such as `POST /add-product`, `POST /v2/add-product`, `PUT /update-product`, `DELETE /delete-product/:id`, and `POST /add-category`.
+- **Ownership checks**: authenticated upload lookup endpoints also enforce that a user can only access their own uploaded files.
+
+When adding new routes, apply `authMiddleware` directly on the protected route or protected route group before the handler declaration. Do not rely on later middleware registration order.
+
 ### Native Better Auth reference docs
 
 When the local dev server is running, Better Auth exposes an interactive native API reference at:

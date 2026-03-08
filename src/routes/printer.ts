@@ -720,7 +720,7 @@ const printer = factory
       );
     }
   })
-  .post('/v2/upload', describeRoute(v2UploadDoc), async (c: Context) => {
+  .post('/v2/upload', authMiddleware, describeRoute(v2UploadDoc), async (c: Context) => {
     try {
       const body = await c.req.parseBody();
 
@@ -1105,10 +1105,9 @@ const printer = factory
       );
     }
   })
-  .use('/v2/upload', authMiddleware)
-  .use('/v2/uploads/:id', authMiddleware)
   .get(
     '/v2/uploads/:id',
+    authMiddleware,
     describeRoute(getUploadedFileDoc),
     async (c: Context) => {
       try {
@@ -1117,7 +1116,6 @@ const printer = factory
 
         // Check if ID is numeric or UUID
         const isNumeric = /^\d+$/.test(id);
-
         const result = isNumeric
           ? await c.var.db
               .select()
@@ -1172,9 +1170,9 @@ const printer = factory
       }
     },
   )
-  .use('/v2/uploads', authMiddleware)
   .get(
     '/v2/uploads',
+    authMiddleware,
     describeRoute(getUploadedFilesDoc),
     async (c: Context) => {
       try {
