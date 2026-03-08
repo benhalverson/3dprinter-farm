@@ -27,7 +27,7 @@ describe('Better Auth Passkey Routes', () => {
     expect(mockBetterAuth.handler).toHaveBeenCalled();
   });
 
-  test('rejects invalid passkey registration payloads before Better Auth throws', async () => {
+  test('passes invalid passkey registration payloads through to Better Auth', async () => {
     const res = await app.fetch(
       new Request('http://localhost/api/auth/passkey/verify-registration', {
         method: 'POST',
@@ -39,13 +39,8 @@ describe('Better Auth Passkey Routes', () => {
       mockEnv() as unknown as Env,
     );
 
-    expect(res.status).toBe(400);
-    expect(await res.json()).toEqual({
-      message: 'Failed to verify registration',
-      code: 'FAILED_TO_VERIFY_REGISTRATION',
-      details: 'Missing credential ID',
-    });
-    expect(mockBetterAuth.handler).not.toHaveBeenCalled();
+    expect(res.status).toBe(200);
+    expect(mockBetterAuth.handler).toHaveBeenCalled();
   });
 
   test('passes valid-looking passkey registration payloads through to Better Auth', async () => {
