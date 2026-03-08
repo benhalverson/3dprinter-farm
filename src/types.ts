@@ -17,6 +17,7 @@ export type Bindings = {
   BETTER_AUTH_SECRET: string;
   RP_ID: string;
   RP_NAME: string;
+  PASSKEY_ORIGIN?: string;
   RATE_LIMIT_KV: KVNamespace;
   MAILJET_API_KEY: string;
   MAILJET_API_SECRET: string;

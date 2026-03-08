@@ -244,6 +244,7 @@ npx wrangler d1 export DB_NAME                         # Export database
 		 - `BETTER_AUTH_SECRET=<random 32+ byte secret>`
 		 - `DOMAIN=http://localhost:8787`
 		 - `RP_ID=localhost`
+		 - Optional when frontend runs on another origin (for example `http://localhost:3000`): `PASSKEY_ORIGIN=http://localhost:3000`
 5. Run migrations: `npx drizzle-kit push`
 6. Start development server: `pnpm run dev`
 
