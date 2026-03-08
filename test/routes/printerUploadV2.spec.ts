@@ -7,6 +7,10 @@ import { mockEnv } from '../mocks/env';
 const MOCK_STL_CONTENT =
   'solid test\nfacet normal 0 0 0\nouter loop\nvertex 0 0 0\nvertex 1 0 0\nvertex 0 1 0\nendloop\nendfacet\nendsolid';
 
+const authHeaders = {
+  Cookie: 'better-auth.session_token=mock-session-token',
+};
+
 describe('Printer V2 Upload Routes', () => {
   describe('POST /v2/upload', () => {
     let env: ReturnType<typeof mockEnv>;
@@ -14,6 +18,24 @@ describe('Printer V2 Upload Routes', () => {
     beforeEach(() => {
       env = mockEnv();
       vi.clearAllMocks();
+    });
+
+    test('should return 401 when not authenticated', async () => {
+      const file = new File([MOCK_STL_CONTENT], 'test-model.stl', {
+        type: 'model/stl',
+      });
+
+      const formData = new FormData();
+      formData.append('file', file);
+
+      const request = new Request('http://localhost/v2/upload', {
+        method: 'POST',
+        body: formData,
+      });
+
+      const response = await app.fetch(request, env);
+
+      expect(response.status).toBe(401);
     });
 
     test('should successfully upload and register STL file', async () => {
@@ -107,6 +129,7 @@ describe('Printer V2 Upload Routes', () => {
 
       const request = new Request('http://localhost/v2/upload', {
         method: 'POST',
+        headers: authHeaders,
         body: formData,
       });
 
@@ -137,6 +160,7 @@ describe('Printer V2 Upload Routes', () => {
 
       const request = new Request('http://localhost/v2/upload', {
         method: 'POST',
+        headers: authHeaders,
         body: formData,
       });
 
@@ -238,6 +262,7 @@ describe('Printer V2 Upload Routes', () => {
 
       const request = new Request('http://localhost/v2/upload', {
         method: 'POST',
+        headers: authHeaders,
         body: formData,
       });
 
@@ -254,6 +279,7 @@ describe('Printer V2 Upload Routes', () => {
 
       const request = new Request('http://localhost/v2/upload', {
         method: 'POST',
+        headers: authHeaders,
         body: formData,
       });
 
@@ -290,6 +316,7 @@ describe('Printer V2 Upload Routes', () => {
 
       const request = new Request('http://localhost/v2/upload', {
         method: 'POST',
+        headers: authHeaders,
         body: formData,
       });
 
@@ -340,6 +367,7 @@ describe('Printer V2 Upload Routes', () => {
 
       const request = new Request('http://localhost/v2/upload', {
         method: 'POST',
+        headers: authHeaders,
         body: formData,
       });
 
@@ -380,6 +408,7 @@ describe('Printer V2 Upload Routes', () => {
 
       const request = new Request('http://localhost/v2/upload', {
         method: 'POST',
+        headers: authHeaders,
         body: formData,
       });
 
@@ -415,6 +444,7 @@ describe('Printer V2 Upload Routes', () => {
 
       const request = new Request('http://localhost/v2/upload', {
         method: 'POST',
+        headers: authHeaders,
         body: formData,
       });
 
@@ -438,6 +468,7 @@ describe('Printer V2 Upload Routes', () => {
 
       const request = new Request('http://localhost/v2/upload', {
         method: 'POST',
+        headers: authHeaders,
         body: formData,
       });
 
@@ -532,6 +563,7 @@ describe('Printer V2 Upload Routes', () => {
 
       const request = new Request('http://localhost/v2/upload', {
         method: 'POST',
+        headers: authHeaders,
         body: formData,
       });
 

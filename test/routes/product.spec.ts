@@ -47,9 +47,6 @@ describe('Product Routes', () => {
 
     const request = new Request('http://localhost/products', {
       method: 'GET',
-      headers: {
-        Cookie: fakeSignedCookie,
-      },
     });
 
     const res = await app.fetch(request, mockEnv());
@@ -71,9 +68,6 @@ describe('Product Routes', () => {
 
     const request = new Request('http://localhost/product/1', {
       method: 'GET',
-      headers: {
-        Cookie: fakeSignedCookie,
-      },
     });
 
     const res = await app.fetch(request, mockEnv());
@@ -94,9 +88,6 @@ describe('Product Routes', () => {
 
     const request = new Request('http://localhost/product/999', {
       method: 'GET',
-      headers: {
-        Cookie: fakeSignedCookie,
-      },
     });
 
     const res = await app.fetch(request, mockEnv());
@@ -104,6 +95,40 @@ describe('Product Routes', () => {
     expect(res.status).toBe(404);
     const data = (await res.json()) as { error: string };
     expect(data.error).toMatch(/not found/i);
+  });
+
+  test('GET /products/search is public', async () => {
+    const request = new Request('http://localhost/products/search?q=a', {
+      method: 'GET',
+    });
+
+    const res = await app.fetch(request, mockEnv());
+
+    expect(res.status).toBe(400);
+    const data = (await res.json()) as { error: string };
+    expect(data.error).toContain('at least 2 characters');
+  });
+
+  test('POST /add-product returns 401 when not authenticated', async () => {
+    const request = new Request('http://localhost/add-product', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        name: 'New Product',
+        description: 'desc',
+        stl: 'url/to.stl',
+        price: 15,
+        image: 'url/to/image.jpg',
+        filamentType: 'PLA',
+        color: '#ffffff',
+      }),
+    });
+
+    const res = await app.fetch(request, mockEnv());
+
+    expect(res.status).toBe(401);
   });
 
   test('POST /add-product adds a product without categories', async () => {
@@ -283,6 +308,30 @@ describe('Product Routes', () => {
     expect(data).toHaveProperty('error');
   });
 
+  test('PUT /update-product returns 401 when not authenticated', async () => {
+    const request = new Request('http://localhost/update-product', {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        id: 1,
+        name: 'Updated Product',
+        description: 'Updated desc',
+        price: 20,
+        image: 'url/to/image.jpg',
+        filamentType: 'PLA',
+        color: '#000000',
+        stl: 'url/to/updated.stl',
+        skuNumber: 'SKU123',
+      }),
+    });
+
+    const res = await app.fetch(request, mockEnv());
+
+    expect(res.status).toBe(401);
+  });
+
   test('DELETE /delete-product/:id deletes a product', async () => {
     mockDelete.mockResolvedValueOnce({ changes: 1 });
 
@@ -300,5 +349,29 @@ describe('Product Routes', () => {
     expect(res.status).toBe(200);
     const data = (await res.json()) as { success: boolean };
     expect(data.success).toBe(true);
+  });
+
+  test('DELETE /delete-product/:id returns 401 when not authenticated', async () => {
+    const request = new Request('http://localhost/delete-product/1', {
+      method: 'DELETE',
+    });
+
+    const res = await app.fetch(request, mockEnv());
+
+    expect(res.status).toBe(401);
+  });
+
+  test('POST /add-category returns 401 when not authenticated', async () => {
+    const request = new Request('http://localhost/add-category', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ categoryName: 'Accessories' }),
+    });
+
+    const res = await app.fetch(request, mockEnv());
+
+    expect(res.status).toBe(401);
   });
 });
