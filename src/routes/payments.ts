@@ -14,10 +14,7 @@ import type {
 } from '../types';
 import { generateOrderNumber } from '../utils/generateOrderNumber';
 import { getPayPalAccessToken } from '../utils/payPalAccess';
-import {
-  decryptStoredProfileValue,
-  getCipherKitSecretKey,
-} from '../utils/profileCrypto';
+import { decryptStoredShippingProfile } from '../utils/profileCrypto';
 
 // Schemas
 const _stripeCheckoutSchema = z.object({
@@ -38,6 +35,102 @@ const _stripeWebhookSchema = z.object({
     }),
   }),
 });
+
+// ---------------------------------------------------------------------------
+// Shared helpers for webhook order processing
+// ---------------------------------------------------------------------------
+
+const ALLOWED_COLORS = new Set([
+  'black',
+  'white',
+  'gray',
+  'grey',
+  'yellow',
+  'red',
+  'gold',
+  'purple',
+  'blue',
+  'orange',
+  'green',
+  'pink',
+  'matteBlack',
+  'lunarRegolith',
+  'petgBlack',
+]);
+
+function normalizeColor(raw: string | null | undefined): string {
+  if (!raw) return 'black';
+  const trimmed = raw.trim();
+  if (ALLOWED_COLORS.has(trimmed)) return trimmed;
+  const lower = trimmed.toLowerCase();
+  for (const color of ALLOWED_COLORS) {
+    if (color.toLowerCase() === lower) return color;
+  }
+  return 'black';
+}
+
+function normalizePhone(value: string | null | undefined): string {
+  const digits = (value || '').replace(/\D/g, '');
+  return digits.length >= 10 ? digits : '0000000000';
+}
+
+type OrderProfile = {
+  email: string;
+  firstName: string;
+  lastName: string;
+  shippingAddress: string;
+  city: string;
+  state: string;
+  zipCode: string;
+  phone: string;
+};
+
+function buildOrderDataArray(
+  cartItems: CartItemWithProduct[],
+  profile: OrderProfile,
+): Slant3DOrderData[] {
+  const { email, firstName, lastName, shippingAddress, city, state, zipCode, phone } =
+    profile;
+  const fullName = `${firstName} ${lastName}`.trim() || email;
+
+  return cartItems.map((item: CartItemWithProduct): Slant3DOrderData => {
+    const stlPath = item.stl;
+    const filenameCandidate = stlPath?.split('/').pop();
+    const normalizedColor = normalizeColor(item.color);
+
+    return {
+      email,
+      phone,
+      name: fullName,
+      orderNumber: generateOrderNumber(),
+      filename: filenameCandidate,
+      fileURL: stlPath,
+      bill_to_street_1: shippingAddress,
+      bill_to_street_2: '',
+      bill_to_street_3: '',
+      bill_to_city: city,
+      bill_to_state: state,
+      bill_to_zip: zipCode,
+      bill_to_country_as_iso: 'US',
+      bill_to_is_US_residential: 'true',
+      ship_to_name: fullName,
+      ship_to_street_1: shippingAddress,
+      ship_to_street_2: '',
+      ship_to_street_3: '',
+      ship_to_city: city,
+      ship_to_state: state,
+      ship_to_zip: zipCode,
+      ship_to_country_as_iso: 'US',
+      ship_to_is_US_residential: 'true',
+      order_item_name: item.productName,
+      order_quantity: String(item.quantity),
+      order_image_url: '',
+      order_sku: item.skuNumber,
+      order_item_color: normalizedColor,
+      profile: item.filamentType,
+    };
+  });
+}
 
 const paymentsRouter = factory
   .createApp()
@@ -226,14 +319,16 @@ const paymentsRouter = factory
       }
 
       try {
-        // Verify webhook signature using async method for Cloudflare Workers
+        // Phase 1: Verify webhook signature
+        const t0 = Date.now();
         const event = await stripe.webhooks.constructEventAsync(
           body,
           sig,
           c.env.STRIPE_WEBHOOK_SECRET,
         );
-
-        console.log('Received Stripe webhook event:', event.type);
+        console.log(
+          `[webhook] signature verified in ${Date.now() - t0}ms, event: ${event.type}`,
+        );
 
         // Handle Payment Intent succeeded (embedded checkout flow)
         if (event.type === 'payment_intent.succeeded') {
@@ -249,64 +344,44 @@ const paymentsRouter = factory
             return c.json({ received: true });
           }
 
-          // Get cart items
-          const db = c.var.db;
-          const cartItems = await db
-            .select({
-              id: cart.id,
-              skuNumber: cart.skuNumber,
-              quantity: cart.quantity,
-              color: cart.color,
-              filamentType: cart.filamentType,
-              productName: productsTable.name,
-              stl: productsTable.stl,
-            })
-            .from(cart)
-            .leftJoin(
-              productsTable,
-              eq(cart.skuNumber, productsTable.skuNumber),
-            )
-            .where(eq(cart.cartId, cartId));
-
-          if (cartItems.length === 0) {
-            console.error('No cart items found for cartId:', cartId);
-            return c.json({ error: 'Cart not found' }, 404);
-          }
-
-          const normalizePhone = (value: string) => {
-            const digits = (value || '').replace(/\D/g, '');
-            return digits.length >= 10 ? digits : '0000000000';
-          };
-
           try {
-            const passphrase = c.env.ENCRYPTION_PASSPHRASE;
+            const db = c.var.db;
+
+            // Phase 2: Cart lookup
+            const t1 = Date.now();
+            const cartItems = await db
+              .select({
+                id: cart.id,
+                skuNumber: cart.skuNumber,
+                quantity: cart.quantity,
+                color: cart.color,
+                filamentType: cart.filamentType,
+                productName: productsTable.name,
+                stl: productsTable.stl,
+              })
+              .from(cart)
+              .leftJoin(
+                productsTable,
+                eq(cart.skuNumber, productsTable.skuNumber),
+              )
+              .where(eq(cart.cartId, cartId));
+            console.log(`[webhook] cart lookup in ${Date.now() - t1}ms (${cartItems.length} items)`);
+
+            if (cartItems.length === 0) {
+              console.error('No cart items found for cartId:', cartId);
+              return c.json({ error: 'Cart not found' }, 404);
+            }
+
+            // Phase 3: User lookup
+            const t2 = Date.now();
             let userRow: typeof users.$inferSelect | undefined;
 
-            console.log(
-              'Attempting to load user profile. userId:',
-              userId,
-              'customerEmail:',
-              customerEmail,
-              'receiptEmail:',
-              paymentIntent.receipt_email,
-            );
-
-            // Try to load user by userId first
             if (userId) {
-              console.log('Looking up user by userId:', userId);
               const [found] = await db
                 .select()
                 .from(users)
                 .where(eq(users.id, userId));
               userRow = found;
-              if (userRow) {
-                console.log('✓ User found by userId:', {
-                  id: userRow.id,
-                  email: userRow.email,
-                });
-              } else {
-                console.warn('✗ User not found for userId:', userId);
-              }
             }
 
             // If no user found by ID, try by email
@@ -314,150 +389,66 @@ const paymentsRouter = factory
               const emailToLookup =
                 customerEmail || paymentIntent.receipt_email;
               if (emailToLookup) {
-                console.log('Looking up user by email:', emailToLookup);
                 const [found] = await db
                   .select()
                   .from(users)
                   .where(eq(users.email, emailToLookup));
                 userRow = found;
-                if (userRow) {
-                  console.log('✓ User found by email:', {
-                    id: userRow.id,
-                    email: userRow.email,
-                  });
-                } else {
-                  console.warn('✗ User not found for email:', emailToLookup);
-                }
-              } else {
-                console.warn('✗ No email available for user lookup');
               }
             }
+            console.log(
+              `[webhook] user lookup in ${Date.now() - t2}ms, found: ${!!userRow}`,
+            );
 
-            // Initialize defaults
-            let firstName = 'Guest';
-            let lastName = '';
-            let shippingAddress = 'Address Required';
-            let city = 'City';
-            let state = 'CA';
-            let zipCode = '00000';
-            let phone = '0000000000';
-            let email =
-              customerEmail ||
-              paymentIntent.receipt_email ||
-              'guest@example.com';
+            // Phase 4: Profile decryption (concurrent)
+            const defaults = {
+              firstName: 'Guest',
+              lastName: '',
+              shippingAddress: 'Address Required',
+              city: 'City',
+              state: 'CA',
+              zipCode: '00000',
+              phone: '0000000000',
+              email:
+                customerEmail ||
+                paymentIntent.receipt_email ||
+                'guest@example.com',
+            };
 
-            // Decrypt and load user profile if found
+            let profile = { ...defaults };
+
             if (userRow) {
-              email = userRow.email;
-
+              const t3 = Date.now();
               try {
-                const secretKey = await getCipherKitSecretKey(passphrase);
-
-                firstName =
-                  (await decryptStoredProfileValue(userRow.firstName, secretKey)) ||
-                  firstName;
-                lastName =
-                  (await decryptStoredProfileValue(userRow.lastName, secretKey)) ||
-                  lastName;
-                shippingAddress =
-                  (await decryptStoredProfileValue(
-                    userRow.shippingAddress,
-                    secretKey,
-                  )) || shippingAddress;
-                city =
-                  (await decryptStoredProfileValue(userRow.city, secretKey)) ||
-                  city;
-                state =
-                  (await decryptStoredProfileValue(userRow.state, secretKey)) ||
-                  state;
-                zipCode =
-                  (await decryptStoredProfileValue(userRow.zipCode, secretKey)) ||
-                  zipCode;
-                const decryptedPhone = await decryptStoredProfileValue(
-                  userRow.phone,
-                  secretKey,
+                const decrypted = await decryptStoredShippingProfile(
+                  userRow,
+                  c.env.ENCRYPTION_PASSPHRASE,
                 );
-                phone = normalizePhone(decryptedPhone || phone);
+                console.log(`[webhook] profile decryption in ${Date.now() - t3}ms`);
+                profile = {
+                  email: userRow.email,
+                  firstName: decrypted.firstName || defaults.firstName,
+                  lastName: decrypted.lastName || defaults.lastName,
+                  shippingAddress:
+                    decrypted.shippingAddress || defaults.shippingAddress,
+                  city: decrypted.city || defaults.city,
+                  state: decrypted.state || defaults.state,
+                  zipCode: decrypted.zipCode || defaults.zipCode,
+                  phone: normalizePhone(decrypted.phone),
+                };
               } catch (e) {
-                console.error('Error decrypting user profile:', e);
+                console.error('[webhook] Error decrypting user profile:', e);
                 // Use defaults if decryption fails
               }
             }
 
-            // Normalize color function
-            const allowedColors = new Set([
-              'black',
-              'white',
-              'gray',
-              'grey',
-              'yellow',
-              'red',
-              'gold',
-              'purple',
-              'blue',
-              'orange',
-              'green',
-              'pink',
-              'matteBlack',
-              'lunarRegolith',
-              'petgBlack',
-            ]);
-
-            const normalizeColor = (raw: string | null | undefined): string => {
-              if (!raw) return 'black';
-              const trimmed = raw.trim();
-              if (allowedColors.has(trimmed)) return trimmed;
-              const lower = trimmed.toLowerCase();
-              for (const c of allowedColors) {
-                if (c.toLowerCase() === lower) return c;
-              }
-              return 'black';
-            };
-
-            // Build Slant3D order data
-            const orderDataArray: Slant3DOrderData[] = cartItems.map(
-              (item: CartItemWithProduct): Slant3DOrderData => {
-                const stlPath = item.stl;
-                const filenameCandidate = stlPath?.split('/').pop();
-                const normalizedColor = normalizeColor(item.color);
-
-                return {
-                  email,
-                  phone,
-                  name: `${firstName} ${lastName}`.trim() || email,
-                  orderNumber: generateOrderNumber(),
-                  filename: filenameCandidate,
-                  fileURL: stlPath,
-                  bill_to_street_1: shippingAddress,
-                  bill_to_street_2: '',
-                  bill_to_street_3: '',
-                  bill_to_city: city,
-                  bill_to_state: state,
-                  bill_to_zip: zipCode,
-                  bill_to_country_as_iso: 'US',
-                  bill_to_is_US_residential: 'true',
-                  ship_to_name: `${firstName} ${lastName}`.trim() || email,
-                  ship_to_street_1: shippingAddress,
-                  ship_to_street_2: '',
-                  ship_to_street_3: '',
-                  ship_to_city: city,
-                  ship_to_state: state,
-                  ship_to_zip: zipCode,
-                  ship_to_country_as_iso: 'US',
-                  ship_to_is_US_residential: 'true',
-                  order_item_name: item.productName,
-                  order_quantity: String(item.quantity),
-                  order_image_url: '',
-                  order_sku: item.skuNumber,
-                  order_item_color: normalizedColor,
-                  profile: item.filamentType,
-                };
-              },
+            // Phase 5: Build order data + call Slant3D
+            const t4 = Date.now();
+            const orderDataArray = buildOrderDataArray(
+              cartItems as CartItemWithProduct[],
+              profile,
             );
 
-            console.log('Creating Slant3D order with data:', orderDataArray);
-
-            // Create order with Slant3D (using /estimate for testing since V1 has no test API)
             // TODO: Change to ${BASE_URL}order when ready for production
             const response = await fetch(`${BASE_URL}order/estimate`, {
               method: 'POST',
@@ -467,8 +458,7 @@ const paymentsRouter = factory
               },
               body: JSON.stringify(orderDataArray),
             });
-
-            console.log('Slant3D estimate response status:', response.status);
+            console.log(`[webhook] Slant3D API call in ${Date.now() - t4}ms, status: ${response.status}`);
 
             if (!response.ok) {
               const errorText = await response.text();
@@ -477,7 +467,6 @@ const paymentsRouter = factory
                 response.status,
                 errorText,
               );
-              // Store failed order for manual review/retry
               console.error(
                 'Failed order data:',
                 JSON.stringify(orderDataArray, null, 2),
@@ -487,12 +476,15 @@ const paymentsRouter = factory
 
             const orderResponse =
               (await response.json()) as Slant3DOrderResponse;
-            console.log('Slant3D order created successfully:', orderResponse);
 
-            // Clear the cart after successful order
+            // Phase 6: Cart cleanup
+            const t5 = Date.now();
             await db.delete(cart).where(eq(cart.cartId, cartId));
-            console.log('Cart cleared for cartId:', cartId);
+            console.log(`[webhook] cart cleanup in ${Date.now() - t5}ms`);
 
+            console.log(
+              `[webhook] payment_intent.succeeded total: ${Date.now() - t0}ms`,
+            );
             return c.json({
               success: true,
               orderId: orderResponse.orderId || 'created',
@@ -519,8 +511,10 @@ const paymentsRouter = factory
             return c.json({ error: 'Missing required metadata' }, 400);
           }
 
-          // Get cart items and user information
           const db = c.var.db;
+
+          // Phase 2: Cart lookup
+          const t1 = Date.now();
           const cartItems = await db
             .select({
               id: cart.id,
@@ -537,116 +531,52 @@ const paymentsRouter = factory
               eq(cart.skuNumber, productsTable.skuNumber),
             )
             .where(eq(cart.cartId, cartId));
+          console.log(`[webhook] cart lookup in ${Date.now() - t1}ms (${cartItems.length} items)`);
 
           if (cartItems.length === 0) {
             console.error('No cart items found for cartId:', cartId);
             return c.json({ error: 'Cart not found' }, 404);
           }
 
-          // Get user information
+          // Phase 3: User lookup
+          const t2 = Date.now();
           const [userRow] = await db
             .select()
             .from(users)
             .where(eq(users.id, userId));
+          console.log(`[webhook] user lookup in ${Date.now() - t2}ms, found: ${!!userRow}`);
 
           if (!userRow) {
             console.error('User not found for userId:', userId);
             return c.json({ error: 'User not found' }, 404);
           }
 
-          // Decrypt user information
-          const passphrase = c.env.ENCRYPTION_PASSPHRASE;
-          const secretKey = await getCipherKitSecretKey(passphrase);
-          const email = userRow.email; // Email is not encrypted
-          const firstName =
-            (await decryptStoredProfileValue(userRow.firstName, secretKey)) || '';
-          const lastName =
-            (await decryptStoredProfileValue(userRow.lastName, secretKey)) || '';
-          const shippingAddress =
-            (await decryptStoredProfileValue(userRow.shippingAddress, secretKey)) ||
-            '';
-          const city =
-            (await decryptStoredProfileValue(userRow.city, secretKey)) || '';
-          const state =
-            (await decryptStoredProfileValue(userRow.state, secretKey)) || '';
-          const zipCode =
-            (await decryptStoredProfileValue(userRow.zipCode, secretKey)) || '';
-          const phone =
-            (await decryptStoredProfileValue(userRow.phone, secretKey)) || '';
+          // Phase 4: Profile decryption (concurrent)
+          const t3 = Date.now();
+          const decrypted = await decryptStoredShippingProfile(
+            userRow,
+            c.env.ENCRYPTION_PASSPHRASE,
+          );
+          console.log(`[webhook] profile decryption in ${Date.now() - t3}ms`);
 
-          // Create order data for Slant3D API (using the same logic from shipping endpoint)
-          const allowedColors = new Set([
-            'black',
-            'white',
-            'gray',
-            'grey',
-            'yellow',
-            'red',
-            'gold',
-            'purple',
-            'blue',
-            'orange',
-            'green',
-            'pink',
-            'matteBlack',
-            'lunarRegolith',
-            'petgBlack',
-          ]);
-
-          const normalizeColor = (raw: string | null | undefined): string => {
-            if (!raw) return 'black';
-            const trimmed = raw.trim();
-            if (allowedColors.has(trimmed)) return trimmed;
-            const lower = trimmed.toLowerCase();
-            for (const c of allowedColors) {
-              if (c.toLowerCase() === lower) return c;
-            }
-            return 'black';
+          const profile: OrderProfile = {
+            email: userRow.email,
+            firstName: decrypted.firstName || '',
+            lastName: decrypted.lastName || '',
+            shippingAddress: decrypted.shippingAddress || '',
+            city: decrypted.city || '',
+            state: decrypted.state || '',
+            zipCode: decrypted.zipCode || '',
+            phone: normalizePhone(decrypted.phone),
           };
 
-          const orderDataArray: Slant3DOrderData[] = cartItems.map(
-            (item: CartItemWithProduct): Slant3DOrderData => {
-              const stlPath = item.stl;
-              const filenameCandidate = stlPath?.split('/').pop();
-              const normalizedColor = normalizeColor(item.color);
-
-              return {
-                email,
-                phone,
-                name: `${firstName} ${lastName}`.trim(),
-                orderNumber: generateOrderNumber(),
-                filename: filenameCandidate,
-                fileURL: stlPath,
-                bill_to_street_1: shippingAddress,
-                bill_to_street_2: '',
-                bill_to_street_3: '',
-                bill_to_city: city,
-                bill_to_state: state,
-                bill_to_zip: zipCode,
-                bill_to_country_as_iso: 'US',
-                bill_to_is_US_residential: 'true',
-                ship_to_name: `${firstName} ${lastName}`.trim(),
-                ship_to_street_1: shippingAddress,
-                ship_to_street_2: '',
-                ship_to_street_3: '',
-                ship_to_city: city,
-                ship_to_state: state,
-                ship_to_zip: zipCode,
-                ship_to_country_as_iso: 'US',
-                ship_to_is_US_residential: 'true',
-                order_item_name: item.productName,
-                order_quantity: String(item.quantity),
-                order_image_url: '',
-                order_sku: item.skuNumber,
-                order_item_color: normalizedColor,
-                profile: item.filamentType,
-              };
-            },
+          // Phase 5: Build order data + call Slant3D
+          const t4 = Date.now();
+          const orderDataArray = buildOrderDataArray(
+            cartItems as CartItemWithProduct[],
+            profile,
           );
 
-          console.log('Creating Slant3D order with data:', orderDataArray);
-
-          // Create order with Slant3D (using /estimate for testing since V1 has no test API)
           // TODO: Change to ${BASE_URL}order when ready for production
           try {
             const response = await fetch(`${BASE_URL}order/estimate`, {
@@ -657,6 +587,7 @@ const paymentsRouter = factory
               },
               body: JSON.stringify(orderDataArray),
             });
+            console.log(`[webhook] Slant3D API call in ${Date.now() - t4}ms, status: ${response.status}`);
 
             if (!response.ok) {
               console.error(
@@ -664,7 +595,6 @@ const paymentsRouter = factory
                 response.status,
                 await response.text(),
               );
-              // Store failed order for manual review/retry
               console.error(
                 'Failed order data:',
                 JSON.stringify(orderDataArray, null, 2),
@@ -674,14 +604,18 @@ const paymentsRouter = factory
 
             const orderResponse =
               (await response.json()) as Slant3DOrderResponse;
-            console.log('Slant3D order created successfully:', orderResponse);
 
-            // Clear the cart after successful order
+            // Phase 6: Cart cleanup
+            const t5 = Date.now();
             await db.delete(cart).where(eq(cart.cartId, cartId));
+            console.log(`[webhook] cart cleanup in ${Date.now() - t5}ms`);
 
             // TODO: Store order record in your database for tracking
             // TODO: Send confirmation email to customer
 
+            console.log(
+              `[webhook] checkout.session.completed total: ${Date.now() - t0}ms`,
+            );
             return c.json({
               success: true,
               orderId: orderResponse.orderId || 'created',

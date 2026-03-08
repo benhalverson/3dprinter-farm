@@ -127,3 +127,37 @@ export async function buildEncryptedProfileUpdate(
     phone: (await encryptStoredProfileValue(profile.phone, secretKey)) ?? '',
   };
 }
+
+type ShippingProfileRow = {
+  firstName: string | null;
+  lastName: string | null;
+  shippingAddress: string | null;
+  city: string | null;
+  state: string | null;
+  zipCode: string | null;
+  phone: string | null;
+};
+
+export type DecryptedShippingProfile = ShippingProfileRow;
+
+/**
+ * Decrypts all shipping-related profile fields concurrently using Promise.all.
+ * Derives (or reuses a cached) secret key from the given passphrase.
+ */
+export async function decryptStoredShippingProfile(
+  profile: ShippingProfileRow,
+  passphrase: string,
+): Promise<DecryptedShippingProfile> {
+  const secretKey = await getCipherKitSecretKey(passphrase);
+  const [firstName, lastName, shippingAddress, city, state, zipCode, phone] =
+    await Promise.all([
+      decryptStoredProfileValue(profile.firstName, secretKey),
+      decryptStoredProfileValue(profile.lastName, secretKey),
+      decryptStoredProfileValue(profile.shippingAddress, secretKey),
+      decryptStoredProfileValue(profile.city, secretKey),
+      decryptStoredProfileValue(profile.state, secretKey),
+      decryptStoredProfileValue(profile.zipCode, secretKey),
+      decryptStoredProfileValue(profile.phone, secretKey),
+    ]);
+  return { firstName, lastName, shippingAddress, city, state, zipCode, phone };
+}
