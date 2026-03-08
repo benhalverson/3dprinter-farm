@@ -12,6 +12,7 @@ import product from './routes/product';
 import shoppingCart from './routes/shoppingCart';
 import userRouter from './routes/users';
 import webhookRoutes from './routes/webhooks';
+import { validateBindings } from './utils/validateBindings';
 
 const app = factory
   .createApp()
@@ -30,7 +31,14 @@ const app = factory
       allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
     }),
   )
-  .get('/health', c => c.json({ status: 'ok' }))
+  .get('/health', c => {
+    try {
+      validateBindings(c.env as Record<string, unknown>);
+      return c.json({ status: 'ok' });
+    } catch (e) {
+      return c.json({ status: 'error', message: (e as Error).message }, 503);
+    }
+  })
   .on(['GET', 'POST'], '/api/auth/*', c =>
     createAuth(c.env.DB, c.env).handler(c.req.raw),
   )
