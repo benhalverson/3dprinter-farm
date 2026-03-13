@@ -3,3 +3,4 @@
 .wrangler/
 .dev.vars
 *.stl
+package-lock.json
