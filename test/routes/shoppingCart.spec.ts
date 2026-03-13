@@ -12,6 +12,21 @@ import { mockEnv } from '../mocks/env';
 mockAuth();
 mockDrizzle();
 
+// Mock Stripe
+const mockStripeCheckoutCreate = vi.fn();
+vi.mock('stripe', () => ({
+  default: vi.fn().mockImplementation(() => ({
+    checkout: {
+      sessions: {
+        create: mockStripeCheckoutCreate,
+      },
+    },
+    webhooks: {
+      constructEventAsync: vi.fn(),
+    },
+  })),
+}));
+
 // Mock the profile crypto utilities
 vi.mock('../../src/utils/profileCrypto', () => ({
   getCipherKitSecretKey: vi.fn().mockResolvedValue('mock-secret-key'),
@@ -432,6 +447,136 @@ describe('Shopping Cart Routes', () => {
       expect(res.status).toBe(502);
       const data = (await res.json()) as any;
       expect(data.error).toBe('Upstream estimate failed');
+    });
+  });
+
+  describe('POST /cart/:cartId/checkout', () => {
+    const checkoutBody = {
+      successUrl: 'https://example.com/success',
+      cancelUrl: 'https://example.com/cancel',
+    };
+
+    test('creates checkout session with cartId and userId in metadata', async () => {
+      // Mock cart items query with Stripe price IDs
+      mockWhere.mockResolvedValueOnce([
+        { stripePriceId: 'price_test1', quantity: 2 },
+        { stripePriceId: 'price_test2', quantity: 1 },
+      ]);
+
+      mockStripeCheckoutCreate.mockResolvedValueOnce({
+        url: 'https://checkout.stripe.com/pay/cs_test_123',
+        id: 'cs_test_123',
+      });
+
+      const res = await app.fetch(
+        new Request(`http://localhost/cart/${mockCartId}/checkout`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Cookie: 'better-auth.session_token=mock-session-token',
+          },
+          body: JSON.stringify(checkoutBody),
+        }),
+        env,
+      );
+
+      expect(res.status).toBe(200);
+      const data = (await res.json()) as any;
+      expect(data).toEqual({
+        url: 'https://checkout.stripe.com/pay/cs_test_123',
+        id: 'cs_test_123',
+      });
+
+      // Verify metadata contains both cartId and userId
+      expect(mockStripeCheckoutCreate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          metadata: expect.objectContaining({
+            cartId: mockCartId,
+            userId: 'user_123',
+          }),
+        }),
+      );
+    });
+
+    test('returns 401 when not authenticated', async () => {
+      const res = await app.fetch(
+        new Request(`http://localhost/cart/${mockCartId}/checkout`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(checkoutBody),
+        }),
+        env,
+      );
+
+      expect(res.status).toBe(401);
+    });
+
+    test('returns 404 when no items with Stripe price IDs found', async () => {
+      mockWhere.mockResolvedValueOnce([
+        { stripePriceId: null, quantity: 1 },
+      ]);
+
+      const res = await app.fetch(
+        new Request(`http://localhost/cart/${mockCartId}/checkout`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Cookie: 'better-auth.session_token=mock-session-token',
+          },
+          body: JSON.stringify(checkoutBody),
+        }),
+        env,
+      );
+
+      expect(res.status).toBe(404);
+      const data = (await res.json()) as any;
+      expect(data.error).toBe('No items with Stripe price IDs found');
+    });
+
+    test('returns 404 when cart is empty', async () => {
+      mockWhere.mockResolvedValueOnce([]);
+
+      const res = await app.fetch(
+        new Request(`http://localhost/cart/${mockCartId}/checkout`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Cookie: 'better-auth.session_token=mock-session-token',
+          },
+          body: JSON.stringify(checkoutBody),
+        }),
+        env,
+      );
+
+      expect(res.status).toBe(404);
+      const data = (await res.json()) as any;
+      expect(data.error).toBe('No items with Stripe price IDs found');
+    });
+
+    test('returns 500 when Stripe session creation fails', async () => {
+      mockWhere.mockResolvedValueOnce([
+        { stripePriceId: 'price_test1', quantity: 1 },
+      ]);
+
+      mockStripeCheckoutCreate.mockRejectedValueOnce(
+        new Error('Stripe API error'),
+      );
+
+      const res = await app.fetch(
+        new Request(`http://localhost/cart/${mockCartId}/checkout`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Cookie: 'better-auth.session_token=mock-session-token',
+          },
+          body: JSON.stringify(checkoutBody),
+        }),
+        env,
+      );
+
+      expect(res.status).toBe(500);
+      const data = (await res.json()) as any;
+      expect(data.error).toBe('Failed to create checkout session');
     });
   });
 });

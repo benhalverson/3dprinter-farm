@@ -757,12 +757,22 @@ const shoppingCart = factory
         },
       },
     }),
+    authMiddleware,
     zValidator('param', cartIdParamSchema),
     zValidator('json', createCheckoutSchema),
     async c => {
       const cartId = c.req.param('cartId');
-      const { successUrl, cancelUrl, customerEmail, shippingAddress } =
+      const { successUrl, cancelUrl, customerEmail: bodyEmail, shippingAddress } =
         c.req.valid('json');
+
+      // Extract userId and customerEmail from the authenticated session
+      const jwtPayload = c.get('jwtPayload') as { id?: string; email?: string } | undefined;
+      const userId = jwtPayload?.id ? String(jwtPayload.id) : undefined;
+      const customerEmail = bodyEmail ?? jwtPayload?.email;
+
+      if (!userId) {
+        return c.json({ error: 'Unauthorized' }, 401);
+      }
 
       try {
         const items = await c.var.db
@@ -795,7 +805,10 @@ const shoppingCart = factory
           success_url: successUrl,
           cancel_url: cancelUrl,
           customer_email: customerEmail,
-          metadata: { cartId },
+          metadata: {
+            cartId,
+            userId,
+          },
         };
 
         // Add shipping address if provided
