@@ -541,6 +541,24 @@ const paymentsRouter = factory
 
           // Decrypt user information
           const passphrase = c.env.ENCRYPTION_PASSPHRASE;
+          if (!passphrase) {
+            console.error('ENCRYPTION_PASSPHRASE is not configured');
+            return c.json({ error: 'Server configuration error' }, 500);
+          }
+
+          let decryptedProfile: Awaited<
+            ReturnType<typeof decryptStoredShippingProfile>
+          >;
+          try {
+            decryptedProfile = await decryptStoredShippingProfile(
+              userRow,
+              passphrase,
+            );
+          } catch (e) {
+            console.error('Failed to decrypt user shipping profile:', e);
+            return c.json({ error: 'Failed to decrypt user profile' }, 500);
+          }
+
           const {
             email,
             firstName,
@@ -550,7 +568,7 @@ const paymentsRouter = factory
             state,
             zipCode,
             phone,
-          } = await decryptStoredShippingProfile(userRow, passphrase);
+          } = decryptedProfile;
 
           // Create order data for Slant3D API (using the same logic from shipping endpoint)
           const allowedColors = new Set([
