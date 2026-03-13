@@ -7,6 +7,7 @@ import { z } from 'zod';
 import { signInSchema, signUpSchema } from '../db/schema';
 import factory from '../factory';
 import { rateLimit } from '../utils/rateLimit';
+import { ensureSharedOrganizationMembership } from '../utils/organization';
 
 const authErrorSchema = z.object({
   error: z.string(),
@@ -174,6 +175,14 @@ const auth = factory
           },
           200,
         );
+
+        const createdUser = signUpBody.user as { id?: unknown; role?: unknown } | undefined;
+        if (typeof createdUser?.id === 'string') {
+          await ensureSharedOrganizationMembership(c.var.db, {
+            userId: createdUser.id,
+            role: 'member',
+          });
+        }
 
         const setCookie = signUpResponse.headers.get('set-cookie');
         if (setCookie) {

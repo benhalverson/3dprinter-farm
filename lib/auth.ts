@@ -1,7 +1,7 @@
 import { passkey } from '@better-auth/passkey';
 import { betterAuth } from 'better-auth';
 import { drizzleAdapter } from 'better-auth/adapters/drizzle';
-import { openAPI } from 'better-auth/plugins';
+import { openAPI, organization } from 'better-auth/plugins';
 import { drizzle } from 'drizzle-orm/d1';
 import * as schema from '../src/db/schema';
 import type { Bindings } from '../src/types';
@@ -103,6 +103,9 @@ export function createAuth(database: Bindings['DB'], env?: Bindings) {
       schema: {
         ...schema,
         user: schema.users,
+        organization: schema.organizationTable,
+        member: schema.memberTable,
+        invitation: schema.invitationTable,
       },
     }),
     secret: getAuthSecret(env),
@@ -184,6 +187,10 @@ export function createAuth(database: Bindings['DB'], env?: Bindings) {
     },
     plugins: [
       openAPI(),
+      organization({
+        allowUserToCreateOrganization: false,
+        organizationLimit: 1,
+      }),
       passkey({
         rpID,
         rpName: env?.RP_NAME || '3D Printer Web API',

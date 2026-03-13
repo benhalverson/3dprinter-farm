@@ -1,5 +1,29 @@
 import { createAuth } from '../../lib/auth';
 import factory from '../factory';
+import {
+  SHARED_ORGANIZATION_ID,
+} from '../constants';
+import {
+  ensureSharedOrganizationMembership,
+  mapLegacyRoleToOrganizationRole,
+} from './organization';
+
+type AuthPayload = {
+  id?: string;
+  email?: string;
+  name?: string | null;
+  role?: string | null;
+};
+
+const CATALOG_MUTATION_ROLES = new Set(['admin', 'owner']);
+
+function normalizeRole(role: string) {
+  return role
+    .trim()
+    .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
+    .replace(/[\s-]+/g, '_')
+    .toLowerCase();
+}
 
 export const authMiddleware = factory.createMiddleware(async (c, next) => {
   try {
@@ -26,9 +50,41 @@ export const authMiddleware = factory.createMiddleware(async (c, next) => {
     c.set('user', authSession.user);
     c.set('jwtPayload', payload);
     c.set('userId', payload.id);
+
+    const organizationMember = await ensureSharedOrganizationMembership(c.var.db, {
+      userId: payload.id,
+      role: mapLegacyRoleToOrganizationRole(payload.role),
+    });
+    const organizationRole = organizationMember.role;
+
+    c.set('organizationId', SHARED_ORGANIZATION_ID);
+    c.set('organizationMember', organizationMember ?? null);
+    c.set('organizationRole', organizationRole);
+
     return next();
   } catch (err) {
     console.error('Auth session verification error:', err);
     return c.json({ error: 'Invalid or expired session' }, 401);
   }
 });
+
+export const requireCatalogMutationRole = factory.createMiddleware(
+  async (c, next) => {
+    const payload = c.get('jwtPayload') as AuthPayload | undefined;
+    const organizationRole = c.get('organizationRole') as string | undefined;
+
+    if (!payload?.id) {
+      return c.json({ error: 'Unauthorized' }, 401);
+    }
+
+    if (!organizationRole) {
+      return c.json({ error: 'Forbidden' }, 403);
+    }
+
+    if (!CATALOG_MUTATION_ROLES.has(normalizeRole(organizationRole))) {
+      return c.json({ error: 'Forbidden' }, 403);
+    }
+
+    return next();
+  },
+);

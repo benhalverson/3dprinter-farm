@@ -19,7 +19,10 @@ import {
   updateProductSchema,
 } from '../db/schema';
 import factory from '../factory';
-import { authMiddleware } from '../utils/authMiddleware';
+import {
+  authMiddleware,
+  requireCatalogMutationRole,
+} from '../utils/authMiddleware';
 import { calculateMarkupPrice } from '../utils/calculateMarkupPrice';
 import { generateSkuNumber } from '../utils/generateSkuNumber';
 
@@ -370,6 +373,7 @@ const product = factory
   .post(
     '/add-product',
     authMiddleware,
+    requireCatalogMutationRole,
     describeRoute({
       description: 'Add a new product',
       tags: ['Products'],
@@ -529,6 +533,7 @@ const product = factory
   .post(
     '/v2/add-product',
     authMiddleware,
+    requireCatalogMutationRole,
     describeRoute({
       description: 'Add a new product using Slant3D V2 API',
       tags: ['Products'],
@@ -995,6 +1000,7 @@ const product = factory
   .put(
     '/update-product',
     authMiddleware,
+    requireCatalogMutationRole,
     describeRoute({
       description: 'Update an existing product',
       tags: ['Products'],
@@ -1242,6 +1248,7 @@ const product = factory
   .delete(
     '/delete-product/:id',
     authMiddleware,
+    requireCatalogMutationRole,
     describeRoute({
       description: 'Delete a product by ID',
       tags: ['Products'],
@@ -1294,6 +1301,7 @@ const product = factory
   .post(
     '/add-category',
     authMiddleware,
+    requireCatalogMutationRole,
     describeRoute({
       summary: 'Add a new product category',
       description: 'Creates a new category and returns the created record.',

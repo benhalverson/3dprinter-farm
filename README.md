@@ -120,6 +120,27 @@ pnpm run dev
 - Ensure you're authenticated with Cloudflare: `npx wrangler auth login`
 - Have the correct database name configured in `wrangler.toml`
 
+#### Cloudflare Dashboard workflow
+
+If you prefer to apply changes from the Cloudflare dashboard instead of the CLI:
+
+1. Open your D1 database in the Cloudflare dashboard.
+2. Open the SQL editor for the target database.
+3. Open the migration file you want to apply from `drizzle/migrations/`.
+4. Copy the SQL from the migration file and paste it into the SQL editor.
+5. Run each migration in chronological order.
+6. Repeat for every environment you use separately, for example:
+	- local preview database
+	- remote production database
+	- remote preview/staging database
+
+For the Better Auth organization-role migration in this repository, make sure `drizzle/migrations/0001_jittery_peter_parker.sql` has been applied everywhere the app runs. That migration creates:
+
+- `organization`
+- `member`
+- `invitation`
+- `session.active_organization_id`
+
 #### 1. Apply Individual Migration Files
 For each migration file that needs to be applied to the remote database:
 
@@ -196,6 +217,75 @@ pnpm run deploy
 - **Downtime**: Remote migrations may cause brief downtime during execution
 - **Testing**: Always test migrations locally before applying to production
 - **Backup**: Consider exporting data before major schema changes
+
+## Better Auth Organization Setup
+
+This project now uses Better Auth's organization plugin for catalog-management permissions.
+
+### Shared organization model
+
+The application uses a single shared organization for catalog administration:
+
+- organization id: `org_shared_catalog`
+- organization name: `3D Printer Web API`
+- organization slug: `3dprinter-web-api`
+
+Catalog mutation routes check the caller's shared-organization role, not only the legacy `users.role` field.
+
+### First admin bootstrap
+
+The admin promotion endpoint can promote other users, but the very first admin must exist first.
+
+If you are setting up a fresh environment from the Cloudflare dashboard, do these steps after applying the migrations:
+
+1. Find the target user's `id` in the `users` table.
+2. Ensure the shared organization row exists in `organization`.
+3. Ensure the user has a row in `member` for `org_shared_catalog`.
+4. Set that membership's `role` to `admin`.
+5. For compatibility with the current transitional code, also set `users.role` to `admin`.
+6. Have the user sign out and sign back in so a fresh session is issued.
+
+Recommended values:
+
+- `organization.id`: `org_shared_catalog`
+- `organization.name`: `3D Printer Web API`
+- `organization.slug`: `3dprinter-web-api`
+- `organization.metadata`: `{"type":"shared"}`
+- `member.id`: `member:org_shared_catalog:<USER_ID>`
+- `member.organization_id`: `org_shared_catalog`
+- `member.user_id`: `<USER_ID>`
+- `member.role`: `admin`
+
+### Ongoing admin management
+
+After the first admin exists, future promotions and demotions should go through the application endpoint instead of direct database edits:
+
+- `POST /users/:id/organization-role`
+
+Request body:
+
+```json
+{
+	"role": "admin"
+}
+```
+
+Valid roles for this endpoint are:
+
+- `admin`
+- `member`
+
+### Troubleshooting organization setup
+
+If Better Auth organization endpoints fail, verify all of the following in the target database:
+
+- the `organization` table exists
+- the `member` table exists
+- the `invitation` table exists
+- the `session` table has `active_organization_id`
+- the shared organization row exists
+- the intended admin user has a `member` row for `org_shared_catalog`
+- the intended admin user also has `users.role = 'admin'` during the transition period
 
 ### Troubleshooting
 
