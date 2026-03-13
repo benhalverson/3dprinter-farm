@@ -93,8 +93,8 @@ const email = factory
           }),
         });
 
-        const data = await sendEmailRes.json();
-        console.log('Mailjet send email response:', data);
+        await sendEmailRes.json();
+        console.log('Mailjet send email response status:', sendEmailRes.status);
 
         return c.json(
           "{ status: 'success', message: 'Email sent successfully' }",
