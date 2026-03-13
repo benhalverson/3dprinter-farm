@@ -36,13 +36,7 @@ mockGlobalFetch();
 
 const env = mockEnv();
 
-function mockSharedOrganizationAccess({
-  sessionRole = 'user',
-  organizationRole = 'member',
-}: {
-  sessionRole?: string;
-  organizationRole?: 'admin' | 'member' | 'owner';
-} = {}) {
+function mockAuthenticatedUser(sessionRole = 'user') {
   mockBetterAuth.getSession.mockResolvedValue({
     session: {
       id: 'session_123',
@@ -55,6 +49,16 @@ function mockSharedOrganizationAccess({
       role: sessionRole,
     },
   });
+}
+
+function mockSharedOrganizationAccess({
+  sessionRole = 'user',
+  organizationRole = 'member',
+}: {
+  sessionRole?: string;
+  organizationRole?: 'admin' | 'member' | 'owner';
+} = {}) {
+  mockAuthenticatedUser(sessionRole);
 
   mockWhere.mockReturnValueOnce({
     get: vi.fn().mockResolvedValue({
@@ -80,7 +84,7 @@ describe('Profile Endpoints', () => {
   });
 
   test('GET /profile', async () => {
-    mockSharedOrganizationAccess();
+    mockAuthenticatedUser();
     mockWhere.mockResolvedValueOnce([
       {
         id: 'user_123',
@@ -109,7 +113,7 @@ describe('Profile Endpoints', () => {
   });
 
   test('POST /profile/:id updates profile email', async () => {
-    mockSharedOrganizationAccess();
+    mockAuthenticatedUser();
 
     mockUpdate.mockResolvedValueOnce([
       {
@@ -158,7 +162,7 @@ describe('Profile Endpoints', () => {
   });
 
   test('POST /profile updates profile with shared encryption flow', async () => {
-    mockSharedOrganizationAccess();
+    mockAuthenticatedUser();
     mockUpdate.mockResolvedValueOnce([
       {
         id: 'user_123',
@@ -220,15 +224,15 @@ describe('Profile Endpoints', () => {
     ]);
 
     mockWhere.mockReturnValueOnce({
-      get: vi.fn().mockResolvedValue(null),
-    });
-
-    mockWhere.mockReturnValueOnce({
       get: vi.fn().mockResolvedValue({
         id: 'org_shared_catalog',
         name: '3D Printer Web API',
         slug: '3dprinter-web-api',
       }),
+    });
+
+    mockWhere.mockReturnValueOnce({
+      get: vi.fn().mockResolvedValue(null),
     });
 
     mockBetterAuth.addMember.mockResolvedValueOnce({
@@ -305,6 +309,29 @@ describe('Profile Endpoints', () => {
           Cookie: 'better-auth.session_token=mock-session-token',
         },
         body: JSON.stringify({ role: 'admin' }),
+      }),
+      env,
+    );
+
+    expect(res.status).toBe(403);
+    expect(mockBetterAuth.addMember).not.toHaveBeenCalled();
+    expect(mockBetterAuth.updateMemberRole).not.toHaveBeenCalled();
+  });
+
+  test('POST /users/:id/organization-role forbids modifying your own role', async () => {
+    mockSharedOrganizationAccess({
+      sessionRole: 'admin',
+      organizationRole: 'admin',
+    });
+
+    const res = await app.fetch(
+      new Request('http://localhost/users/user_123/organization-role', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Cookie: 'better-auth.session_token=mock-session-token',
+        },
+        body: JSON.stringify({ role: 'member' }),
       }),
       env,
     );

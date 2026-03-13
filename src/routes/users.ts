@@ -215,8 +215,14 @@ const userRouter = factory
     }),
     async c => {
       const userId = c.req.param('id');
+      const authUser = c.get('jwtPayload') as { id?: string } | undefined;
+
       if (!userId) {
         return c.json({ error: 'Invalid user id' }, 400);
+      }
+
+      if (authUser?.id === userId) {
+        return c.json({ error: 'Forbidden: cannot modify your own organization role' }, 403);
       }
 
       const parsedBody = organizationRoleSchema.safeParse(await c.req.json());
@@ -237,9 +243,8 @@ const userRouter = factory
       }
 
       const auth = createAuth(c.env.DB, c.env);
-      const existingMember = await getSharedOrganizationMembership(c.var.db, userId);
-
       await ensureSharedOrganization(c.var.db);
+      const existingMember = await getSharedOrganizationMembership(c.var.db, userId);
 
       const membership =
         existingMember ??
