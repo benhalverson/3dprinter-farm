@@ -41,30 +41,40 @@ vi.mock('../../src/utils/payPalAccess', () => ({
   getPayPalAccessToken: vi.fn().mockResolvedValue('mock-paypal-access-token'),
 }));
 
-// Mock profile crypto utilities
-vi.mock('../../src/utils/profileCrypto', () => ({
-  getCipherKitSecretKey: vi.fn().mockResolvedValue('mock-secret-key'),
-  decryptStoredProfileValue: vi
-    .fn()
-    .mockImplementation(async (value: string | null) =>
-      (value || '').replace('encrypted-', ''),
-    ),
-  decryptStoredShippingProfile: vi
-    .fn()
-    .mockImplementation(async (userRow: Record<string, string>) => ({
-      email: userRow.email || '',
-      firstName: (userRow.firstName || '').replace('encrypted-', ''),
-      lastName: (userRow.lastName || '').replace('encrypted-', ''),
-      shippingAddress: (userRow.shippingAddress || '').replace(
-        'encrypted-',
-        '',
-      ),
-      city: (userRow.city || '').replace('encrypted-', ''),
-      state: (userRow.state || '').replace('encrypted-', ''),
-      zipCode: (userRow.zipCode || '').replace('encrypted-', ''),
-      phone: (userRow.phone || '').replace('encrypted-', ''),
-    })),
-}));
+// Mock profile crypto utilities – spread importActual so that all named
+// exports (e.g. buildEncryptedProfileUpdate, encryptStoredProfileValue,
+// isCipherKitEncryptedValue) are preserved for route modules that import them.
+vi.mock(
+  '../../src/utils/profileCrypto',
+  async (importActual) => {
+    const actual =
+      await importActual<typeof import('../../src/utils/profileCrypto')>();
+    return {
+      ...actual,
+      getCipherKitSecretKey: vi.fn().mockResolvedValue('mock-secret-key'),
+      decryptStoredProfileValue: vi
+        .fn()
+        .mockImplementation(async (value: string | null) =>
+          (value || '').replace('encrypted-', ''),
+        ),
+      decryptStoredShippingProfile: vi
+        .fn()
+        .mockImplementation(async (userRow: Record<string, string>) => ({
+          email: userRow.email || '',
+          firstName: (userRow.firstName || '').replace('encrypted-', ''),
+          lastName: (userRow.lastName || '').replace('encrypted-', ''),
+          shippingAddress: (userRow.shippingAddress || '').replace(
+            'encrypted-',
+            '',
+          ),
+          city: (userRow.city || '').replace('encrypted-', ''),
+          state: (userRow.state || '').replace('encrypted-', ''),
+          zipCode: (userRow.zipCode || '').replace('encrypted-', ''),
+          phone: (userRow.phone || '').replace('encrypted-', ''),
+        })),
+    };
+  },
+);
 
 // Mock generateOrderNumber
 vi.mock('../../src/utils/generateOrderNumber', () => ({
