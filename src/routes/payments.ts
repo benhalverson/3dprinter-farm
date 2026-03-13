@@ -277,8 +277,13 @@ const paymentsRouter = factory
             return digits.length >= 10 ? digits : '0000000000';
           };
 
+          const passphrase = c.env.ENCRYPTION_PASSPHRASE;
+          if (!passphrase) {
+            console.error('ENCRYPTION_PASSPHRASE is not configured');
+            return c.json({ error: 'Server configuration error' }, 500);
+          }
+
           try {
-            const passphrase = c.env.ENCRYPTION_PASSPHRASE;
             let userRow: typeof users.$inferSelect | undefined;
 
             console.log(
@@ -541,6 +546,10 @@ const paymentsRouter = factory
 
           // Decrypt user information
           const passphrase = c.env.ENCRYPTION_PASSPHRASE;
+          if (!passphrase) {
+            console.error('ENCRYPTION_PASSPHRASE is not configured');
+            return c.json({ error: 'Server configuration error' }, 500);
+          }
           const {
             email,
             firstName,

@@ -474,6 +474,50 @@ describe('Payments Routes', () => {
       });
     });
 
+    test('returns 500 when ENCRYPTION_PASSPHRASE is not configured', async () => {
+      // Mock cart items query
+      mockWhere.mockResolvedValueOnce([
+        {
+          id: 1,
+          skuNumber: 'TEST-SKU-001',
+          quantity: 1,
+          color: '#000000',
+          filamentType: 'PLA',
+          productName: 'Test Product',
+          stl: 'http://example.com/test.stl',
+        },
+      ]);
+
+      // Mock user result
+      mockWhere.mockResolvedValueOnce([
+        {
+          id: mockUserId,
+          email: 'encrypted-test@example.com',
+          firstName: 'encrypted-John',
+        },
+      ]);
+
+      const envWithoutPassphrase = { ...env, ENCRYPTION_PASSPHRASE: '' };
+
+      const res = await app.fetch(
+        new Request('http://localhost/webhook/stripe', {
+          method: 'POST',
+          headers: {
+            'stripe-signature': 'valid-signature',
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(mockWebhookPayload),
+        }),
+        envWithoutPassphrase,
+      );
+
+      expect(res.status).toBe(500);
+      const data = (await res.json()) as any;
+      expect(data).toEqual({
+        error: 'Server configuration error',
+      });
+    });
+
     test('returns error when Slant3D API fails', async () => {
       // Mock cart and user data
       mockWhere
