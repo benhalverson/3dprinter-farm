@@ -8,6 +8,7 @@ import {
   mockUpdate,
   mockWhere,
 } from '../mocks/drizzle';
+import { mockBetterAuth } from '../mocks/auth';
 import { mockEnv } from '../mocks/env';
 
 // Mock Stripe to prevent network calls
@@ -35,6 +36,124 @@ vi.mock('stripe', () => {
 
 // This cookie value matches what your mockAuth is expecting
 const fakeSignedCookie = 'token=s.mocked.signed.cookie';
+
+function mockSessionRole(role: string) {
+  mockBetterAuth.getSession.mockImplementationOnce(
+    async ({ headers }: { headers?: Headers }) => {
+      const cookie = headers?.get('cookie') || headers?.get('Cookie');
+      const authorization = headers?.get('authorization');
+
+      if (!cookie && !authorization) {
+        return null;
+      }
+
+      return {
+        session: {
+          id: 'session_123',
+          expiresAt: new Date(Date.now() + 86_400_000),
+        },
+        user: {
+          id: 'user_123',
+          email: 'test@example.com',
+          name: 'Test User',
+          role,
+        },
+      };
+    },
+  );
+
+  mockWhere.mockReturnValueOnce({
+    get: vi.fn().mockResolvedValueOnce({
+      id: 'org_shared_catalog',
+      name: '3D Printer Web API',
+      slug: '3dprinter-web-api',
+    }),
+  });
+
+  mockWhere.mockReturnValueOnce({
+    get: vi.fn().mockResolvedValueOnce({
+      id: 'member:org_shared_catalog:user_123',
+      organizationId: 'org_shared_catalog',
+      userId: 'user_123',
+      role,
+      createdAt: new Date(),
+    }),
+  });
+}
+
+function mockV2AddProductDependencies() {
+  const stlBuffer = new TextEncoder().encode('solid test').buffer;
+
+  (globalThis.fetch as unknown as ReturnType<typeof vi.fn>).mockImplementation(
+    async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input.toString();
+
+      if (url === 'https://r2.example.com/test-file.stl') {
+        return {
+          ok: true,
+          arrayBuffer: async () => stlBuffer,
+        } as Response;
+      }
+
+      if (url.includes('files/direct-upload')) {
+        return {
+          ok: true,
+          json: async () => ({
+            data: {
+              presignedUrl: 'https://upload.example.com/presigned',
+              filePlaceholder: {
+                publicFileServiceId: 'file_123',
+                name: 'Test Product',
+                ownerId: 'user_123',
+                platformId: 'platform_123',
+                type: 'stl',
+                createdAt: '2026-03-12T00:00:00.000Z',
+                updatedAt: '2026-03-12T00:00:00.000Z',
+              },
+            },
+          }),
+        } as Response;
+      }
+
+      if (url === 'https://upload.example.com/presigned') {
+        return {
+          ok: true,
+          status: 200,
+          statusText: 'OK',
+        } as Response;
+      }
+
+      if (url.includes('files/confirm-upload')) {
+        return {
+          ok: true,
+          json: async () => ({
+            data: {
+              publicFileServiceId: 'file_123',
+            },
+          }),
+        } as Response;
+      }
+
+      if (url.includes('/estimate')) {
+        return {
+          ok: true,
+          json: async () => ({
+            data: {
+              total: 10,
+            },
+          }),
+        } as Response;
+      }
+
+      return {
+        ok: true,
+        json: async () => ({}),
+        text: async () => '',
+        arrayBuffer: async () => new ArrayBuffer(0),
+      } as Response;
+    },
+  );
+}
 
 describe('Product Routes', () => {
   beforeEach(() => {
@@ -132,6 +251,7 @@ describe('Product Routes', () => {
   });
 
   test('POST /add-product adds a product without categories', async () => {
+    mockSessionRole('admin');
     (
       globalThis.fetch as unknown as ReturnType<typeof vi.fn>
     ).mockResolvedValueOnce({
@@ -175,6 +295,7 @@ describe('Product Routes', () => {
   });
 
   test('POST /add-product handles slicer API failure', async () => {
+    mockSessionRole('admin');
     (
       globalThis.fetch as unknown as ReturnType<typeof vi.fn>
     ).mockResolvedValueOnce({
@@ -209,6 +330,7 @@ describe('Product Routes', () => {
   });
 
   test('POST /add-product adds a product with multiple categories', async () => {
+    mockSessionRole('admin');
     (
       globalThis.fetch as unknown as ReturnType<typeof vi.fn>
     ).mockResolvedValueOnce({
@@ -260,6 +382,7 @@ describe('Product Routes', () => {
   });
 
   test('PUT /update-product updates a product', async () => {
+    mockSessionRole('admin');
     mockUpdate.mockResolvedValueOnce({ success: true });
     mockWhere.mockReturnValueOnce({
       get: vi.fn().mockResolvedValueOnce({ id: 1 }),
@@ -292,6 +415,7 @@ describe('Product Routes', () => {
   });
 
   test('PUT /update-product validation error returns 400', async () => {
+    mockSessionRole('admin');
     const request = new Request('http://localhost/update-product', {
       method: 'PUT',
       headers: {
@@ -333,6 +457,7 @@ describe('Product Routes', () => {
   });
 
   test('DELETE /delete-product/:id deletes a product', async () => {
+    mockSessionRole('admin');
     mockDelete.mockResolvedValueOnce({ changes: 1 });
 
     const request = new Request('http://localhost/delete-product/1', {
@@ -373,5 +498,177 @@ describe('Product Routes', () => {
     const res = await app.fetch(request, mockEnv());
 
     expect(res.status).toBe(401);
+  });
+
+  test('POST /add-product returns 403 for authenticated non-admin users', async () => {
+    const request = new Request('http://localhost/add-product', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Cookie: fakeSignedCookie,
+      },
+      body: JSON.stringify({
+        name: 'New Product',
+        description: 'desc',
+        stl: 'url/to.stl',
+        price: 15,
+        image: 'url/to/image.jpg',
+        filamentType: 'PLA',
+        color: '#ffffff',
+      }),
+    });
+
+    const res = await app.fetch(request, mockEnv());
+
+    expect(res.status).toBe(403);
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+  });
+
+  test('POST /v2/add-product returns 403 for authenticated non-admin users', async () => {
+    const request = new Request('http://localhost/v2/add-product', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Cookie: fakeSignedCookie,
+      },
+      body: JSON.stringify({
+        name: 'New Product',
+        description: 'desc',
+        stl: 'https://r2.example.com/test-file.stl',
+        price: 15,
+        image: 'url/to/image.jpg',
+        filamentType: 'PLA',
+        color: '#ffffff',
+      }),
+    });
+
+    const res = await app.fetch(request, mockEnv());
+
+    expect(res.status).toBe(403);
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+  });
+
+  test('POST /v2/add-product allows admin users', async () => {
+    mockSessionRole('admin');
+    mockV2AddProductDependencies();
+    mockInsert.mockResolvedValueOnce([
+      {
+        id: 7,
+        name: 'V2 Product',
+        price: 15,
+        skuNumber: 'SKU-V2',
+      },
+    ]);
+
+    const request = new Request('http://localhost/v2/add-product', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Cookie: fakeSignedCookie,
+      },
+      body: JSON.stringify({
+        name: 'V2 Product',
+        description: 'desc',
+        stl: 'https://r2.example.com/test-file.stl',
+        price: 15,
+        image: 'url/to/image.jpg',
+        filamentType: 'PLA',
+        color: '#ffffff',
+      }),
+    });
+
+    const res = await app.fetch(request, mockEnv());
+    const data = (await res.json()) as {
+      success: boolean;
+      product: { id: number; publicFileServiceId: string };
+    };
+
+    expect(res.status).toBe(201);
+    expect(data.success).toBe(true);
+    expect(data.product).toMatchObject({
+      id: 7,
+      publicFileServiceId: 'file_123',
+    });
+  });
+
+  test('PUT /update-product returns 403 for authenticated non-admin users', async () => {
+    const request = new Request('http://localhost/update-product', {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        Cookie: fakeSignedCookie,
+      },
+      body: JSON.stringify({
+        id: 1,
+        name: 'Updated Product',
+        description: 'Updated desc',
+        price: 20,
+        image: 'url/to/image.jpg',
+        filamentType: 'PLA',
+        color: '#000000',
+        stl: 'url/to/updated.stl',
+        skuNumber: 'SKU123',
+      }),
+    });
+
+    const res = await app.fetch(request, mockEnv());
+
+    expect(res.status).toBe(403);
+  });
+
+  test('DELETE /delete-product/:id returns 403 for authenticated non-admin users', async () => {
+    const request = new Request('http://localhost/delete-product/1', {
+      method: 'DELETE',
+      headers: {
+        Cookie: fakeSignedCookie,
+      },
+    });
+
+    const res = await app.fetch(request, mockEnv());
+
+    expect(res.status).toBe(403);
+  });
+
+  test('POST /add-category returns 403 for authenticated non-admin users', async () => {
+    const request = new Request('http://localhost/add-category', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Cookie: fakeSignedCookie,
+      },
+      body: JSON.stringify({ categoryName: 'Accessories' }),
+    });
+
+    const res = await app.fetch(request, mockEnv());
+
+    expect(res.status).toBe(403);
+  });
+
+  test('POST /add-category allows admin users', async () => {
+    mockSessionRole('admin');
+    mockInsert.mockResolvedValueOnce([
+      { categoryId: 1, categoryName: 'Accessories' },
+    ]);
+
+    const request = new Request('http://localhost/add-category', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Cookie: fakeSignedCookie,
+      },
+      body: JSON.stringify({ categoryName: 'Accessories' }),
+    });
+
+    const res = await app.fetch(request, mockEnv());
+    const data = (await res.json()) as Array<{
+      categoryId: number;
+      categoryName: string;
+    }>;
+
+    expect(res.status).toBe(200);
+    expect(data[0]).toMatchObject({
+      categoryId: 1,
+      categoryName: 'Accessories',
+    });
   });
 });

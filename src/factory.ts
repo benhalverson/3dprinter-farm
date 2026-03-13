@@ -19,6 +19,15 @@ export type WorkerEnv = {
       role?: string | null;
     };
     userId?: string;
+    organizationId?: string;
+    organizationRole?: string;
+    organizationMember?: {
+      id: string;
+      organizationId: string;
+      userId: string;
+      role: string;
+      createdAt: Date;
+    } | null;
   };
 };
 

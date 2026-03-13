@@ -30,7 +30,7 @@ migrations_dir = "./drizzle/migrations"
 [[d1_databases]]
 binding = "DB_PREVIEW"
 database_name = "ecommerce-preview"
-database_id= "d7722b2e-1900-4c0f-90b4-2020f9dd427e"
+database_id= "b72c9b13-20c3-49e7-b5df-e46ee646d82b"
 migrations_dir = "./drizzle/migrations"
 
 [[kv_namespaces]]

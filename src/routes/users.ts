@@ -1,3 +1,4 @@
+import { createAuth } from '../../lib/auth';
 import { eq } from 'drizzle-orm';
 import { describeRoute } from 'hono-openapi';
 import {
@@ -6,12 +7,25 @@ import {
   type ProfileData,
 } from '../db/schema';
 import factory from '../factory';
-import { authMiddleware } from '../utils/authMiddleware';
+import {
+  authMiddleware,
+  requireCatalogMutationRole,
+} from '../utils/authMiddleware';
+import { SHARED_ORGANIZATION_ID } from '../constants';
 import {
   buildEncryptedProfileUpdate,
   decryptStoredProfileValue,
   getCipherKitSecretKey,
 } from '../utils/profileCrypto';
+import {
+  getSharedOrganizationMembership,
+  ensureSharedOrganization,
+} from '../utils/organization';
+import { z } from 'zod';
+
+const organizationRoleSchema = z.object({
+  role: z.enum(['admin', 'member']),
+});
 
 async function updateProfileRecord(
   c: Parameters<typeof authMiddleware>[0],
@@ -183,6 +197,86 @@ const userRouter = factory
     },
   )
 
+  .post(
+    '/users/:id/organization-role',
+    authMiddleware,
+    requireCatalogMutationRole,
+    describeRoute({
+      description:
+        'Promote or demote a user within the shared organization used for catalog access',
+      tags: ['User'],
+      responses: {
+        200: { description: 'Organization role updated successfully' },
+        400: { description: 'Validation failed' },
+        401: { description: 'Unauthorized' },
+        403: { description: 'Forbidden' },
+        404: { description: 'User not found' },
+      },
+    }),
+    async c => {
+      const userId = c.req.param('id');
+      const authUser = c.get('jwtPayload') as { id?: string } | undefined;
+
+      if (!userId) {
+        return c.json({ error: 'Invalid user id' }, 400);
+      }
+
+      if (authUser?.id === userId) {
+        return c.json({ error: 'Forbidden: cannot modify your own organization role' }, 403);
+      }
+
+      const parsedBody = organizationRoleSchema.safeParse(await c.req.json());
+      if (!parsedBody.success) {
+        return c.json(
+          { error: 'Validation failed', details: parsedBody.error.errors },
+          400,
+        );
+      }
+
+      const [targetUser] = await c.var.db
+        .select({ id: users.id, email: users.email, name: users.name })
+        .from(users)
+        .where(eq(users.id, userId));
+
+      if (!targetUser) {
+        return c.json({ error: 'User not found' }, 404);
+      }
+
+      const auth = createAuth(c.env.DB, c.env);
+      await ensureSharedOrganization(c.var.db);
+      const existingMember = await getSharedOrganizationMembership(c.var.db, userId);
+
+      const membership =
+        existingMember ??
+        (await auth.api.addMember({
+          headers: c.req.raw.headers,
+          body: {
+            userId,
+            organizationId: SHARED_ORGANIZATION_ID,
+            role: 'member',
+          },
+        }));
+
+      if (!membership) {
+        return c.json({ error: 'Failed to create organization membership' }, 500);
+      }
+
+      const member = await auth.api.updateMemberRole({
+        headers: c.req.raw.headers,
+        body: {
+          memberId: membership.id,
+          organizationId: SHARED_ORGANIZATION_ID,
+          role: parsedBody.data.role,
+        },
+      });
+
+      return c.json({
+        success: true,
+        member,
+        user: targetUser,
+      });
+    },
+  )
   .post(
     '/profile/:id',
     authMiddleware,

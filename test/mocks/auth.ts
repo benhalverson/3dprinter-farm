@@ -31,6 +31,28 @@ const signUpEmail = vi.fn(async ({ body }: { body: Record<string, unknown> }) =>
   token: 'mock-session-token',
 }));
 
+const addMember = vi.fn(async ({ body }: { body: Record<string, unknown> }) => ({
+  id: `member:${String(body.organizationId)}:${String(body.userId)}`,
+  organizationId: String(body.organizationId),
+  userId: String(body.userId),
+  role: String(body.role),
+  createdAt: new Date(),
+}));
+
+const updateMemberRole = vi.fn(async ({ body }: { body: Record<string, unknown> }) => ({
+  id: String(body.memberId),
+  organizationId: String(body.organizationId),
+  userId: 'user_456',
+  role: String(body.role),
+  createdAt: new Date(),
+  user: {
+    id: 'user_456',
+    email: 'user456@example.com',
+    name: 'User 456',
+    image: null,
+  },
+}));
+
 const handler = vi.fn(async (request: Request) => {
   const url = new URL(request.url);
 
@@ -104,6 +126,8 @@ export function mockAuth() {
       api: {
         getSession,
         signUpEmail,
+        addMember,
+        updateMemberRole,
       },
       handler,
     })),
@@ -113,5 +137,7 @@ export function mockAuth() {
 export const mockBetterAuth = {
   getSession,
   signUpEmail,
+  addMember,
+  updateMemberRole,
   handler,
 };
