@@ -276,15 +276,29 @@ const shoppingCart = factory
         });
         const upstreamMs = performance.now() - upstreamStart;
 
-        console.log('cart/shipping timing', {
+        const totalMs = Number((performance.now() - requestStart).toFixed(2));
+        const timings = {
           decryptMs: Number(decryptMs.toFixed(2)),
           cartQueryMs: Number(cartQueryMs.toFixed(2)),
           payloadBuildMs: Number(payloadBuildMs.toFixed(2)),
           upstreamMs: Number(upstreamMs.toFixed(2)),
-          totalMs: Number((performance.now() - requestStart).toFixed(2)),
+          totalMs,
           cartItemCount: cartItems.length,
-        });
+        };
 
+        // Gate timing log on hot path to reduce overhead/log volume.
+        const sampleEnv = (c.env as any)?.CART_SHIPPING_TIMING_SAMPLE_RATE;
+        const sampleRate = typeof sampleEnv === 'string' ? Number(sampleEnv) : NaN;
+        const isValidSampleRate =
+          Number.isFinite(sampleRate) && sampleRate > 0 && sampleRate <= 1;
+
+        const SHOULD_LOG_SLOW_MS = 500; // Always log unusually slow requests.
+        if (
+          totalMs >= SHOULD_LOG_SLOW_MS ||
+          (isValidSampleRate && Math.random() < sampleRate)
+        ) {
+          console.log('cart/shipping timing', timings);
+        }
         if (!response.ok) {
           console.error(
             'Upstream estimate error:',
