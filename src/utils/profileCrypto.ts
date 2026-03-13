@@ -128,16 +128,17 @@ export async function buildEncryptedProfileUpdate(
   };
 }
 
-type StoredShippingProfile = {
-  email: string;
-  firstName: string | null;
-  lastName: string | null;
-  shippingAddress: string | null;
-  city: string | null;
-  state: string | null;
-  zipCode: string | null;
-  phone: string | null;
-};
+type StoredShippingProfile = Pick<
+  ProfileData,
+  | 'email'
+  | 'firstName'
+  | 'lastName'
+  | 'shippingAddress'
+  | 'city'
+  | 'state'
+  | 'zipCode'
+  | 'phone'
+>;
 
 export type DecryptedShippingProfile = {
   email: string;
