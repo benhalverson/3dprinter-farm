@@ -50,6 +50,12 @@ const createCheckoutSchema = z.object({
     .optional(),
 });
 
+/** Extracts the authenticated caller's user ID from Hono context, if present. */
+function getCallerUserId(c: { get: (key: string) => unknown }): string | undefined {
+  const payload = c.get('jwtPayload') as { id?: string } | undefined;
+  return payload?.id ?? undefined;
+}
+
 const shoppingCart = factory
   .createApp()
   .get(
@@ -486,8 +492,7 @@ const shoppingCart = factory
         c.req.valid('json');
 
       // Bind the cart item to the authenticated user when a session is present.
-      const jwtPayload = c.get('jwtPayload') as any;
-      const userId: string | null = jwtPayload?.id ?? null;
+      const userId: string | null = getCallerUserId(c) ?? null;
 
       try {
         const existing = await c.var.db.query.cart.findFirst({
@@ -570,8 +575,7 @@ const shoppingCart = factory
         // Enforce ownership: if any item in the cart has an owner, require the caller to match.
         // Use != null (loose) to treat both null and undefined as "no owner".
         if (existingItems.length > 0 && existingItems[0].userId != null) {
-          const jwtPayload = c.get('jwtPayload') as any;
-          const callerId: string | undefined = jwtPayload?.id;
+          const callerId = getCallerUserId(c);
           if (!callerId) {
             return c.json({ error: 'Unauthorized' }, 401);
           }
@@ -656,8 +660,7 @@ const shoppingCart = factory
           .where(and(eq(cart.id, itemId), eq(cart.cartId, cartId)));
 
         if (existingItem?.userId != null) {
-          const jwtPayload = c.get('jwtPayload') as any;
-          const callerId: string | undefined = jwtPayload?.id;
+          const callerId = getCallerUserId(c);
           if (!callerId) {
             return c.json({ error: 'Unauthorized' }, 401);
           }
@@ -956,13 +959,13 @@ const shoppingCart = factory
       let { customerEmail, shippingAddress } = body;
 
       // Always derive userId from the authenticated session — never trust a caller-supplied value.
-      const jwtPayload = c.get('jwtPayload') as any;
-      const userId: string | undefined = jwtPayload?.id;
+      const userId = getCallerUserId(c);
       if (!userId) {
         return c.json({ error: 'Unauthorized' }, 401);
       }
+      const jwtPayload = c.get('jwtPayload') as { id?: string; email?: string } | undefined;
       if (!customerEmail) {
-        customerEmail = jwtPayload.email;
+        customerEmail = jwtPayload?.email;
       }
 
       console.log('POST /cart/:cartId/payment-intent called', {
