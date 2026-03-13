@@ -477,6 +477,7 @@ const printer = factory
   })
   .post(
     '/v2/presigned-upload',
+    authMiddleware,
     describeRoute(presignedUploadDoc),
     async (c: Context) => {
       try {
@@ -516,9 +517,14 @@ const printer = factory
           );
         }
 
-        const { fileName, ownerId } = requestBody as Record<string, unknown>;
+        const { fileName } = requestBody as Record<string, unknown>;
         const fileNameStr = String(fileName);
+        const ownerId = c.get('userId') as string | undefined;
         console.log('Extracted fileName:', fileName, 'ownerId:', ownerId);
+
+        if (!ownerId) {
+          return c.json({ success: false, error: 'Unauthorized' }, 401);
+        }
 
         if (!fileName) {
           return c.json({ success: false, error: 'fileName is required' }, 400);
@@ -549,7 +555,7 @@ const printer = factory
         const presignedRequest = {
           name: fileNameStr.replace(/\.stl$/i, ''),
           platformId: c.env.SLANT_PLATFORM_ID,
-          ownerId: ownerId || 'anonymous',
+          ownerId: ownerId,
         };
 
         console.log('Presigned request:', JSON.stringify(presignedRequest));
@@ -636,7 +642,7 @@ const printer = factory
       }
     },
   )
-  .post('/v2/confirm', describeRoute(confirmUploadDoc), async (c: Context) => {
+  .post('/v2/confirm', authMiddleware, describeRoute(confirmUploadDoc), async (c: Context) => {
     try {
       const { filePlaceholder } = await c.req.json();
 
