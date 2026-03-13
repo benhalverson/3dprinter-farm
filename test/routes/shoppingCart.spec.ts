@@ -12,10 +12,24 @@ import { mockEnv } from '../mocks/env';
 mockAuth();
 mockDrizzle();
 
-// Mock the crypto utilities
-vi.mock('../../src/utils/crypto', () => ({
-  decryptField: vi.fn().mockImplementation(async (value: string) => value),
-  encryptField: vi.fn().mockImplementation(async (value: string) => value),
+// Mock the profile crypto utilities
+vi.mock('../../src/utils/profileCrypto', () => ({
+  getCipherKitSecretKey: vi.fn().mockResolvedValue('mock-secret-key'),
+  decryptStoredProfileValue: vi
+    .fn()
+    .mockImplementation(async (value: string | null) => value),
+  decryptStoredShippingProfile: vi
+    .fn()
+    .mockImplementation(async (userRow: Record<string, string>) => ({
+      email: userRow.email || '',
+      firstName: userRow.firstName || '',
+      lastName: userRow.lastName || '',
+      shippingAddress: userRow.shippingAddress || '',
+      city: userRow.city || '',
+      state: userRow.state || '',
+      zipCode: userRow.zipCode || '',
+      phone: userRow.phone || '',
+    })),
 }));
 
 // Mock generateOrderNumber

@@ -9,8 +9,7 @@ import factory from '../factory';
 import { authMiddleware } from '../utils/authMiddleware';
 import { generateOrderNumber } from '../utils/generateOrderNumber';
 import {
-  decryptStoredProfileValue,
-  getCipherKitSecretKey,
+  decryptStoredShippingProfile,
 } from '../utils/profileCrypto';
 
 // Schema for update cart item
@@ -93,6 +92,7 @@ const shoppingCart = factory
     }),
     async c => {
       try {
+        const requestStart = performance.now();
         const jwtPayload = c.get('jwtPayload');
         const userId = jwtPayload?.id;
         if (!userId) return c.json({ error: 'Unauthorized' }, 401);
@@ -111,30 +111,26 @@ const shoppingCart = factory
         const passphrase = c.env.ENCRYPTION_PASSPHRASE;
         if (!passphrase)
           return c.json({ error: 'Encryption passphrase missing' }, 500);
-        const secretKey = await getCipherKitSecretKey(passphrase);
-
-        const firstName =
-          (await decryptStoredProfileValue(userRow.firstName, secretKey)) || '';
-        const lastName =
-          (await decryptStoredProfileValue(userRow.lastName, secretKey)) || '';
-        const email = userRow.email || '';
-        const shippingAddress =
-          (await decryptStoredProfileValue(userRow.shippingAddress, secretKey)) ||
-          '';
-        const city =
-          (await decryptStoredProfileValue(userRow.city, secretKey)) || '';
-        const state =
-          (await decryptStoredProfileValue(userRow.state, secretKey)) || '';
-        const zipCode =
-          (await decryptStoredProfileValue(userRow.zipCode, secretKey)) || '';
-        let phone =
-          (await decryptStoredProfileValue(userRow.phone, secretKey)) || '';
+        const decryptStart = performance.now();
+        const {
+          email,
+          firstName,
+          lastName,
+          shippingAddress,
+          city,
+          state,
+          zipCode,
+          phone: decryptedPhone,
+        } = await decryptStoredShippingProfile(userRow, passphrase);
+        const decryptMs = performance.now() - decryptStart;
+        let phone = decryptedPhone;
         // Sanitize phone - keep digits and leading +, enforce <=20 chars
         phone = phone ? phone.replace(/[^+0-9]/g, '') : '';
         if (phone.length > 20) phone = phone.slice(0, 20);
         if (!phone) phone = '0000000000'; // fallback minimal placeholder if upstream requires
 
         // Pull cart contents and join products to enrich data.
+        const cartQueryStart = performance.now();
         const cartItems = await c.var.db
           .select({
             id: cart.id,
@@ -148,6 +144,7 @@ const shoppingCart = factory
           .from(cart)
           .leftJoin(productsTable, eq(cart.skuNumber, productsTable.skuNumber))
           .where(eq(cart.cartId, cartId));
+        const cartQueryMs = performance.now() - cartQueryStart;
 
         console.log('cartItems:', cartItems);
 
@@ -221,6 +218,7 @@ const shoppingCart = factory
           return 'black'; // safe fallback
         };
 
+        const payloadBuildStart = performance.now();
         const orderDataArray = cartItems.map(cart => {
           // Derive filename: use product STL last path segment or fallback.
           const stlPath = cart.stl;
@@ -264,8 +262,10 @@ const shoppingCart = factory
             profile: cart.filamentType,
           };
         });
+        const payloadBuildMs = performance.now() - payloadBuildStart;
 
         // API expects an array of orderData objects
+        const upstreamStart = performance.now();
         const response = await fetch(`${BASE_URL}order/estimate`, {
           method: 'POST',
           headers: {
@@ -274,7 +274,31 @@ const shoppingCart = factory
           },
           body: JSON.stringify(orderDataArray),
         });
+        const upstreamMs = performance.now() - upstreamStart;
 
+        const totalMs = Number((performance.now() - requestStart).toFixed(2));
+        const timings = {
+          decryptMs: Number(decryptMs.toFixed(2)),
+          cartQueryMs: Number(cartQueryMs.toFixed(2)),
+          payloadBuildMs: Number(payloadBuildMs.toFixed(2)),
+          upstreamMs: Number(upstreamMs.toFixed(2)),
+          totalMs,
+          cartItemCount: cartItems.length,
+        };
+
+        // Gate timing log on hot path to reduce overhead/log volume.
+        const sampleEnv = (c.env as any)?.CART_SHIPPING_TIMING_SAMPLE_RATE;
+        const sampleRate = typeof sampleEnv === 'string' ? Number(sampleEnv) : NaN;
+        const isValidSampleRate =
+          Number.isFinite(sampleRate) && sampleRate > 0 && sampleRate <= 1;
+
+        const SHOULD_LOG_SLOW_MS = 500; // Always log unusually slow requests.
+        if (
+          totalMs >= SHOULD_LOG_SLOW_MS ||
+          (isValidSampleRate && Math.random() < sampleRate)
+        ) {
+          console.log('cart/shipping timing', timings);
+        }
         if (!response.ok) {
           console.error(
             'Upstream estimate error:',
@@ -289,12 +313,12 @@ const shoppingCart = factory
 
         const data = (await response.json()) as ShippingResponse;
         return c.json({ shippingCost: data.shippingCost });
-      } catch (err: any) {
+      } catch (err) {
         console.log('Error fetching shipping estimate:', err);
         return c.json(
           {
             error: 'Failed to retrieve shipping estimate',
-            details: err?.message,
+            details: err instanceof Error ? err.message : String(err),
           },
           500,
         );

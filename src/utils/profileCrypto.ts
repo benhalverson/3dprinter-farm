@@ -127,3 +127,54 @@ export async function buildEncryptedProfileUpdate(
     phone: (await encryptStoredProfileValue(profile.phone, secretKey)) ?? '',
   };
 }
+
+type StoredShippingProfile = Pick<
+  ProfileData,
+  | 'email'
+  | 'firstName'
+  | 'lastName'
+  | 'shippingAddress'
+  | 'city'
+  | 'state'
+  | 'zipCode'
+  | 'phone'
+>;
+
+export type DecryptedShippingProfile = {
+  email: string;
+  firstName: string;
+  lastName: string;
+  shippingAddress: string;
+  city: string;
+  state: string;
+  zipCode: string;
+  phone: string;
+};
+
+export async function decryptStoredShippingProfile(
+  profile: StoredShippingProfile,
+  passphrase: string,
+): Promise<DecryptedShippingProfile> {
+  const secretKey = await getCipherKitSecretKey(passphrase);
+  const [firstName, lastName, shippingAddress, city, state, zipCode, phone] =
+    await Promise.all([
+      decryptStoredProfileValue(profile.firstName, secretKey),
+      decryptStoredProfileValue(profile.lastName, secretKey),
+      decryptStoredProfileValue(profile.shippingAddress, secretKey),
+      decryptStoredProfileValue(profile.city, secretKey),
+      decryptStoredProfileValue(profile.state, secretKey),
+      decryptStoredProfileValue(profile.zipCode, secretKey),
+      decryptStoredProfileValue(profile.phone, secretKey),
+    ]);
+
+  return {
+    email: profile.email || '',
+    firstName: firstName || '',
+    lastName: lastName || '',
+    shippingAddress: shippingAddress || '',
+    city: city || '',
+    state: state || '',
+    zipCode: zipCode || '',
+    phone: phone || '',
+  };
+}
