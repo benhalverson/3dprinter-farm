@@ -2,12 +2,32 @@ import { beforeEach, describe, expect, test, vi } from 'vitest';
 import app from '../../src/index';
 import { mockEnv } from '../mocks/env';
 
+const authHeaders = {
+  Cookie: 'better-auth.session_token=mock-session-token',
+};
+
 describe('POST /v2/presigned-upload', () => {
   let env: ReturnType<typeof mockEnv>;
 
   beforeEach(() => {
     env = mockEnv();
     vi.clearAllMocks();
+  });
+
+  test('should return 401 when not authenticated', async () => {
+    const request = new Request('http://localhost/v2/presigned-upload', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        fileName: 'test-file.stl',
+      }),
+    });
+
+    const response = await app.fetch(request, env);
+
+    expect(response.status).toBe(401);
   });
 
   test('should generate presigned URL successfully for valid STL file', async () => {
@@ -18,7 +38,7 @@ describe('POST /v2/presigned-upload', () => {
         filePlaceholder: {
           publicFileServiceId: 'f47ac10b-58cc-4372-a567-0e02b2c3d479',
           name: 'test-file',
-          ownerId: 'test-owner',
+          ownerId: 'user_123',
           platformId: 'test-platform-id',
           type: 'stl',
           createdAt: '2025-12-09T07:00:00Z',
@@ -35,11 +55,11 @@ describe('POST /v2/presigned-upload', () => {
     const request = new Request('http://localhost/v2/presigned-upload', {
       method: 'POST',
       headers: {
+        ...authHeaders,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
         fileName: 'test-file.stl',
-        ownerId: 'test-owner',
       }),
     });
 
@@ -55,7 +75,7 @@ describe('POST /v2/presigned-upload', () => {
       mockSlant3DResponse.data.filePlaceholder,
     );
 
-    // Verify the fetch call was made correctly
+    // Verify the fetch call was made with the session user ID as ownerId
     expect(global.fetch).toHaveBeenCalledWith(
       expect.stringContaining('files/direct-upload'),
       expect.objectContaining({
@@ -67,21 +87,21 @@ describe('POST /v2/presigned-upload', () => {
         body: JSON.stringify({
           name: 'test-file',
           platformId: 'test-platform-id',
-          ownerId: 'test-owner',
+          ownerId: 'user_123',
         }),
       }),
     );
   });
 
-  test('should use anonymous ownerId when not provided', async () => {
+  test('should use authenticated user ID as ownerId (ignores any client-supplied ownerId)', async () => {
     const mockSlant3DResponse = {
       data: {
         presignedUrl: 'https://s3.amazonaws.com/bucket/key?signature=xyz',
-        key: 'uploads/anonymous-file.stl',
+        key: 'uploads/my-file.stl',
         filePlaceholder: {
           publicFileServiceId: 'f47ac10b-58cc-4372-a567-0e02b2c3d479',
-          name: 'anonymous-file',
-          ownerId: 'anonymous',
+          name: 'my-file',
+          ownerId: 'user_123',
           platformId: 'test-platform-id',
           type: 'stl',
           createdAt: '2025-12-09T07:00:00Z',
@@ -98,10 +118,12 @@ describe('POST /v2/presigned-upload', () => {
     const request = new Request('http://localhost/v2/presigned-upload', {
       method: 'POST',
       headers: {
+        ...authHeaders,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        fileName: 'anonymous-file.stl',
+        fileName: 'my-file.stl',
+        ownerId: 'attacker-supplied-owner',
       }),
     });
 
@@ -111,14 +133,14 @@ describe('POST /v2/presigned-upload', () => {
     expect(response.status).toBe(200);
     expect(data.success).toBe(true);
 
-    // Verify anonymous was used as ownerId
+    // Verify session user ID was used, not the client-supplied value
     expect(global.fetch).toHaveBeenCalledWith(
       expect.any(String),
       expect.objectContaining({
         body: JSON.stringify({
-          name: 'anonymous-file',
+          name: 'my-file',
           platformId: 'test-platform-id',
-          ownerId: 'anonymous',
+          ownerId: 'user_123',
         }),
       }),
     );
@@ -128,11 +150,10 @@ describe('POST /v2/presigned-upload', () => {
     const request = new Request('http://localhost/v2/presigned-upload', {
       method: 'POST',
       headers: {
+        ...authHeaders,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({
-        ownerId: 'test-owner',
-      }),
+      body: JSON.stringify({}),
     });
 
     const response = await app.fetch(request, env);
@@ -147,11 +168,11 @@ describe('POST /v2/presigned-upload', () => {
     const request = new Request('http://localhost/v2/presigned-upload', {
       method: 'POST',
       headers: {
+        ...authHeaders,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
         fileName: '',
-        ownerId: 'test-owner',
       }),
     });
 
@@ -167,11 +188,11 @@ describe('POST /v2/presigned-upload', () => {
     const request = new Request('http://localhost/v2/presigned-upload', {
       method: 'POST',
       headers: {
+        ...authHeaders,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
         fileName: 'test-file.obj',
-        ownerId: 'test-owner',
       }),
     });
 
@@ -191,7 +212,7 @@ describe('POST /v2/presigned-upload', () => {
         filePlaceholder: {
           publicFileServiceId: 'f47ac10b-58cc-4372-a567-0e02b2c3d479',
           name: 'test-file',
-          ownerId: 'test-owner',
+          ownerId: 'user_123',
           platformId: 'test-platform-id',
           type: 'stl',
           createdAt: '2025-12-09T07:00:00Z',
@@ -208,11 +229,11 @@ describe('POST /v2/presigned-upload', () => {
     const request = new Request('http://localhost/v2/presigned-upload', {
       method: 'POST',
       headers: {
+        ...authHeaders,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
         fileName: 'test-file.STL',
-        ownerId: 'test-owner',
       }),
     });
 
@@ -233,11 +254,11 @@ describe('POST /v2/presigned-upload', () => {
     const request = new Request('http://localhost/v2/presigned-upload', {
       method: 'POST',
       headers: {
+        ...authHeaders,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
         fileName: 'test-file.stl',
-        ownerId: 'test-owner',
       }),
     });
 
@@ -264,11 +285,11 @@ describe('POST /v2/presigned-upload', () => {
     const request = new Request('http://localhost/v2/presigned-upload', {
       method: 'POST',
       headers: {
+        ...authHeaders,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
         fileName: 'test-file.stl',
-        ownerId: 'test-owner',
       }),
     });
 
@@ -290,11 +311,11 @@ describe('POST /v2/presigned-upload', () => {
     const request = new Request('http://localhost/v2/presigned-upload', {
       method: 'POST',
       headers: {
+        ...authHeaders,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
         fileName: 'test-file.stl',
-        ownerId: 'test-owner',
       }),
     });
 
@@ -317,11 +338,11 @@ describe('POST /v2/presigned-upload', () => {
     const request = new Request('http://localhost/v2/presigned-upload', {
       method: 'POST',
       headers: {
+        ...authHeaders,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
         fileName: 'test-file.stl',
-        ownerId: 'test-owner',
       }),
     });
 
@@ -340,6 +361,7 @@ describe('POST /v2/presigned-upload', () => {
     const request = new Request('http://localhost/v2/presigned-upload', {
       method: 'POST',
       headers: {
+        ...authHeaders,
         'Content-Type': 'application/json',
       },
       body: 'invalid json',
@@ -361,7 +383,7 @@ describe('POST /v2/presigned-upload', () => {
         filePlaceholder: {
           publicFileServiceId: 'f47ac10b-58cc-4372-a567-0e02b2c3d479',
           name: 'my-model',
-          ownerId: 'test-owner',
+          ownerId: 'user_123',
           platformId: 'test-platform-id',
           type: 'stl',
           createdAt: '2025-12-09T07:00:00Z',
@@ -378,11 +400,11 @@ describe('POST /v2/presigned-upload', () => {
     const request = new Request('http://localhost/v2/presigned-upload', {
       method: 'POST',
       headers: {
+        ...authHeaders,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
         fileName: 'my-model.stl',
-        ownerId: 'test-owner',
       }),
     });
 
@@ -392,16 +414,109 @@ describe('POST /v2/presigned-upload', () => {
     expect(response.status).toBe(200);
     expect(data.success).toBe(true);
 
-    // Verify .stl extension was stripped
+    // Verify .stl extension was stripped and session user ID was used as ownerId
     expect(global.fetch).toHaveBeenCalledWith(
       expect.any(String),
       expect.objectContaining({
         body: JSON.stringify({
           name: 'my-model',
           platformId: 'test-platform-id',
-          ownerId: 'test-owner',
+          ownerId: 'user_123',
         }),
       }),
     );
+  });
+});
+
+describe('POST /v2/confirm', () => {
+  let env: ReturnType<typeof mockEnv>;
+
+  beforeEach(() => {
+    env = mockEnv();
+    vi.clearAllMocks();
+  });
+
+  test('should return 401 when not authenticated', async () => {
+    const request = new Request('http://localhost/v2/confirm', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        filePlaceholder: { publicFileServiceId: 'abc' },
+      }),
+    });
+
+    const response = await app.fetch(request, env);
+
+    expect(response.status).toBe(401);
+  });
+
+  test('should confirm upload successfully when authenticated', async () => {
+    const mockSlant3DResponse = {
+      data: {
+        publicFileServiceId: 'f47ac10b-58cc-4372-a567-0e02b2c3d479',
+        name: 'test-file',
+        fileURL: 'https://slant3d.com/files/test-file.stl',
+        STLMetrics: {
+          dimensionX: 100,
+          dimensionY: 50,
+          dimensionZ: 25,
+          volume: 125000,
+          weight: 100,
+          surfaceArea: 30000,
+        },
+      },
+    };
+
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => mockSlant3DResponse,
+    } as Response);
+
+    const filePlaceholder = {
+      publicFileServiceId: 'f47ac10b-58cc-4372-a567-0e02b2c3d479',
+      name: 'test-file',
+      ownerId: 'user_123',
+      platformId: 'test-platform-id',
+      type: 'stl',
+    };
+
+    const request = new Request('http://localhost/v2/confirm', {
+      method: 'POST',
+      headers: {
+        ...authHeaders,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ filePlaceholder }),
+    });
+
+    const response = await app.fetch(request, env);
+    const data = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(data.success).toBe(true);
+    expect(data.data.publicFileServiceId).toBe(
+      'f47ac10b-58cc-4372-a567-0e02b2c3d479',
+    );
+    expect(data.data.fileURL).toBe('https://slant3d.com/files/test-file.stl');
+  });
+
+  test('should return 400 when filePlaceholder is missing', async () => {
+    const request = new Request('http://localhost/v2/confirm', {
+      method: 'POST',
+      headers: {
+        ...authHeaders,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({}),
+    });
+
+    const response = await app.fetch(request, env);
+    const data = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(data.success).toBe(false);
+    expect(data.error).toBe('filePlaceholder is required');
   });
 });
