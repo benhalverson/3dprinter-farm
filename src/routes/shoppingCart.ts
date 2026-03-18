@@ -839,7 +839,6 @@ const shoppingCart = factory
         content: {
           'application/json': {
             schema: z.object({
-              userId: z.string().optional(),
               customerEmail: z.string().email().optional(),
               shippingAddress: z
                 .object({
@@ -902,33 +901,23 @@ const shoppingCart = factory
       } catch {
         body = {};
       }
-      let { userId, customerEmail, shippingAddress } = body;
+      let { customerEmail, shippingAddress } = body;
+
+      // Always derive userId from the authenticated session — never trust client-supplied values
+      const jwtPayload = c.get('jwtPayload') as any;
+      const userId: string | undefined = jwtPayload?.id;
+      if (!userId) {
+        return c.json({ error: 'Unauthorized' }, 401);
+      }
+      if (!customerEmail && jwtPayload?.email) {
+        customerEmail = jwtPayload.email;
+      }
 
       console.log('POST /cart/:cartId/payment-intent called', {
         cartId,
-        bodyUserId: body.userId,
-        bodyCustomerEmail: body.customerEmail,
+        userId,
+        customerEmail,
       });
-
-      // If userId not provided, extract from authenticated JWT
-      if (!userId) {
-        const jwtPayload = c.get('jwtPayload') as any;
-        console.log('jwtPayload available:', !!jwtPayload, jwtPayload);
-        if (jwtPayload?.id) {
-          userId = jwtPayload.id;
-          if (!customerEmail) {
-            customerEmail = jwtPayload.email;
-          }
-          console.log('✓ Extracted authenticated user from JWT:', {
-            userId,
-            customerEmail,
-          });
-        } else {
-          console.warn('✗ No jwtPayload or missing id in payload');
-        }
-      } else {
-        console.log('✓ userId already provided in body:', userId);
-      }
 
       try {
         // Get cart items with prices
