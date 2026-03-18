@@ -231,6 +231,14 @@ const auth = factory
           },
           description: 'Invalid credentials',
         },
+        429: {
+          content: {
+            'application/json': {
+              schema: resolver(authErrorSchema),
+            },
+          },
+          description: 'Too many signin attempts – please wait before retrying',
+        },
         502: {
           content: {
             'application/json': {
@@ -240,6 +248,11 @@ const auth = factory
           description: 'The auth provider returned an invalid signin response',
         },
       },
+    }),
+    rateLimit({
+      windowSeconds: 60,
+      maxRequests: 5,
+      keyPrefix: 'signin',
     }),
     zValidator('json', signInSchema),
     async c => {

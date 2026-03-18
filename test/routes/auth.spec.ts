@@ -151,6 +151,30 @@ describe('Auth Routes', () => {
     expect(res.headers.get('set-cookie')).toBeNull();
   });
 
+  test('POST /auth/signin returns 429 after exceeding rate limit', async () => {
+    // Simulate the KV already storing the max count (5 requests made)
+    const envAtLimit = {
+      ...mockEnv(),
+      RATE_LIMIT_KV: {
+        get: vi.fn().mockResolvedValue('5'),
+        put: vi.fn().mockResolvedValue(undefined),
+      },
+    } as Bindings;
+
+    const res = await app.fetch(
+      new Request('http://localhost/auth/signin', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: 'user@example.com', password: 'pass' }),
+      }),
+      envAtLimit,
+    );
+
+    expect(res.status).toBe(429);
+    const json = (await res.json()) as { error: string };
+    expect(json.error).toBe('Too many requests');
+  });
+
   test('GET /auth/signout clears the session cookie', async () => {
     const request = new Request('http://localhost/auth/signout', {
       method: 'GET',
