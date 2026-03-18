@@ -51,6 +51,36 @@ export const authMiddleware = factory.createMiddleware(async (c, next) => {
   }
 });
 
+export const optionalAuthMiddleware = factory.createMiddleware(async (c, next) => {
+  try {
+    const auth = createAuth(c.env.DB, c.env);
+    const authSession = await auth.api.getSession({
+      headers: c.req.raw.headers,
+    });
+
+    if (authSession?.user) {
+      const payload = {
+        id: String(authSession.user.id),
+        email: authSession.user.email,
+        name: authSession.user.name,
+        role:
+          'role' in authSession.user && typeof authSession.user.role === 'string'
+            ? authSession.user.role
+            : 'user',
+      };
+
+      c.set('session', authSession.session);
+      c.set('user', authSession.user);
+      c.set('jwtPayload', payload);
+      c.set('userId', payload.id);
+    }
+  } catch {
+    // Not authenticated — continue without setting user context
+  }
+
+  return next();
+});
+
 export const requireCatalogMutationRole = factory.createMiddleware(
   async (c, next) => {
     const payload = c.get('jwtPayload') as AuthPayload | undefined;
