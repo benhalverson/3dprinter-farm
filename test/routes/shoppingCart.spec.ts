@@ -15,12 +15,16 @@ mockDrizzle();
 
 // Mock Stripe
 const mockStripeCheckoutCreate = vi.fn();
+const mockPaymentIntentsCreate = vi.fn();
 vi.mock('stripe', () => ({
   default: vi.fn().mockImplementation(() => ({
     checkout: {
       sessions: {
         create: mockStripeCheckoutCreate,
       },
+    },
+    paymentIntents: {
+      create: mockPaymentIntentsCreate,
     },
     webhooks: {
       constructEventAsync: vi.fn(),
@@ -772,6 +776,116 @@ describe('Shopping Cart Routes', () => {
       expect(res.status).toBe(500);
       const data = (await res.json()) as any;
       expect(data.error).toBe('Failed to create checkout session');
+    });
+  });
+
+  describe('POST /cart/:cartId/payment-intent', () => {
+    beforeEach(() => {
+      mockPaymentIntentsCreate.mockReset();
+    });
+
+    test('creates payment intent using authenticated user id (ignores client-supplied userId)', async () => {
+      // Cart items with prices
+      mockWhere.mockResolvedValueOnce([
+        {
+          stripePriceId: 'price_test1',
+          quantity: 2,
+          price: 19.99,
+          name: 'Test Product',
+        },
+      ]);
+
+      mockPaymentIntentsCreate.mockResolvedValueOnce({
+        client_secret: 'pi_test_secret_123',
+        id: 'pi_test_123',
+      });
+
+      // Client supplies a spoofed userId — should be ignored
+      const res = await app.fetch(
+        new Request(`http://localhost/cart/${mockCartId}/payment-intent`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Cookie: 'better-auth.session_token=mock-session-token',
+          },
+          body: JSON.stringify({ userId: 'spoofed-attacker-id' }),
+        }),
+        env,
+      );
+
+      expect(res.status).toBe(200);
+      const data = (await res.json()) as any;
+      expect(data).toHaveProperty('clientSecret', 'pi_test_secret_123');
+
+      // Verify Stripe was called with the authenticated user's ID (user_123),
+      // NOT the spoofed attacker ID
+      expect(mockPaymentIntentsCreate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          metadata: expect.objectContaining({
+            userId: 'user_123',
+          }),
+        }),
+      );
+      const callArg = mockPaymentIntentsCreate.mock.calls[0][0];
+      expect(callArg.metadata.userId).not.toBe('spoofed-attacker-id');
+    });
+
+    test('creates payment intent using authenticated user id when no userId in body', async () => {
+      mockWhere.mockResolvedValueOnce([
+        {
+          stripePriceId: 'price_test1',
+          quantity: 1,
+          price: 9.99,
+          name: 'Test Product',
+        },
+      ]);
+
+      mockPaymentIntentsCreate.mockResolvedValueOnce({
+        client_secret: 'pi_test_secret_456',
+        id: 'pi_test_456',
+      });
+
+      const res = await app.fetch(
+        new Request(`http://localhost/cart/${mockCartId}/payment-intent`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Cookie: 'better-auth.session_token=mock-session-token',
+          },
+          body: JSON.stringify({}),
+        }),
+        env,
+      );
+
+      expect(res.status).toBe(200);
+
+      expect(mockPaymentIntentsCreate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          metadata: expect.objectContaining({
+            userId: 'user_123',
+          }),
+        }),
+      );
+    });
+
+    test('returns 404 when cart is empty', async () => {
+      mockWhere.mockResolvedValueOnce([]);
+
+      const res = await app.fetch(
+        new Request(`http://localhost/cart/${mockCartId}/payment-intent`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Cookie: 'better-auth.session_token=mock-session-token',
+          },
+          body: JSON.stringify({}),
+        }),
+        env,
+      );
+
+      expect(res.status).toBe(404);
+      const data = (await res.json()) as any;
+      expect(data.error).toBe('Cart is empty');
     });
   });
 });
