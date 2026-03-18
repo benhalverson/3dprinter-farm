@@ -553,7 +553,6 @@ const printer = factory
         };
 
         console.log('Presigned request:', JSON.stringify(presignedRequest));
-        console.log('Auth header:', `Bearer ${c.env.SLANT_API_V2}`);
         console.log('Fetching from:', `${BASE_URL_V2}files/direct-upload`);
 
         const slant3DResponse = await fetch(
@@ -594,7 +593,7 @@ const printer = factory
 
         console.log('Response ok, parsing JSON...');
         const slant3DData = await slant3DResponse.json();
-        console.log('Parsed slant3DData:', JSON.stringify(slant3DData));
+        console.log('Presigned URL obtained successfully');
 
         return c.json(
           {
