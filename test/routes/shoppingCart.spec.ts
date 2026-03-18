@@ -15,12 +15,16 @@ mockDrizzle();
 
 // Mock Stripe
 const mockStripeCheckoutCreate = vi.fn();
+const mockPaymentIntentsCreate = vi.fn();
 vi.mock('stripe', () => ({
   default: vi.fn().mockImplementation(() => ({
     checkout: {
       sessions: {
         create: mockStripeCheckoutCreate,
       },
+    },
+    paymentIntents: {
+      create: mockPaymentIntentsCreate,
     },
     webhooks: {
       constructEventAsync: vi.fn(),
@@ -51,16 +55,6 @@ vi.mock('../../src/utils/profileCrypto', () => ({
 // Mock generateOrderNumber
 vi.mock('../../src/utils/generateOrderNumber', () => ({
   generateOrderNumber: vi.fn(() => 'ORDER-123456'),
-}));
-
-// Mock Stripe for payment-intent tests
-const mockPaymentIntentsCreate = vi.fn();
-vi.mock('stripe', () => ({
-  default: vi.fn().mockImplementation(() => ({
-    paymentIntents: {
-      create: mockPaymentIntentsCreate,
-    },
-  })),
 }));
 
 const mockCartId = 'a1b2c3d4-e5f6-7890-abcd-ef1234567890';
