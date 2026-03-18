@@ -8,6 +8,7 @@ import { ZodError, z } from 'zod';
 type OpenAPISchema = Record<string, unknown>;
 
 import { BASE_URL, BASE_URL_V2 } from '../constants';
+import { isAllowedStlUrl } from '../utils/validateStlUrl';
 import {
   addCategorySchema,
   addProductSchema,
@@ -696,6 +697,17 @@ const product = factory
         console.log('Got presigned URL, uploading file...');
 
         // Step 3: Download the file from R2 and upload to presigned URL
+        if (!isAllowedStlUrl(data.stl, c.env.R2_PUBLIC_BASE_URL)) {
+          return c.json(
+            {
+              error: 'Invalid STL URL',
+              details:
+                'The stl field must use https and point to the trusted storage origin.',
+            },
+            400,
+          );
+        }
+
         let fileBuffer: Buffer;
         try {
           const fileResponse = await fetch(data.stl);

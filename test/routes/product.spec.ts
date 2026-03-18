@@ -88,7 +88,7 @@ function mockV2AddProductDependencies() {
     async (input: RequestInfo | URL) => {
       const url = typeof input === 'string' ? input : input.toString();
 
-      if (url === 'https://r2.example.com/test-file.stl') {
+      if (url === 'https://uploads.example.com/test-file.stl') {
         return {
           ok: true,
           arrayBuffer: async () => stlBuffer,
@@ -534,7 +534,7 @@ describe('Product Routes', () => {
       body: JSON.stringify({
         name: 'New Product',
         description: 'desc',
-        stl: 'https://r2.example.com/test-file.stl',
+        stl: 'https://uploads.example.com/test-file.stl',
         price: 15,
         image: 'url/to/image.jpg',
         filamentType: 'PLA',
@@ -569,7 +569,7 @@ describe('Product Routes', () => {
       body: JSON.stringify({
         name: 'V2 Product',
         description: 'desc',
-        stl: 'https://r2.example.com/test-file.stl',
+        stl: 'https://uploads.example.com/test-file.stl',
         price: 15,
         image: 'url/to/image.jpg',
         filamentType: 'PLA',
@@ -589,6 +589,62 @@ describe('Product Routes', () => {
       id: 7,
       publicFileServiceId: 'file_123',
     });
+  });
+
+  test('POST /v2/add-product rejects untrusted STL host', async () => {
+    mockSessionRole('admin');
+    mockV2AddProductDependencies();
+
+    const request = new Request('http://localhost/v2/add-product', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Cookie: fakeSignedCookie,
+      },
+      body: JSON.stringify({
+        name: 'V2 Product',
+        description: 'desc',
+        stl: 'https://evil.example.com/malicious.stl',
+        price: 15,
+        image: 'url/to/image.jpg',
+        filamentType: 'PLA',
+        color: '#ffffff',
+      }),
+    });
+
+    const res = await app.fetch(request, mockEnv());
+    const body = (await res.json()) as { error: string };
+
+    expect(res.status).toBe(400);
+    expect(body.error).toMatch(/invalid stl url/i);
+  });
+
+  test('POST /v2/add-product rejects non-https STL URL', async () => {
+    mockSessionRole('admin');
+    mockV2AddProductDependencies();
+
+    const request = new Request('http://localhost/v2/add-product', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Cookie: fakeSignedCookie,
+      },
+      body: JSON.stringify({
+        name: 'V2 Product',
+        description: 'desc',
+        stl: 'http://uploads.example.com/file.stl',
+        price: 15,
+        image: 'url/to/image.jpg',
+        filamentType: 'PLA',
+        color: '#ffffff',
+      }),
+    });
+
+    const res = await app.fetch(request, mockEnv());
+    const body = (await res.json()) as { error: string };
+
+    expect(res.status).toBe(400);
+    expect(body.error).toMatch(/invalid stl url/i);
   });
 
   test('PUT /update-product returns 403 for authenticated non-admin users', async () => {
