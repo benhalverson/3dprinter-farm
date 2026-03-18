@@ -22,6 +22,5 @@ export const getPayPalAccessToken = async (c: Context) => {
   );
 
   const data = (await response.json()) as any;
-  console.log(data);
   return data.access_token;
 };

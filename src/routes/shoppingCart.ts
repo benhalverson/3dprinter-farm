@@ -6,7 +6,7 @@ import { z } from 'zod';
 import { BASE_URL } from '../constants';
 import { addCartItemSchema, cart, productsTable, users } from '../db/schema';
 import factory from '../factory';
-import { authMiddleware } from '../utils/authMiddleware';
+import { authMiddleware, optionalAuthMiddleware } from '../utils/authMiddleware';
 import { generateOrderNumber } from '../utils/generateOrderNumber';
 import {
   decryptStoredShippingProfile,
@@ -49,6 +49,12 @@ const createCheckoutSchema = z.object({
     })
     .optional(),
 });
+
+/** Extracts the authenticated caller's user ID from Hono context, if present. */
+function getCallerUserId(c: { get: (key: string) => unknown }): string | undefined {
+  const payload = c.get('jwtPayload') as { id?: string } | undefined;
+  return payload?.id ?? undefined;
+}
 
 const shoppingCart = factory
   .createApp()
@@ -134,6 +140,7 @@ const shoppingCart = factory
         const cartItems = await c.var.db
           .select({
             id: cart.id,
+            cartUserId: cart.userId,
             skuNumber: cart.skuNumber,
             quantity: cart.quantity,
             color: cart.color,
@@ -150,6 +157,12 @@ const shoppingCart = factory
 
         if (cartItems.length === 0) {
           return c.json({ error: 'Cart empty or not found' }, 404);
+        }
+
+        // Enforce cart ownership: reject if the cart is owned by a different user.
+        // Use != null (loose) to treat both null and undefined as "no owner".
+        if (cartItems[0].cartUserId != null && cartItems[0].cartUserId !== userId) {
+          return c.json({ error: 'Forbidden' }, 403);
         }
 
         // Build orderData array per API spec from each cart item.
@@ -472,10 +485,14 @@ const shoppingCart = factory
         },
       },
     }),
+    optionalAuthMiddleware,
     zValidator('json', addCartItemSchema),
     async c => {
       const { cartId, skuNumber, quantity, color, filamentType } =
         c.req.valid('json');
+
+      // Bind the cart item to the authenticated user when a session is present.
+      const userId: string | null = getCallerUserId(c) ?? null;
 
       try {
         const existing = await c.var.db.query.cart.findFirst({
@@ -488,6 +505,11 @@ const shoppingCart = factory
         });
 
         if (existing) {
+          // Enforce ownership: if the existing item has an owner, it must match the caller.
+          // Use != null (loose) to treat both null and undefined as "no owner".
+          if (existing.userId != null && userId !== null && existing.userId !== userId) {
+            return c.json({ error: 'Forbidden' }, 403);
+          }
           await c.var.db
             .update(cart)
             .set({
@@ -497,6 +519,7 @@ const shoppingCart = factory
         } else {
           await c.var.db.insert(cart).values({
             cartId,
+            userId,
             skuNumber: skuNumber,
             quantity,
             color,
@@ -538,6 +561,7 @@ const shoppingCart = factory
         },
       },
     }),
+    optionalAuthMiddleware,
     zValidator('json', updateCartItemSchema),
     async c => {
       const { cartId, itemId, quantity } = c.req.valid('json');
@@ -547,6 +571,18 @@ const shoppingCart = factory
         const existingItems = await c.var.db.query.cart.findMany({
           where: eq(cart.cartId, cartId),
         });
+
+        // Enforce ownership: if any item in the cart has an owner, require the caller to match.
+        // Use != null (loose) to treat both null and undefined as "no owner".
+        if (existingItems.length > 0 && existingItems[0].userId != null) {
+          const callerId = getCallerUserId(c);
+          if (!callerId) {
+            return c.json({ error: 'Unauthorized' }, 401);
+          }
+          if (existingItems[0].userId !== callerId) {
+            return c.json({ error: 'Forbidden' }, 403);
+          }
+        }
 
         if (quantity === 0) {
           const _deleteResult = await c.var.db
@@ -610,11 +646,29 @@ const shoppingCart = factory
         },
       },
     }),
+    optionalAuthMiddleware,
     zValidator('json', removeCartItemSchema),
     async c => {
       const { cartId, itemId } = c.req.valid('json');
 
       try {
+        // Verify ownership before deleting: reject if the cart is owned by a different user.
+        // Use != null (loose) to treat both null and undefined as "no owner".
+        const [existingItem] = await c.var.db
+          .select({ userId: cart.userId })
+          .from(cart)
+          .where(and(eq(cart.id, itemId), eq(cart.cartId, cartId)));
+
+        if (existingItem?.userId != null) {
+          const callerId = getCallerUserId(c);
+          if (!callerId) {
+            return c.json({ error: 'Unauthorized' }, 401);
+          }
+          if (existingItem.userId !== callerId) {
+            return c.json({ error: 'Forbidden' }, 403);
+          }
+        }
+
         await c.var.db
           .delete(cart)
           .where(and(eq(cart.id, itemId), eq(cart.cartId, cartId)));
@@ -757,12 +811,22 @@ const shoppingCart = factory
         },
       },
     }),
+    authMiddleware,
     zValidator('param', cartIdParamSchema),
     zValidator('json', createCheckoutSchema),
     async c => {
       const cartId = c.req.param('cartId');
-      const { successUrl, cancelUrl, customerEmail, shippingAddress } =
+      const { successUrl, cancelUrl, customerEmail: bodyEmail, shippingAddress } =
         c.req.valid('json');
+
+      // Extract userId and customerEmail from the authenticated session
+      const jwtPayload = c.get('jwtPayload') as { id?: string; email?: string } | undefined;
+      const userId = jwtPayload?.id ? String(jwtPayload.id) : undefined;
+      const customerEmail = bodyEmail ?? jwtPayload?.email;
+
+      if (!userId) {
+        return c.json({ error: 'Unauthorized' }, 401);
+      }
 
       try {
         const items = await c.var.db
@@ -795,7 +859,10 @@ const shoppingCart = factory
           success_url: successUrl,
           cancel_url: cancelUrl,
           customer_email: customerEmail,
-          metadata: { cartId },
+          metadata: {
+            cartId,
+            userId,
+          },
         };
 
         // Add shipping address if provided
@@ -903,14 +970,14 @@ const shoppingCart = factory
       }
       let { customerEmail, shippingAddress } = body;
 
-      // Always derive userId from the authenticated session — never trust client-supplied values
-      const jwtPayload = c.get('jwtPayload') as any;
-      const userId: string | undefined = jwtPayload?.id;
+      // Always derive userId from the authenticated session — never trust a caller-supplied value.
+      const userId = getCallerUserId(c);
       if (!userId) {
         return c.json({ error: 'Unauthorized' }, 401);
       }
-      if (!customerEmail && jwtPayload?.email) {
-        customerEmail = jwtPayload.email;
+      const jwtPayload = c.get('jwtPayload') as { id?: string; email?: string } | undefined;
+      if (!customerEmail) {
+        customerEmail = jwtPayload?.email;
       }
 
       console.log('POST /cart/:cartId/payment-intent called', {
@@ -920,9 +987,10 @@ const shoppingCart = factory
       });
 
       try {
-        // Get cart items with prices
+        // Get cart items with prices; include userId for ownership verification.
         const items = await c.var.db
           .select({
+            cartUserId: cart.userId,
             stripePriceId: productsTable.stripePriceId,
             quantity: cart.quantity,
             price: productsTable.price,
@@ -934,6 +1002,12 @@ const shoppingCart = factory
 
         if (items.length === 0) {
           return c.json({ error: 'Cart is empty' }, 404);
+        }
+
+        // Enforce cart ownership: reject if the cart is owned by a different user.
+        // Use != null (loose) to treat both null and undefined as "no owner".
+        if (items[0].cartUserId != null && items[0].cartUserId !== userId) {
+          return c.json({ error: 'Forbidden' }, 403);
         }
 
         // Calculate total amount (in cents)

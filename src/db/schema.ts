@@ -11,6 +11,7 @@ import { z } from 'zod';
 export const cart = sqliteTable('cart', {
   id: integer('id').primaryKey(),
   cartId: text('cart_id').notNull(),
+  userId: text('user_id').references(() => users.id, { onDelete: 'set null' }),
   skuNumber: text('sku_number').notNull(),
   quantity: integer('quantity').default(1).notNull(),
   color: text('color').default('#000000'),

@@ -103,12 +103,9 @@ const userRouter = factory
           .from(users)
           .where(eq(users.id, user.id));
 
-        console.log('Fetched user data for ID:', user.id, userData);
-
         if (!userData) return c.json({ error: 'User not found' }, 404);
 
         const passphrase = c.env.ENCRYPTION_PASSPHRASE;
-        console.log('passphrase:', passphrase ? '***' : '(missing)');
         if (!passphrase)
           return c.json({ error: 'Encryption passphrase missing' }, 500);
         const secretKey = await getCipherKitSecretKey(passphrase);
@@ -129,16 +126,11 @@ const userRouter = factory
           country: await decryptStoredProfileValue(userData.country, secretKey),
           phone: await decryptStoredProfileValue(userData.phone, secretKey),
         };
-        console.log(
-          'Decrypted profile for user ID:',
-          user.id,
-          decryptedProfile,
-        );
         console.timeEnd('decrypt-profile');
         return c.json(decryptedProfile);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        console.log('Error fetching user data:', error);
+        console.error('Error fetching user data:', message);
         return c.json(
           { error: 'Internal Server Error', details: message },
           500,

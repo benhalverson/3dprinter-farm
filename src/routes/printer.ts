@@ -477,6 +477,7 @@ const printer = factory
   })
   .post(
     '/v2/presigned-upload',
+    authMiddleware,
     describeRoute(presignedUploadDoc),
     async (c: Context) => {
       try {
@@ -516,9 +517,14 @@ const printer = factory
           );
         }
 
-        const { fileName, ownerId } = requestBody as Record<string, unknown>;
+        const { fileName } = requestBody as Record<string, unknown>;
         const fileNameStr = String(fileName);
+        const ownerId = c.get('userId') as string | undefined;
         console.log('Extracted fileName:', fileName, 'ownerId:', ownerId);
+
+        if (!ownerId) {
+          return c.json({ success: false, error: 'Unauthorized' }, 401);
+        }
 
         if (!fileName) {
           return c.json({ success: false, error: 'fileName is required' }, 400);
@@ -549,11 +555,10 @@ const printer = factory
         const presignedRequest = {
           name: fileNameStr.replace(/\.stl$/i, ''),
           platformId: c.env.SLANT_PLATFORM_ID,
-          ownerId: ownerId || 'anonymous',
+          ownerId: ownerId,
         };
 
         console.log('Presigned request:', JSON.stringify(presignedRequest));
-        console.log('Auth header:', `Bearer ${c.env.SLANT_API_V2}`);
         console.log('Fetching from:', `${BASE_URL_V2}files/direct-upload`);
 
         const slant3DResponse = await fetch(
@@ -594,7 +599,7 @@ const printer = factory
 
         console.log('Response ok, parsing JSON...');
         const slant3DData = await slant3DResponse.json();
-        console.log('Parsed slant3DData:', JSON.stringify(slant3DData));
+        console.log('Presigned URL obtained successfully');
 
         return c.json(
           {
@@ -636,7 +641,7 @@ const printer = factory
       }
     },
   )
-  .post('/v2/confirm', describeRoute(confirmUploadDoc), async (c: Context) => {
+  .post('/v2/confirm', authMiddleware, describeRoute(confirmUploadDoc), async (c: Context) => {
     try {
       const { filePlaceholder } = await c.req.json();
 

@@ -15,6 +15,13 @@
       "when": 1773369911670,
       "tag": "0001_jittery_peter_parker",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1741861443002,
+      "tag": "0002_cart_user_ownership",
+      "breakpoints": true
     }
   ]
 }

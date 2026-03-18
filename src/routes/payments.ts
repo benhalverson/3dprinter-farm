@@ -281,14 +281,7 @@ const paymentsRouter = factory
             const passphrase = c.env.ENCRYPTION_PASSPHRASE;
             let userRow: typeof users.$inferSelect | undefined;
 
-            console.log(
-              'Attempting to load user profile. userId:',
-              userId,
-              'customerEmail:',
-              customerEmail,
-              'receiptEmail:',
-              paymentIntent.receipt_email,
-            );
+            console.log('Attempting to load user profile. userId:', userId);
 
             // Try to load user by userId first
             if (userId) {
@@ -299,10 +292,7 @@ const paymentsRouter = factory
                 .where(eq(users.id, userId));
               userRow = found;
               if (userRow) {
-                console.log('✓ User found by userId:', {
-                  id: userRow.id,
-                  email: userRow.email,
-                });
+                console.log('✓ User found by userId:', userRow.id);
               } else {
                 console.warn('✗ User not found for userId:', userId);
               }
@@ -313,19 +303,16 @@ const paymentsRouter = factory
               const emailToLookup =
                 customerEmail || paymentIntent.receipt_email;
               if (emailToLookup) {
-                console.log('Looking up user by email:', emailToLookup);
+                console.log('Looking up user by email (redacted)');
                 const [found] = await db
                   .select()
                   .from(users)
                   .where(eq(users.email, emailToLookup));
                 userRow = found;
                 if (userRow) {
-                  console.log('✓ User found by email:', {
-                    id: userRow.id,
-                    email: userRow.email,
-                  });
+                  console.log('✓ User found by email:', userRow.id);
                 } else {
-                  console.warn('✗ User not found for email:', emailToLookup);
+                  console.warn('✗ User not found for email (redacted)');
                 }
               } else {
                 console.warn('✗ No email available for user lookup');
@@ -440,7 +427,7 @@ const paymentsRouter = factory
               },
             );
 
-            console.log('Creating Slant3D order with data:', orderDataArray);
+            console.log('Creating Slant3D order for cartId:', cartId);
 
             // Create order with Slant3D (using /estimate for testing since V1 has no test API)
             // TODO: Change to ${BASE_URL}order when ready for production
@@ -460,19 +447,13 @@ const paymentsRouter = factory
               console.error(
                 'Slant3D order creation failed:',
                 response.status,
-                errorText,
-              );
-              // Store failed order for manual review/retry
-              console.error(
-                'Failed order data:',
-                JSON.stringify(orderDataArray, null, 2),
               );
               return c.json({ error: 'Order creation failed' }, 502);
             }
 
             const orderResponse =
               (await response.json()) as Slant3DOrderResponse;
-            console.log('Slant3D order created successfully:', orderResponse);
+            console.log('Slant3D order created successfully. orderId:', orderResponse.orderId);
 
             // Clear the cart after successful order
             await db.delete(cart).where(eq(cart.cartId, cartId));
@@ -640,7 +621,7 @@ const paymentsRouter = factory
             },
           );
 
-          console.log('Creating Slant3D order with data:', orderDataArray);
+          console.log('Creating Slant3D order for cartId:', cartId);
 
           // Create order with Slant3D (using /estimate for testing since V1 has no test API)
           // TODO: Change to ${BASE_URL}order when ready for production
@@ -658,19 +639,13 @@ const paymentsRouter = factory
               console.error(
                 'Slant3D order creation failed:',
                 response.status,
-                await response.text(),
-              );
-              // Store failed order for manual review/retry
-              console.error(
-                'Failed order data:',
-                JSON.stringify(orderDataArray, null, 2),
               );
               return c.json({ error: 'Order creation failed' }, 502);
             }
 
             const orderResponse =
               (await response.json()) as Slant3DOrderResponse;
-            console.log('Slant3D order created successfully:', orderResponse);
+            console.log('Slant3D order created successfully. orderId:', orderResponse.orderId);
 
             // Clear the cart after successful order
             await db.delete(cart).where(eq(cart.cartId, cartId));
