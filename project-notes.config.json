@@ -1,0 +1,40 @@
+{
+  "slug": "on-demand-3d-printer-platform",
+  "title": "On-Demand 3D Printer Platform",
+  "description": "API and web application for intake, quoting, queue management, and fulfillment across custom print requests.",
+  "status": "active",
+  "startedAt": "2026-01-12",
+  "featured": true,
+  "tags": [
+    "TypeScript",
+    "API",
+    "Angular",
+    "3D Printing"
+  ],
+  "repoUrl": "https://github.com/benhalverson/3dprinter-farm",
+  "overview": "This project is meant to turn a pile of manual print-request coordination into a usable system. The API handles request intake and print-job state. The web app handles quoting, operations visibility, and customer communication.",
+  "currentMilestone": "Build a dependable order-to-queue path that keeps pricing, material selection, and production status aligned.",
+  "roadmap": [
+    {
+      "text": "Define the request and quote lifecycle clearly",
+      "done": true
+    },
+    {
+      "text": "Add authenticated operator workflows for reviewing jobs",
+      "done": true
+    },
+    {
+      "text": "Track printer capacity and queue contention",
+      "done": false
+    },
+    {
+      "text": "Generate customer-visible status updates",
+      "done": false
+    },
+    {
+      "text": "Add webhook-driven notifications for state changes",
+      "done": false
+    }
+  ],
+  "recentProgressLimit": 10
+}
