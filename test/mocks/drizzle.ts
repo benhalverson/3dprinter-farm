@@ -1,66 +1,36 @@
-import { vi } from 'vitest';
-
-export const mockWhere = vi.fn();
-export const mockAll = vi.fn();
-export const mockInsert = vi.fn();
-export const mockUpdate = vi.fn();
-export const mockDelete = vi.fn();
-export const mockQuery = {
-  cart: {
-    findFirst: vi.fn(),
-    findMany: vi.fn(),
-  },
+type TestMocks = {
+  drizzle: {
+    mockWhere: any;
+    mockAll: any;
+    mockInsert: any;
+    mockUpdate: any;
+    mockDelete: any;
+    mockQuery: {
+      cart: {
+        findFirst: any;
+        findMany: any;
+      };
+    };
+    capturedInserts: unknown[];
+  };
 };
 
-// Capture payloads passed to insert().values(...) for assertions in tests
-export const capturedInserts: unknown[] = [];
+const testGlobals = globalThis as typeof globalThis & {
+  __testMocks?: TestMocks;
+};
+
+if (!testGlobals.__testMocks) {
+  throw new Error('Expected drizzle mocks to be initialized in test/setup.ts');
+}
 
 export function mockDrizzle() {
-  vi.mock('drizzle-orm/d1', () => {
-    const whereResult = {
-      all: mockAll,
-      get: vi.fn().mockResolvedValue(undefined),
-      orderBy: vi.fn(() => ({
-        all: mockAll,
-      })),
-    };
-
-    return {
-      drizzle: vi.fn(() => ({
-        select: () => ({
-          from: () => ({
-            where: mockWhere.mockReturnValue(whereResult),
-            all: mockAll,
-            get: vi.fn().mockResolvedValue(undefined),
-            leftJoin: () => ({
-              where: mockWhere.mockReturnValue(whereResult),
-            }),
-            innerJoin: () => ({
-              where: mockWhere.mockReturnValue(whereResult),
-            }),
-          }),
-        }),
-        insert: () => ({
-          values: (payload: unknown) => {
-            capturedInserts.push(payload);
-            return {
-              onConflictDoUpdate: vi.fn().mockResolvedValueOnce(undefined),
-              returning: mockInsert,
-            };
-          },
-        }),
-        update: () => ({
-          set: () => ({
-            where: () => ({
-              returning: mockUpdate,
-            }),
-          }),
-        }),
-        delete: () => ({
-          where: () => mockDelete,
-        }),
-        query: mockQuery,
-      })),
-    };
-  });
+  // Mocks are initialized in test/setup.ts before test modules load.
 }
+
+export const mockWhere = testGlobals.__testMocks.drizzle.mockWhere;
+export const mockAll = testGlobals.__testMocks.drizzle.mockAll;
+export const mockInsert = testGlobals.__testMocks.drizzle.mockInsert;
+export const mockUpdate = testGlobals.__testMocks.drizzle.mockUpdate;
+export const mockDelete = testGlobals.__testMocks.drizzle.mockDelete;
+export const mockQuery = testGlobals.__testMocks.drizzle.mockQuery;
+export const capturedInserts = testGlobals.__testMocks.drizzle.capturedInserts;
