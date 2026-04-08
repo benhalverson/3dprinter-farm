@@ -31,7 +31,7 @@
     "@simplewebauthn/server": "^13.1.1",
     "better-auth": "^1.5.4",
     "cipher-kit": "3.0.0",
-    "drizzle-orm": "^0.43.1",
+    "drizzle-orm": "^0.45.2",
     "hono": "^4.12.7",
     "hono-openapi": "^0.4.8",
     "langchain": "^0.3.37",
