@@ -74,7 +74,7 @@ Ownership checks need to be centralized or they drift when endpoint count grows.
       'main',
     ],
     {
-      cwd: '/home/ben/projects/3dprinter-web-api',
+      cwd: process.cwd(),
       env: {
         ...process.env,
         GENERATED_AT: '2026-03-27T00:00:00.000Z',
@@ -83,7 +83,7 @@ Ownership checks need to be centralized or they drift when endpoint count grows.
   );
 
   const contents = await readFile(outputPath, 'utf8');
-  const config = await loadProjectConfig('/home/ben/projects/3dprinter-web-api/project-notes.config.json');
+  const config = await loadProjectConfig(path.resolve(process.cwd(), 'project-notes.config.json'));
 
   assert.match(contents, new RegExp(`title: ${config.title}`));
   assert.match(contents, /### 2026-03-24 · \[Enforce cart ownership across all cart mutation routes \(#120\)\]/);
