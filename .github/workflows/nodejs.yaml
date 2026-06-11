@@ -25,7 +25,12 @@ jobs:
           cache: 'pnpm'
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+<<<<<<< HEAD
       - name: Run worker tests
         run: pnpm test:ci
+=======
+      - name: Run tests
+        run: pnpm test
+>>>>>>> de29213 (ci: keep frozen lockfile install in node workflow)
       - name: Run project notes tests
         run: pnpm test:project-notes
