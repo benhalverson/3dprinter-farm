@@ -192,6 +192,7 @@ export interface CartItemWithProduct {
   quantity: number;
   color: string | null;
   filamentType: string | null;
+  filamentId?: string | null;
   productName: string | null;
   stl: string | null;
 }
