@@ -158,9 +158,9 @@ describe('Printer V2 Upload Routes', () => {
       expect(calledUrls).toContain(
         'https://slant3dapi.com/v2/api/files/confirm-upload',
       );
-      expect(
-        calledUrls.some(url => url.includes('/files/') && url.includes('/estimate')),
-      ).toBe(true);
+      expect(calledUrls).toContain(
+        'https://slant3dapi.com/v2/api/files/f47ac10b-58cc-4372-a567-0e02b2c3d479/estimate',
+      );
       expect(
         calledUrls.some(url => url.includes('/v2/presigned-upload')),
       ).toBe(false);
