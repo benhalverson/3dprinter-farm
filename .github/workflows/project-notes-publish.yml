@@ -1,0 +1,81 @@
+name: Publish Project Notes
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  publish-project-notes:
+    runs-on: ubuntu-22.04
+    env:
+      BLOG_REPO_TOKEN: ${{ secrets.BLOG_REPO_TOKEN }}
+      SOURCE_BRANCH: ${{ github.ref_name }}
+      SOURCE_REPOSITORY: ${{ github.repository }}
+      GENERATED_OUTPUT_PATH: ${{ github.workspace }}/.generated/project-notes/on-demand-3d-printer-platform.md
+      BLOG_REPO_PATH: ${{ github.workspace }}/benhalverson-blog
+      BLOG_TARGET_PATH: ${{ github.workspace }}/benhalverson-blog/content/projects/on-demand-3d-printer-platform.md
+    steps:
+      - name: Check required secret
+        run: |
+          if [ -z "$BLOG_REPO_TOKEN" ]; then
+            echo "BLOG_REPO_TOKEN is required to publish project notes."
+            exit 1
+          fi
+
+      - uses: actions/checkout@v4
+
+      - name: Install pnpm
+        run: npm install -g pnpm@latest-10
+
+      - name: Use Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Generate project notes markdown
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          node --disable-warning=ExperimentalWarning --experimental-default-type=module --experimental-strip-types tools/project-notes/generate-project-notes.ts \
+            --config project-notes.config.json \
+            --output "$GENERATED_OUTPUT_PATH" \
+            --repository "$SOURCE_REPOSITORY" \
+            --branch "$SOURCE_BRANCH"
+
+      - name: Check out benhalverson-blog
+        uses: actions/checkout@v4
+        with:
+          repository: benhalverson/benhalverson-blog
+          token: ${{ secrets.BLOG_REPO_TOKEN }}
+          path: benhalverson-blog
+
+      - name: Copy generated project page into blog repo
+        run: cp "$GENERATED_OUTPUT_PATH" "$BLOG_TARGET_PATH"
+
+      - name: Create blog PR
+        uses: peter-evans/create-pull-request@v6
+        with:
+          token: ${{ secrets.BLOG_REPO_TOKEN }}
+          path: benhalverson-blog
+          commit-message: "chore: sync project notes from 3dprinter-farm"
+          branch: "automation/project-notes-on-demand-3d-printer-platform"
+          delete-branch: true
+          title: "chore: sync project notes from 3dprinter-farm"
+          body: |
+            Automated sync from `${{ github.repository }}`.
+
+            Source workflow: `${{ github.workflow }}` on `${{ github.ref_name }}`.
+            Source commit: `${{ github.sha }}`.
+          labels: |
+            automation
+            project-notes

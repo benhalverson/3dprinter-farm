@@ -1,66 +1,23 @@
-import { vi } from 'vitest';
+import type { DrizzleMocks, TestMocks } from './types';
 
-export const mockWhere = vi.fn();
-export const mockAll = vi.fn();
-export const mockInsert = vi.fn();
-export const mockUpdate = vi.fn();
-export const mockDelete = vi.fn();
-export const mockQuery = {
-  cart: {
-    findFirst: vi.fn(),
-    findMany: vi.fn(),
-  },
+const testGlobals = globalThis as typeof globalThis & {
+  __testMocks?: TestMocks;
 };
 
-// Capture payloads passed to insert().values(...) for assertions in tests
-export const capturedInserts: unknown[] = [];
+if (!testGlobals.__testMocks) {
+  throw new Error('Expected drizzle mocks to be initialized in test/setup.ts');
+}
 
 export function mockDrizzle() {
-  vi.mock('drizzle-orm/d1', () => {
-    const whereResult = {
-      all: mockAll,
-      get: vi.fn().mockResolvedValue(undefined),
-      orderBy: vi.fn(() => ({
-        all: mockAll,
-      })),
-    };
-
-    return {
-      drizzle: vi.fn(() => ({
-        select: () => ({
-          from: () => ({
-            where: mockWhere.mockReturnValue(whereResult),
-            all: mockAll,
-            get: vi.fn().mockResolvedValue(undefined),
-            leftJoin: () => ({
-              where: mockWhere.mockReturnValue(whereResult),
-            }),
-            innerJoin: () => ({
-              where: mockWhere.mockReturnValue(whereResult),
-            }),
-          }),
-        }),
-        insert: () => ({
-          values: (payload: unknown) => {
-            capturedInserts.push(payload);
-            return {
-              onConflictDoUpdate: vi.fn().mockResolvedValueOnce(undefined),
-              returning: mockInsert,
-            };
-          },
-        }),
-        update: () => ({
-          set: () => ({
-            where: () => ({
-              returning: mockUpdate,
-            }),
-          }),
-        }),
-        delete: () => ({
-          where: () => mockDelete,
-        }),
-        query: mockQuery,
-      })),
-    };
-  });
+  // Mocks are initialized in test/setup.ts before test modules load.
 }
+
+const drizzleMocks: DrizzleMocks = testGlobals.__testMocks.drizzle;
+
+export const mockWhere = drizzleMocks.mockWhere;
+export const mockAll = drizzleMocks.mockAll;
+export const mockInsert = drizzleMocks.mockInsert;
+export const mockUpdate = drizzleMocks.mockUpdate;
+export const mockDelete = drizzleMocks.mockDelete;
+export const mockQuery = drizzleMocks.mockQuery;
+export const capturedInserts = testGlobals.__testMocks.drizzle.capturedInserts;
