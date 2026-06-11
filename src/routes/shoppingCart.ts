@@ -488,7 +488,7 @@ const shoppingCart = factory
     optionalAuthMiddleware,
     zValidator('json', addCartItemSchema),
     async c => {
-      const { cartId, skuNumber, quantity, color, filamentType } =
+      const { cartId, skuNumber, quantity, color, filamentType, filamentId } =
         c.req.valid('json');
 
       // Bind the cart item to the authenticated user when a session is present.
@@ -501,6 +501,7 @@ const shoppingCart = factory
             eq(cart.skuNumber, skuNumber),
             eq(cart.color, color),
             eq(cart.filamentType, filamentType),
+            eq(cart.filamentId, filamentId ?? null),
           ),
         });
 
@@ -524,6 +525,7 @@ const shoppingCart = factory
             quantity,
             color,
             filamentType,
+            filamentId: filamentId ?? null,
           });
         }
 

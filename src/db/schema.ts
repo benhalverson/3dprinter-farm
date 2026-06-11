@@ -16,6 +16,7 @@ export const cart = sqliteTable('cart', {
   quantity: integer('quantity').default(1).notNull(),
   color: text('color').default('#000000'),
   filamentType: text('filament_type').notNull(),
+  filamentId: text('filament_id'),
 });
 
 export const leads = sqliteTable('leads', {
@@ -437,6 +438,22 @@ export const addCartItemSchema = z.object({
   quantity: z.number().int().min(1).max(69),
   color: z.string(),
   filamentType: z.string(),
+  filamentId: z.string().uuid().optional().nullable(),
+});
+
+export const stripeFulfillmentTable = sqliteTable('stripe_fulfillment', {
+  idempotencyKey: text('idempotency_key').primaryKey(),
+  stripeEventId: text('stripe_event_id').notNull(),
+  stripeObjectId: text('stripe_object_id').notNull(),
+  cartId: text('cart_id').notNull(),
+  status: text('status').notNull().default('processed'),
+  slantOrderId: text('slant_order_id'),
+  createdAt: integer('created_at', { mode: 'timestamp' })
+    .notNull()
+    .default(sql`(unixepoch())`),
+  updatedAt: integer('updated_at', { mode: 'timestamp' })
+    .notNull()
+    .default(sql`(unixepoch())`),
 });
 
 // Table for storing uploaded STL files with estimates from Slant3D
