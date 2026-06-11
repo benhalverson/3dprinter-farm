@@ -3,7 +3,7 @@ import { and, eq } from 'drizzle-orm';
 import { describeRoute } from 'hono-openapi';
 import Stripe from 'stripe';
 import { z } from 'zod';
-import { BASE_URL } from '../constants';
+import { BASE_URL_V2 } from '../constants';
 import { addCartItemSchema, cart, productsTable, users } from '../db/schema';
 import factory from '../factory';
 import { authMiddleware, optionalAuthMiddleware } from '../utils/authMiddleware';
@@ -49,6 +49,8 @@ const createCheckoutSchema = z.object({
     })
     .optional(),
 });
+
+const DEFAULT_BLACK_FILAMENT_ID = '76fe1f79-3f1e-43e4-b8f4-61159de5b93c';
 
 /** Extracts the authenticated caller's user ID from Hono context, if present. */
 function getCallerUserId(c: { get: (key: string) => unknown }): string | undefined {
@@ -126,6 +128,7 @@ const shoppingCart = factory
           city,
           state,
           zipCode,
+          country,
           phone: decryptedPhone,
         } = await decryptStoredShippingProfile(userRow, passphrase);
         const decryptMs = performance.now() - decryptStart;
@@ -146,7 +149,7 @@ const shoppingCart = factory
             color: cart.color,
             filamentType: cart.filamentType,
             productName: productsTable.name,
-            stl: productsTable.stl,
+            publicFileServiceId: productsTable.publicFileServiceId,
           })
           .from(cart)
           .leftJoin(productsTable, eq(cart.skuNumber, productsTable.skuNumber))
@@ -163,6 +166,17 @@ const shoppingCart = factory
         // Use != null (loose) to treat both null and undefined as "no owner".
         if (cartItems[0].cartUserId != null && cartItems[0].cartUserId !== userId) {
           return c.json({ error: 'Forbidden' }, 403);
+        }
+
+        const itemMissingFileId = cartItems.find(item => !item.publicFileServiceId);
+        if (itemMissingFileId) {
+          return c.json(
+            {
+              error: 'Missing publicFileServiceId for cart item',
+              skuNumber: itemMissingFileId.skuNumber,
+            },
+            400,
+          );
         }
 
         // Build orderData array per API spec from each cart item.
@@ -232,60 +246,67 @@ const shoppingCart = factory
         };
 
         const payloadBuildStart = performance.now();
-        const orderDataArray = cartItems.map(cart => {
-          // Derive filename: use product STL last path segment or fallback.
-          const stlPath = cart.stl;
-          const filenameCandidate = stlPath?.split('/').pop();
-          const normalizedColor = normalizeColor(cart.color);
-          if (normalizedColor !== cart.color) {
-            console.log('Normalized color', {
-              original: cart.color,
-              normalized: normalizedColor,
-            });
-          }
-          return {
+        const countryCode = normalizeCountryCode(country);
+        const recipientName = `${firstName} ${lastName}`.trim() || email;
+        const address = {
+          name: recipientName,
+          street1: shippingAddress,
+          street2: '',
+          street3: '',
+          city,
+          state,
+          zipCode,
+          country: countryCode,
+          isResidential: true,
+        };
+        const draftOrderPayload = {
+          orderNumber: generateOrderNumber(),
+          customer: {
             email,
             phone,
-            name: `${firstName} ${lastName}`.trim(),
-            orderNumber: generateOrderNumber(),
-            filename: filenameCandidate,
-            fileURL: stlPath,
-            bill_to_street_1: shippingAddress,
-            bill_to_street_2: '',
-            bill_to_street_3: '',
-            bill_to_city: city,
-            bill_to_state: state,
-            bill_to_zip: zipCode,
-            bill_to_country_as_iso: 'US',
-            bill_to_is_US_residential: 'true',
-            ship_to_name: `${firstName} ${lastName}`.trim(),
-            ship_to_street_1: shippingAddress,
-            ship_to_street_2: '',
-            ship_to_street_3: '',
-            ship_to_city: city,
-            ship_to_state: state,
-            ship_to_zip: zipCode,
-            ship_to_country_as_iso: 'US',
-            ship_to_is_US_residential: 'true',
-            order_item_name: cart.productName,
-            order_quantity: String(cart.quantity),
-            order_image_url: '',
-            order_sku: cart.skuNumber,
-            order_item_color: normalizedColor,
-            profile: cart.filamentType,
-          };
-        });
+            name: recipientName,
+          },
+          billingAddress: address,
+          shippingAddress: address,
+          orderItems: cartItems.map(cartItem => {
+            const itemWithOptionalFilament = cartItem as typeof cartItem & {
+              filamentId?: string | null;
+            };
+            const filamentId =
+              typeof itemWithOptionalFilament.filamentId === 'string' &&
+              itemWithOptionalFilament.filamentId.trim()
+                ? itemWithOptionalFilament.filamentId
+                : DEFAULT_BLACK_FILAMENT_ID;
+            const publicFileServiceId = cartItem.publicFileServiceId!;
+            const normalizedColor = normalizeColor(cartItem.color);
+            if (normalizedColor !== cartItem.color) {
+              console.log('Normalized color', {
+                original: cartItem.color,
+                normalized: normalizedColor,
+              });
+            }
+            return {
+              publicFileServiceId,
+              filamentId,
+              quantity: cartItem.quantity,
+              orderItemName: cartItem.productName,
+              orderSku: cartItem.skuNumber,
+              orderItemColor: normalizedColor,
+              profile: cartItem.filamentType,
+            };
+          }),
+        };
         const payloadBuildMs = performance.now() - payloadBuildStart;
 
-        // API expects an array of orderData objects
+        // Draft and estimate the order with Slant3D V2.
         const upstreamStart = performance.now();
-        const response = await fetch(`${BASE_URL}order/estimate`, {
+        const response = await fetch(`${BASE_URL_V2}orders`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            'api-key': c.env.SLANT_API,
+            Authorization: 'Bearer '.concat(c.env.SLANT_API_V2),
           },
-          body: JSON.stringify(orderDataArray),
+          body: JSON.stringify(draftOrderPayload),
         });
         const upstreamMs = performance.now() - upstreamStart;
 
@@ -313,19 +334,35 @@ const shoppingCart = factory
           console.log('cart/shipping timing', timings);
         }
         if (!response.ok) {
+          const errorText = await response.text();
           console.error(
-            'Upstream estimate error:',
+            'Upstream draft order estimate error:',
             response.status,
-            await response.text(),
+            errorText,
           );
           return c.json(
-            { error: 'Upstream estimate failed', status: response.status },
+            {
+              error: 'Upstream draft order estimate failed',
+              status: response.status,
+              details: errorText,
+            },
             502,
           );
         }
 
-        const data = (await response.json()) as ShippingResponse;
-        return c.json({ shippingCost: data.shippingCost });
+        const data = (await response.json()) as DraftOrderResponse;
+        const shippingCost = extractShippingCost(data);
+
+        if (shippingCost === undefined) {
+          return c.json(
+            {
+              error: 'Upstream draft order estimate response missing shipping cost',
+            },
+            502,
+          );
+        }
+
+        return c.json({ shippingCost });
       } catch (err) {
         console.log('Error fetching shipping estimate:', err);
         return c.json(
@@ -1075,7 +1112,68 @@ const shoppingCart = factory
   );
 export default shoppingCart;
 
-interface ShippingResponse {
-  shippingCost: number;
-  currencyCode: string;
+interface DraftOrderResponse {
+  shippingCost?: number | string;
+  shipping_cost?: number | string;
+  estimatedShippingCost?: number | string;
+  data?: Record<string, unknown>;
+}
+
+function normalizeCountryCode(country: string | null | undefined): string {
+  const trimmed = country?.trim();
+  return trimmed && /^[A-Za-z]{2}$/.test(trimmed) ? trimmed.toUpperCase() : 'US';
+}
+
+function extractShippingCost(response: DraftOrderResponse): number | undefined {
+  const candidates = [
+    ['shippingCost'],
+    ['shipping_cost'],
+    ['estimatedShippingCost'],
+    ['data', 'shippingCost'],
+    ['data', 'shipping_cost'],
+    ['data', 'estimatedShippingCost'],
+    ['data', 'shipping', 'shippingCost'],
+    ['data', 'shipping', 'shipping_cost'],
+    ['data', 'estimate', 'shippingCost'],
+    ['data', 'estimate', 'shipping_cost'],
+    ['data', 'estimatedCosts', 'shippingCost'],
+    ['data', 'estimatedCosts', 'shipping_cost'],
+  ];
+
+  for (const path of candidates) {
+    const shippingCost = toFiniteNumber(getNestedValue(response, path));
+    if (shippingCost !== undefined) {
+      return shippingCost;
+    }
+  }
+
+  return undefined;
+}
+
+function getNestedValue(source: unknown, path: string[]): unknown {
+  let current = source;
+
+  for (const key of path) {
+    if (!current || typeof current !== 'object' || !(key in current)) {
+      return undefined;
+    }
+    current = (current as Record<string, unknown>)[key];
+  }
+
+  return current;
+}
+
+function toFiniteNumber(value: unknown): number | undefined {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value;
+  }
+
+  if (typeof value === 'string' && value.trim()) {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) {
+      return parsed;
+    }
+  }
+
+  return undefined;
 }
