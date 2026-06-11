@@ -331,7 +331,7 @@ describe('Shopping Cart Routes', () => {
           method: 'POST',
           headers: expect.objectContaining({
             'Content-Type': 'application/json',
-            Authorization: 'Bearer '.concat(env.SLANT_API_V2),
+            Authorization: 'Bearer ' + env.SLANT_API_V2,
           }),
         }),
       );

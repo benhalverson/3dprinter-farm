@@ -50,6 +50,7 @@ const createCheckoutSchema = z.object({
     .optional(),
 });
 
+// Slant3D's PLA Black filament UUID, used when cart-level filament selection is unavailable.
 const DEFAULT_BLACK_FILAMENT_ID = '76fe1f79-3f1e-43e4-b8f4-61159de5b93c';
 
 /** Extracts the authenticated caller's user ID from Hono context, if present. */
@@ -140,7 +141,7 @@ const shoppingCart = factory
 
         // Pull cart contents and join products to enrich data.
         const cartQueryStart = performance.now();
-        const cartItems = await c.var.db
+        const cartItems = (await c.var.db
           .select({
             id: cart.id,
             cartUserId: cart.userId,
@@ -153,7 +154,7 @@ const shoppingCart = factory
           })
           .from(cart)
           .leftJoin(productsTable, eq(cart.skuNumber, productsTable.skuNumber))
-          .where(eq(cart.cartId, cartId));
+          .where(eq(cart.cartId, cartId))) as CartShippingItem[];
         const cartQueryMs = performance.now() - cartQueryStart;
 
         console.log('cartItems:', cartItems);
@@ -168,7 +169,9 @@ const shoppingCart = factory
           return c.json({ error: 'Forbidden' }, 403);
         }
 
-        const itemMissingFileId = cartItems.find(item => !item.publicFileServiceId);
+        const itemMissingFileId = cartItems.find(
+          item => !hasPublicFileServiceId(item),
+        );
         if (itemMissingFileId) {
           return c.json(
             {
@@ -178,6 +181,9 @@ const shoppingCart = factory
             400,
           );
         }
+        const printableCartItems = cartItems as Array<
+          (typeof cartItems)[number] & { publicFileServiceId: string }
+        >;
 
         // Build orderData array per API spec from each cart item.
         // Normalize colors to allowed enumeration expected by upstream API.
@@ -268,16 +274,11 @@ const shoppingCart = factory
           },
           billingAddress: address,
           shippingAddress: address,
-          orderItems: cartItems.map(cartItem => {
-            const itemWithOptionalFilament = cartItem as typeof cartItem & {
-              filamentId?: string | null;
-            };
+          orderItems: printableCartItems.map(cartItem => {
             const filamentId =
-              typeof itemWithOptionalFilament.filamentId === 'string' &&
-              itemWithOptionalFilament.filamentId.trim()
-                ? itemWithOptionalFilament.filamentId
+              typeof cartItem.filamentId === 'string' && cartItem.filamentId.trim()
+                ? cartItem.filamentId
                 : DEFAULT_BLACK_FILAMENT_ID;
-            const publicFileServiceId = cartItem.publicFileServiceId!;
             const normalizedColor = normalizeColor(cartItem.color);
             if (normalizedColor !== cartItem.color) {
               console.log('Normalized color', {
@@ -286,7 +287,7 @@ const shoppingCart = factory
               });
             }
             return {
-              publicFileServiceId,
+              publicFileServiceId: cartItem.publicFileServiceId,
               filamentId,
               quantity: cartItem.quantity,
               orderItemName: cartItem.productName,
@@ -335,16 +336,17 @@ const shoppingCart = factory
         }
         if (!response.ok) {
           const errorText = await response.text();
+          const errorDetails = parseUpstreamErrorDetails(errorText);
           console.error(
             'Upstream draft order estimate error:',
             response.status,
-            errorText,
+            errorDetails,
           );
           return c.json(
             {
               error: 'Upstream draft order estimate failed',
               status: response.status,
-              details: errorText,
+              details: errorDetails,
             },
             502,
           );
@@ -1119,12 +1121,32 @@ interface DraftOrderResponse {
   data?: Record<string, unknown>;
 }
 
+interface CartShippingItem {
+  id: number;
+  cartUserId: string | null;
+  skuNumber: string;
+  quantity: number;
+  color: string | null;
+  filamentType: string;
+  filamentId: string | null | undefined;
+  productName: string | null;
+  publicFileServiceId?: string | null;
+}
+
+function hasPublicFileServiceId<T extends { publicFileServiceId?: string | null }>(
+  item: T,
+): item is T & { publicFileServiceId: string } {
+  return typeof item.publicFileServiceId === 'string' && item.publicFileServiceId.length > 0;
+}
+
 function normalizeCountryCode(country: string | null | undefined): string {
   const trimmed = country?.trim();
   return trimmed && /^[A-Za-z]{2}$/.test(trimmed) ? trimmed.toUpperCase() : 'US';
 }
 
 function extractShippingCost(response: DraftOrderResponse): number | undefined {
+  // Slant3D has returned shipping totals in more than one nested shape during the V1/V2 transition,
+  // so keep a small set of known fallbacks while normalizing the route response to { shippingCost }.
   const candidates = [
     ['shippingCost'],
     ['shipping_cost'],
@@ -1176,4 +1198,21 @@ function toFiniteNumber(value: unknown): number | undefined {
   }
 
   return undefined;
+}
+
+function parseUpstreamErrorDetails(errorText: string): string | Record<string, unknown> {
+  if (!errorText) {
+    return '';
+  }
+
+  try {
+    const parsed = JSON.parse(errorText) as unknown;
+    return parsed !== null &&
+      typeof parsed === 'object' &&
+      !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : errorText;
+  } catch {
+    return errorText;
+  }
 }
