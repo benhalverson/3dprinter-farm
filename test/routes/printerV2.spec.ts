@@ -20,7 +20,9 @@ describe('Printer V2 Routes', () => {
       const mockEstimateResponse = {
         data: {
           publicFileServiceId: validPublicFileServiceId,
-          estimatedCost: 25.5,
+          total: 25.5,
+          pricePerUnit: 12.75,
+          subtotal: 25.5,
           quantity: 2,
           filamentId: validFilamentId,
           slicer: { support_enabled: true },
@@ -53,6 +55,7 @@ describe('Printer V2 Routes', () => {
       expect(data.success).toBe(true);
       expect(data.message).toBe('File price estimated successfully');
       expect(data.data.publicFileServiceId).toBe(validPublicFileServiceId);
+      expect(data.data.total).toBe(25.5);
       expect(data.data.estimatedCost).toBe(25.5);
       expect(data.data.quantity).toBe(2);
       expect(data.data.filamentId).toBe(validFilamentId);
@@ -75,7 +78,7 @@ describe('Printer V2 Routes', () => {
       const mockEstimateResponse = {
         data: {
           publicFileServiceId: validPublicFileServiceId,
-          estimatedCost: 15.0,
+          total: 15.0,
           quantity: 1,
           filamentId: defaultBlackFilamentId,
         },
@@ -113,7 +116,7 @@ describe('Printer V2 Routes', () => {
       const mockEstimateResponse = {
         data: {
           publicFileServiceId: validPublicFileServiceId,
-          estimatedCost: 12.0,
+          total: 12.0,
           quantity: 1,
           filamentId: validFilamentId,
         },
@@ -177,7 +180,7 @@ describe('Printer V2 Routes', () => {
         const mockEstimateResponse = {
           data: {
             publicFileServiceId: validPublicFileServiceId,
-            estimatedCost: 12.0 * quantity,
+            total: 12.0 * quantity,
             quantity,
             filamentId: validFilamentId,
           },
@@ -305,6 +308,36 @@ describe('Printer V2 Routes', () => {
 
     test('should handle malformed response from Slant3D API', async () => {
       global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          data: {
+            quantity: 1,
+          },
+        }),
+      } as Response);
+
+      const request = new Request('http://localhost/v2/estimate', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          publicFileServiceId: validPublicFileServiceId,
+          filamentId: validFilamentId,
+        }),
+      });
+
+      const response = await app.fetch(request, env);
+      const data = await response.json();
+
+      expect(response.status).toBe(500);
+      expect(data.success).toBe(false);
+      expect(data.error).toBe('Malformed estimate response from Slant3D V2 API');
+    });
+
+    test('should handle malformed error response from Slant3D API', async () => {
+      global.fetch = vi.fn().mockResolvedValue({
         ok: false,
         status: 500,
         text: async () => 'Not valid JSON',
@@ -340,7 +373,7 @@ describe('Printer V2 Routes', () => {
       const mockEstimateResponse = {
         data: {
           publicFileServiceId: validPublicFileServiceId,
-          estimatedCost: 20.0,
+          total: 20.0,
           quantity: 1,
           filamentId: validFilamentId,
           slicer: slicerOptions,
@@ -381,7 +414,7 @@ describe('Printer V2 Routes', () => {
       const mockEstimateResponse = {
         data: {
           publicFileServiceId: validPublicFileServiceId,
-          estimatedCost: 20.0,
+          total: 20.0,
           quantity: 1,
           filamentId: validFilamentId,
         },
