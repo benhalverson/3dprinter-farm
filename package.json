@@ -32,7 +32,6 @@
     "@better-auth/passkey": "^1.5.4",
     "@hono/zod-openapi": "^0.19.7",
     "@hono/zod-validator": "^0.2.2",
-    "@paypal/checkout-server-sdk": "^1.0.3",
     "@scalar/hono-api-reference": "^0.9.1",
     "@simplewebauthn/server": "^13.1.1",
     "better-auth": "^1.5.4",

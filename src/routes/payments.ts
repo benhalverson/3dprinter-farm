@@ -8,12 +8,10 @@ import { cart, productsTable, users } from '../db/schema';
 import factory from '../factory';
 import type {
   CartItemWithProduct,
-  PayPalOrderResponse,
   Slant3DOrderData,
   Slant3DOrderResponse,
 } from '../types';
 import { generateOrderNumber } from '../utils/generateOrderNumber';
-import { getPayPalAccessToken } from '../utils/payPalAccess';
 import {
   decryptStoredShippingProfile,
 } from '../utils/profileCrypto';
@@ -93,75 +91,6 @@ const paymentsRouter = factory
     }),
     (c: Context) => {
       return c.json({ status: 'Cancelled' });
-    },
-  )
-  .post(
-    '/paypal',
-    describeRoute({
-      description:
-        'Create PayPal payment order. Legacy endpoint that creates a PayPal order with quantity-based pricing. Uses sandbox PayPal API.',
-      tags: ['Payments', 'PayPal'],
-      parameters: [
-        {
-          name: 'qty',
-          in: 'query',
-          required: false,
-          schema: { type: 'string', default: '1' },
-          description:
-            'Quantity multiplier for pricing (qty * 10 = total price)',
-        },
-      ],
-      responses: {
-        200: {
-          description: 'PayPal order created successfully',
-          content: {
-            'application/json': {
-              example: {
-                id: 'paypal_order_id',
-                status: 'CREATED',
-                links: [
-                  {
-                    href: 'https://api-m.sandbox.paypal.com/v2/checkout/orders/paypal_order_id',
-                    rel: 'self',
-                    method: 'GET',
-                  },
-                ],
-              },
-            },
-          },
-        },
-      },
-    }),
-    async (c: Context) => {
-      const qty = c.req.query('qty') || 1;
-      const accessToken = await getPayPalAccessToken(c);
-
-      const quantity = (+qty * 10).toFixed(2);
-
-      const response = await fetch(
-        'https://api-m.sandbox.paypal.com/v2/checkout/orders',
-        {
-          headers: {
-            Authorization: `Bearer ${accessToken}`,
-            'Content-Type': 'application/json',
-          },
-          method: 'POST',
-          body: JSON.stringify({
-            intent: 'CAPTURE',
-            purchase_units: [
-              {
-                amount: {
-                  currency_code: 'USD',
-                  value: quantity,
-                },
-              },
-            ],
-          }),
-        },
-      );
-
-      const data = (await response.json()) as PayPalOrderResponse;
-      return c.json(data);
     },
   )
   .post(
