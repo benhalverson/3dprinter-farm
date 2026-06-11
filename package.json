@@ -3,11 +3,14 @@
   "version": "0.0.0",
   "private": true,
   "scripts": {
+    "generate:project-notes": "node --disable-warning=ExperimentalWarning --experimental-default-type=module --experimental-strip-types tools/project-notes/generate-project-notes.ts",
+    "validate:project-notes-pr": "node --disable-warning=ExperimentalWarning --experimental-default-type=module --experimental-strip-types tools/project-notes/validate-pr-notes.ts",
     "deploy": "wrangler deploy",
     "dev": "wrangler dev",
     "start": "wrangler dev",
     "test": "vitest",
     "test:ci": "vitest run",
+    "test:project-notes": "node --test --disable-warning=ExperimentalWarning --experimental-default-type=module --experimental-strip-types test/project-notes/*.spec.ts",
     "cf-typegen": "wrangler types"
   },
   "devDependencies": {

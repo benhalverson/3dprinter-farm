@@ -10,6 +10,45 @@ A Cloudflare Workers-based API for managing 3D printer products, built with Hono
 - Image gallery support
 - Stripe integration for payments
 - STL file processing and pricing
+- Project notes sync pipeline for `benhalverson-blog`
+
+## Project Notes Pipeline
+
+This repo can generate the Markdown content for the `On-Demand 3D Printer Platform` page in `benhalverson-blog`.
+
+- Stable project metadata and roadmap state live in `project-notes.config.json`
+- PR authors fill out the project-notes sections in `.github/pull_request_template.md`
+- `tools/project-notes/validate-pr-notes.ts` validates PR bodies in CI
+- `tools/project-notes/generate-project-notes.ts` rebuilds the final Markdown page from config plus merged PR history
+- `.github/workflows/project-notes-publish.yml` opens or updates a PR in `benhalverson-blog`
+
+Useful commands:
+
+```bash
+pnpm run test:project-notes
+pnpm run generate:project-notes -- --output .generated/project-notes/on-demand-3d-printer-platform.md
+```
+
+### Secrets and tokens
+
+The cross-repo publish workflow uses two kinds of GitHub credentials:
+
+- GitHub's built-in workflow token `${{ github.token }}` to read pull request history from this repository
+- a custom secret named `BLOG_REPO_TOKEN` to check out `benhalverson/benhalverson-blog` and open or update a PR there
+
+Set up `BLOG_REPO_TOKEN` in this repository, `3dprinter-farm`.
+
+Recommended token shape:
+
+- fine-grained personal access token or GitHub App token
+- repository access limited to `benhalverson/benhalverson-blog`
+- minimum permissions:
+  - `Contents: Read and write`
+  - `Pull requests: Read and write`
+
+You do not need to add a matching secret in `benhalverson-blog` for the current design. The workflow in this repo pushes the change by opening a PR into the blog repo using `BLOG_REPO_TOKEN`.
+
+If `benhalverson-blog` has branch protection or PR restrictions, make sure the token's user or app is allowed to open pull requests there.
 
 ## Tech Stack
 
