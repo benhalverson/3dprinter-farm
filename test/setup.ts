@@ -1,32 +1,9 @@
 import { vi } from 'vitest';
-
-type BetterAuthMocks = {
-  getSession: ReturnType<typeof vi.fn>;
-  signUpEmail: ReturnType<typeof vi.fn>;
-  addMember: ReturnType<typeof vi.fn>;
-  updateMemberRole: ReturnType<typeof vi.fn>;
-  handler: ReturnType<typeof vi.fn>;
-};
-
-type DrizzleMocks = {
-  mockWhere: ReturnType<typeof vi.fn>;
-  mockAll: ReturnType<typeof vi.fn>;
-  mockInsert: ReturnType<typeof vi.fn>;
-  mockUpdate: ReturnType<typeof vi.fn>;
-  mockDelete: ReturnType<typeof vi.fn>;
-  mockQuery: {
-    cart: {
-      findFirst: ReturnType<typeof vi.fn>;
-      findMany: ReturnType<typeof vi.fn>;
-    };
-  };
-  capturedInserts: unknown[];
-};
-
-type TestMocks = {
-  betterAuth: BetterAuthMocks;
-  drizzle: DrizzleMocks;
-};
+import type {
+  BetterAuthMocks,
+  DrizzleMocks,
+  TestMocks,
+} from './mocks/types';
 
 const testGlobals = globalThis as typeof globalThis & {
   __testMocks?: TestMocks;

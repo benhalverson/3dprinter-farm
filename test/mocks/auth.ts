@@ -1,12 +1,4 @@
-type TestMocks = {
-  betterAuth: {
-    getSession: any;
-    signUpEmail: any;
-    addMember: any;
-    updateMemberRole: any;
-    handler: any;
-  };
-};
+import type { BetterAuthMocks, TestMocks } from './types';
 
 const testGlobals = globalThis as typeof globalThis & {
   __testMocks?: TestMocks;
@@ -20,4 +12,4 @@ export function mockAuth() {
   // Mocks are initialized in test/setup.ts before test modules load.
 }
 
-export const mockBetterAuth = testGlobals.__testMocks.betterAuth;
+export const mockBetterAuth: BetterAuthMocks = testGlobals.__testMocks.betterAuth;
