@@ -3,10 +3,10 @@ name: Node.js CI
 on:
   push:
     branches:
-      - main
+      - '*'
   pull_request:
     branches:
-    - '*'
+      - '*'
 
 jobs:
   build:
@@ -27,4 +27,3 @@ jobs:
       run: pnpm install
     - name: Run tests
       run: pnpm test
-
