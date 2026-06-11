@@ -391,10 +391,6 @@ const printer = factory
           options: estimateOptions,
         }),
       );
-      console.log(
-        'Authorization:',
-        c.env.SLANT_API_V2 ? '******' : 'MISSING!',
-      );
 
       let estimateData;
       try {

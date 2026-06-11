@@ -144,7 +144,7 @@ export async function estimateSlant3DFile(
   publicFileServiceId: string,
   options: {
     filamentId: string;
-    quantity?: number;
+    quantity: number;
     slicer?: Record<string, unknown>;
   },
 ): Promise<Slant3DEstimateData> {
@@ -154,7 +154,7 @@ export async function estimateSlant3DFile(
     {
       options: {
         filamentId: options.filamentId,
-        quantity: options.quantity ?? 1,
+        quantity: options.quantity,
         ...(options.slicer && { slicer: options.slicer }),
       },
     },
