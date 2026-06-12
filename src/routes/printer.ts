@@ -427,14 +427,39 @@ const printer = factory
         );
       }
 
+      if (typeof estimateData.total !== 'number') {
+        return c.json(
+          {
+            success: false,
+            error: 'Malformed estimate response from Slant3D V2 API',
+          },
+          500,
+        );
+      }
+
       console.log('=== Estimate Success ===');
       console.log('Response data:', JSON.stringify(estimateData));
+
+      const normalizedEstimateData = {
+        ...estimateData,
+        publicFileServiceId:
+          estimateData.publicFileServiceId ?? publicFileServiceId,
+        total: estimateData.total,
+        estimatedCost: estimateData.total,
+        quantity: estimateData.quantity ?? quantity,
+        filamentId: estimateData.filamentId ?? effectiveFilamentId,
+        slicer:
+          estimateData.slicer ??
+          (typeof slicer === 'object' && slicer !== null && !Array.isArray(slicer)
+            ? (slicer as Record<string, unknown>)
+            : undefined),
+      };
 
       return c.json(
         {
           success: true,
           message: 'File price estimated successfully',
-          data: estimateData,
+          data: normalizedEstimateData,
         },
         200,
       );
@@ -541,6 +566,20 @@ const printer = factory
           name: fileNameStr.replace(/\.stl$/i, ''),
           ownerId,
         });
+
+        if (
+          typeof slant3DData.presignedUrl !== 'string' ||
+          typeof slant3DData.key !== 'string'
+        ) {
+          return c.json(
+            {
+              success: false,
+              error: 'Malformed direct upload response from Slant3D V2 API',
+            },
+            500,
+          );
+        }
+
         console.log('Presigned URL obtained successfully');
 
         return c.json(
@@ -602,6 +641,16 @@ const printer = factory
       }
 
       const slant3DData = await confirmSlant3DUpload(c.env, filePlaceholder);
+
+      if (!slant3DData.publicFileServiceId || !slant3DData.name || !slant3DData.fileURL) {
+        return c.json(
+          {
+            success: false,
+            error: 'Malformed confirm upload response from Slant3D V2 API',
+          },
+          500,
+        );
+      }
 
       return c.json(
         {

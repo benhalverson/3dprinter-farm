@@ -58,16 +58,20 @@ export class Slant3DFileApiError extends Error {
 }
 
 async function parseResponseDetails(response: Response): Promise<unknown> {
-  const responseText = await response.text();
-
-  if (!responseText) {
-    return {};
-  }
-
   try {
-    return JSON.parse(responseText);
+    return await response.json();
   } catch {
-    return responseText;
+    try {
+      const text = await response.text();
+      if (!text) return {};
+      try {
+        return JSON.parse(text);
+      } catch {
+        return text;
+      }
+    } catch {
+      return {};
+    }
   }
 }
 

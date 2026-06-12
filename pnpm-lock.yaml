@@ -50,9 +50,6 @@ importers:
       '@hono/zod-validator':
         specifier: ^0.2.2
         version: 0.2.2(hono@4.12.25)(zod@3.25.76)
-      '@paypal/checkout-server-sdk':
-        specifier: ^1.0.3
-        version: 1.0.3
       '@scalar/hono-api-reference':
         specifier: ^0.9.1
         version: 0.9.48(hono@4.12.25)
@@ -1219,15 +1216,6 @@ packages:
   '@opentelemetry/semantic-conventions@1.41.1':
     resolution: {integrity: sha512-/UhIkaZgPutTFmQ7RnIJGgDXZmtEJ7Dvi86xNTFWcnRxVRNk/aotsqDJYeEvDP+FSMB2SdW+pQzNMcWP0rwuNA==}
     engines: {node: '>=14'}
-
-  '@paypal/checkout-server-sdk@1.0.3':
-    resolution: {integrity: sha512-UEdq8akEdMz0Vs4qoQFU2gMp8PpyE/HKyMwiZuK4vIWUKl8jfd1fWKjQN5cDFm9NkFUIp5U7h++rdMOVj9WMNA==}
-    engines: {node: '>=8'}
-    deprecated: 'Package no longer supported. The author suggests using the @paypal/paypal-server-sdk package instead: https://www.npmjs.com/package/@paypal/paypal-server-sdk. Contact Support at https://www.npmjs.com/support for more info.'
-
-  '@paypal/paypalhttp@1.0.1':
-    resolution: {integrity: sha512-DC7AHxTT7drF6dUi3YaFdPVuT15sIkpD5H2eHmdtFgxM4UanS1o1ZDfMhR9mpxd8o+X6pz2r+EZVRRq+n1cssQ==}
-    engines: {node: '>=4'}
 
   '@peculiar/asn1-android@2.6.0':
     resolution: {integrity: sha512-cBRCKtYPF7vJGN76/yG8VbxRcHLPF3HnkoHhKOZeHpoVtbMYfY9ROKtH3DtYUY9m8uI1Mh47PRhHf2hSK3xcSQ==}
@@ -3492,12 +3480,6 @@ snapshots:
   '@noble/hashes@2.0.1': {}
 
   '@opentelemetry/semantic-conventions@1.41.1': {}
-
-  '@paypal/checkout-server-sdk@1.0.3':
-    dependencies:
-      '@paypal/paypalhttp': 1.0.1
-
-  '@paypal/paypalhttp@1.0.1': {}
 
   '@peculiar/asn1-android@2.6.0':
     dependencies:

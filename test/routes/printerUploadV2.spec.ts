@@ -211,9 +211,9 @@ describe('Printer V2 Upload Routes', () => {
     });
 
     test('should reject oversized STL files', async () => {
-      const file = new File([MOCK_STL_CONTENT], 'large.stl', { type: 'model/stl' });
-      vi.spyOn(file, 'size', 'get').mockReturnValue(100 * 1024 * 1024 + 1);
-      vi.spyOn(file, 'arrayBuffer').mockResolvedValue(new ArrayBuffer(1));
+      const file = new File([new Uint8Array(100 * 1024 * 1024 + 1)], 'large.stl', {
+        type: 'model/stl',
+      });
 
       const formData = new FormData();
       formData.append('file', file);
