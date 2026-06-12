@@ -1,10 +1,16 @@
 import { zValidator } from '@hono/zod-validator';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, isNull, or } from 'drizzle-orm';
 import { describeRoute } from 'hono-openapi';
 import Stripe from 'stripe';
 import { z } from 'zod';
-import { BASE_URL } from '../constants';
-import { addCartItemSchema, cart, productsTable, users } from '../db/schema';
+import { BASE_URL, BASE_URL_V2  } from '../constants';
+import {
+  addCartItemSchema,
+  cart,
+  DEFAULT_PLA_BLACK_FILAMENT_ID,
+  productsTable,
+  users,
+} from '../db/schema';
 import factory from '../factory';
 import { authMiddleware, optionalAuthMiddleware } from '../utils/authMiddleware';
 import { generateOrderNumber } from '../utils/generateOrderNumber';
@@ -49,6 +55,9 @@ const createCheckoutSchema = z.object({
     })
     .optional(),
 });
+
+// Slant3D's PLA Black filament UUID, used when cart-level filament selection is unavailable.
+const DEFAULT_BLACK_FILAMENT_ID = '76fe1f79-3f1e-43e4-b8f4-61159de5b93c';
 
 /** Extracts the authenticated caller's user ID from Hono context, if present. */
 function getCallerUserId(c: { get: (key: string) => unknown }): string | undefined {
@@ -126,6 +135,7 @@ const shoppingCart = factory
           city,
           state,
           zipCode,
+          country,
           phone: decryptedPhone,
         } = await decryptStoredShippingProfile(userRow, passphrase);
         const decryptMs = performance.now() - decryptStart;
@@ -137,7 +147,7 @@ const shoppingCart = factory
 
         // Pull cart contents and join products to enrich data.
         const cartQueryStart = performance.now();
-        const cartItems = await c.var.db
+        const cartItems = (await c.var.db
           .select({
             id: cart.id,
             cartUserId: cart.userId,
@@ -146,11 +156,11 @@ const shoppingCart = factory
             color: cart.color,
             filamentType: cart.filamentType,
             productName: productsTable.name,
-            stl: productsTable.stl,
+            publicFileServiceId: productsTable.publicFileServiceId,
           })
           .from(cart)
           .leftJoin(productsTable, eq(cart.skuNumber, productsTable.skuNumber))
-          .where(eq(cart.cartId, cartId));
+          .where(eq(cart.cartId, cartId))) as CartShippingItem[];
         const cartQueryMs = performance.now() - cartQueryStart;
 
         console.log('cartItems:', cartItems);
@@ -165,7 +175,23 @@ const shoppingCart = factory
           return c.json({ error: 'Forbidden' }, 403);
         }
 
-        // Build orderData array per API spec from each cart item.
+        const itemMissingFileId = cartItems.find(
+          item => !hasPublicFileServiceId(item),
+        );
+        if (itemMissingFileId) {
+          return c.json(
+            {
+              error: 'Missing publicFileServiceId for cart item',
+              skuNumber: itemMissingFileId.skuNumber,
+            },
+            400,
+          );
+        }
+        const printableCartItems = cartItems as Array<
+          (typeof cartItems)[number] & { publicFileServiceId: string }
+        >;
+
+        // Build Slant3D V2 draft-order payload from each cart item.
         // Normalize colors to allowed enumeration expected by upstream API.
         const allowedColors = new Set([
           'black',
@@ -232,60 +258,62 @@ const shoppingCart = factory
         };
 
         const payloadBuildStart = performance.now();
-        const orderDataArray = cartItems.map(cart => {
-          // Derive filename: use product STL last path segment or fallback.
-          const stlPath = cart.stl;
-          const filenameCandidate = stlPath?.split('/').pop();
-          const normalizedColor = normalizeColor(cart.color);
-          if (normalizedColor !== cart.color) {
-            console.log('Normalized color', {
-              original: cart.color,
-              normalized: normalizedColor,
-            });
-          }
-          return {
+        const countryCode = normalizeCountryCode(country);
+        const recipientName = `${firstName} ${lastName}`.trim() || email;
+        const address = {
+          name: recipientName,
+          street1: shippingAddress,
+          street2: '',
+          street3: '',
+          city,
+          state,
+          zipCode,
+          country: countryCode,
+          isResidential: true,
+        };
+        const draftOrderPayload = {
+          orderNumber: generateOrderNumber(),
+          customer: {
             email,
             phone,
-            name: `${firstName} ${lastName}`.trim(),
-            orderNumber: generateOrderNumber(),
-            filename: filenameCandidate,
-            fileURL: stlPath,
-            bill_to_street_1: shippingAddress,
-            bill_to_street_2: '',
-            bill_to_street_3: '',
-            bill_to_city: city,
-            bill_to_state: state,
-            bill_to_zip: zipCode,
-            bill_to_country_as_iso: 'US',
-            bill_to_is_US_residential: 'true',
-            ship_to_name: `${firstName} ${lastName}`.trim(),
-            ship_to_street_1: shippingAddress,
-            ship_to_street_2: '',
-            ship_to_street_3: '',
-            ship_to_city: city,
-            ship_to_state: state,
-            ship_to_zip: zipCode,
-            ship_to_country_as_iso: 'US',
-            ship_to_is_US_residential: 'true',
-            order_item_name: cart.productName,
-            order_quantity: String(cart.quantity),
-            order_image_url: '',
-            order_sku: cart.skuNumber,
-            order_item_color: normalizedColor,
-            profile: cart.filamentType,
-          };
-        });
+            name: recipientName,
+          },
+          billingAddress: address,
+          shippingAddress: address,
+          orderItems: printableCartItems.map(cartItem => {
+            const filamentId =
+              typeof cartItem.filamentId === 'string' && cartItem.filamentId.trim()
+                ? cartItem.filamentId
+                : DEFAULT_BLACK_FILAMENT_ID;
+            const normalizedColor = normalizeColor(cartItem.color);
+            if (normalizedColor !== cartItem.color) {
+              console.log('Normalized color', {
+                original: cartItem.color,
+                normalized: normalizedColor,
+              });
+            }
+            return {
+              publicFileServiceId: cartItem.publicFileServiceId,
+              filamentId,
+              quantity: cartItem.quantity,
+              orderItemName: cartItem.productName,
+              orderSku: cartItem.skuNumber,
+              orderItemColor: normalizedColor,
+              profile: cartItem.filamentType,
+            };
+          }),
+        };
         const payloadBuildMs = performance.now() - payloadBuildStart;
 
-        // API expects an array of orderData objects
+        // Draft and estimate the order with Slant3D V2.
         const upstreamStart = performance.now();
-        const response = await fetch(`${BASE_URL}order/estimate`, {
+        const response = await fetch(`${BASE_URL_V2}orders`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            'api-key': c.env.SLANT_API,
+            Authorization: 'Bearer '.concat(c.env.SLANT_API_V2),
           },
-          body: JSON.stringify(orderDataArray),
+          body: JSON.stringify(draftOrderPayload),
         });
         const upstreamMs = performance.now() - upstreamStart;
 
@@ -313,19 +341,36 @@ const shoppingCart = factory
           console.log('cart/shipping timing', timings);
         }
         if (!response.ok) {
+          const errorText = await response.text();
+          const errorDetails = parseUpstreamErrorDetails(errorText);
           console.error(
-            'Upstream estimate error:',
+            'Upstream draft order estimate error:',
             response.status,
-            await response.text(),
+            errorDetails,
           );
           return c.json(
-            { error: 'Upstream estimate failed', status: response.status },
+            {
+              error: 'Upstream draft order estimate failed',
+              status: response.status,
+              details: errorDetails,
+            },
             502,
           );
         }
 
-        const data = (await response.json()) as ShippingResponse;
-        return c.json({ shippingCost: data.shippingCost });
+        const data = (await response.json()) as DraftOrderResponse;
+        const shippingCost = extractShippingCost(data);
+
+        if (shippingCost === undefined) {
+          return c.json(
+            {
+              error: 'Upstream draft order estimate response missing shipping cost',
+            },
+            502,
+          );
+        }
+
+        return c.json({ shippingCost });
       } catch (err) {
         console.log('Error fetching shipping estimate:', err);
         return c.json(
@@ -390,6 +435,7 @@ const shoppingCart = factory
                     quantity: z.number(),
                     color: z.string(),
                     filamentType: z.string(),
+                    filamentId: z.string().uuid(),
                     name: z.string(),
                     price: z.number(),
                     stripePriceId: z.string().optional(),
@@ -426,6 +472,7 @@ const shoppingCart = factory
             quantity: cart.quantity,
             color: cart.color,
             filamentType: cart.filamentType,
+            filamentId: cart.filamentId,
             name: productsTable.name,
             price: productsTable.price,
             stripePriceId: productsTable.stripePriceId,
@@ -446,6 +493,7 @@ const shoppingCart = factory
             quantity: item.quantity,
             color: item.color,
             filamentType: item.filamentType,
+            filamentId: item.filamentId ?? DEFAULT_PLA_BLACK_FILAMENT_ID,
             name: item.name,
             price: item.price,
             stripePriceId: item.stripePriceId,
@@ -493,6 +541,14 @@ const shoppingCart = factory
 
       // Bind the cart item to the authenticated user when a session is present.
       const userId: string | null = getCallerUserId(c) ?? null;
+      const effectiveFilamentId = filamentId ?? DEFAULT_PLA_BLACK_FILAMENT_ID;
+      const filamentMatchCondition =
+        effectiveFilamentId === DEFAULT_PLA_BLACK_FILAMENT_ID
+          ? or(
+              eq(cart.filamentId, effectiveFilamentId),
+              isNull(cart.filamentId),
+            )
+          : eq(cart.filamentId, effectiveFilamentId);
 
       try {
         const existing = await c.var.db.query.cart.findFirst({
@@ -501,7 +557,7 @@ const shoppingCart = factory
             eq(cart.skuNumber, skuNumber),
             eq(cart.color, color),
             eq(cart.filamentType, filamentType),
-            eq(cart.filamentId, filamentId ?? null),
+            filamentMatchCondition,
           ),
         });
 
@@ -515,6 +571,7 @@ const shoppingCart = factory
             .update(cart)
             .set({
               quantity: existing.quantity + quantity,
+              filamentId: existing.filamentId ?? effectiveFilamentId,
             })
             .where(eq(cart.id, existing.id));
         } else {
@@ -525,7 +582,7 @@ const shoppingCart = factory
             quantity,
             color,
             filamentType,
-            filamentId: filamentId ?? null,
+            filamentId: effectiveFilamentId,
           });
         }
 
@@ -1077,7 +1134,108 @@ const shoppingCart = factory
   );
 export default shoppingCart;
 
-interface ShippingResponse {
-  shippingCost: number;
-  currencyCode: string;
+interface DraftOrderResponse {
+  shippingCost?: number | string;
+  shipping_cost?: number | string;
+  estimatedShippingCost?: number | string;
+  data?: Record<string, unknown>;
+}
+
+interface CartShippingItem {
+  id: number;
+  cartUserId: string | null;
+  skuNumber: string;
+  quantity: number;
+  color: string | null;
+  filamentType: string;
+  filamentId: string | null | undefined;
+  productName: string | null;
+  publicFileServiceId?: string | null;
+}
+
+function hasPublicFileServiceId<T extends { publicFileServiceId?: string | null }>(
+  item: T,
+): item is T & { publicFileServiceId: string } {
+  return (
+    typeof item.publicFileServiceId === 'string' &&
+    item.publicFileServiceId.trim().length > 0
+  );
+}
+
+function normalizeCountryCode(country: string | null | undefined): string {
+  const trimmed = country?.trim();
+  return trimmed && /^[A-Za-z]{2}$/.test(trimmed) ? trimmed.toUpperCase() : 'US';
+}
+
+function extractShippingCost(response: DraftOrderResponse): number | undefined {
+  // Slant3D has returned shipping totals in more than one nested shape during the V1/V2 transition,
+  // so keep a small set of known fallbacks while normalizing the route response to { shippingCost }.
+  const candidates = [
+    ['shippingCost'],
+    ['shipping_cost'],
+    ['estimatedShippingCost'],
+    ['data', 'shippingCost'],
+    ['data', 'shipping_cost'],
+    ['data', 'estimatedShippingCost'],
+    ['data', 'shipping', 'shippingCost'],
+    ['data', 'shipping', 'shipping_cost'],
+    ['data', 'estimate', 'shippingCost'],
+    ['data', 'estimate', 'shipping_cost'],
+    ['data', 'estimatedCosts', 'shippingCost'],
+    ['data', 'estimatedCosts', 'shipping_cost'],
+  ];
+
+  for (const path of candidates) {
+    const shippingCost = toFiniteNumber(getNestedValue(response, path));
+    if (shippingCost !== undefined) {
+      return shippingCost;
+    }
+  }
+
+  return undefined;
+}
+
+function getNestedValue(source: unknown, path: string[]): unknown {
+  let current = source;
+
+  for (const key of path) {
+    if (!current || typeof current !== 'object' || !(key in current)) {
+      return undefined;
+    }
+    current = (current as Record<string, unknown>)[key];
+  }
+
+  return current;
+}
+
+function toFiniteNumber(value: unknown): number | undefined {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value;
+  }
+
+  if (typeof value === 'string' && value.trim()) {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) {
+      return parsed;
+    }
+  }
+
+  return undefined;
+}
+
+function parseUpstreamErrorDetails(errorText: string): string | Record<string, unknown> {
+  if (!errorText) {
+    return '';
+  }
+
+  try {
+    const parsed = JSON.parse(errorText) as unknown;
+    return parsed !== null &&
+      typeof parsed === 'object' &&
+      !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : errorText;
+  } catch {
+    return errorText;
+  }
 }

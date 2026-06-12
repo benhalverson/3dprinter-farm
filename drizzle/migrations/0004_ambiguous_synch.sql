@@ -8,5 +8,3 @@ CREATE TABLE `stripe_fulfillment` (
 	`created_at` integer DEFAULT (unixepoch()) NOT NULL,
 	`updated_at` integer DEFAULT (unixepoch()) NOT NULL
 );
---> statement-breakpoint
-ALTER TABLE `cart` ADD `filament_id` text;

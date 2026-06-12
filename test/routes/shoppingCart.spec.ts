@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, test, vi } from 'vitest';
 import app from '../../src/index';
 import { mockAuth, mockBetterAuth } from '../mocks/auth';
 import {
+  capturedInserts,
   mockDrizzle,
   mockInsert,
   mockQuery,
@@ -59,6 +60,7 @@ vi.mock('../../src/utils/generateOrderNumber', () => ({
 
 const mockCartId = 'a1b2c3d4-e5f6-7890-abcd-ef1234567890';
 const mockUserId = 1;
+const defaultBlackFilamentId = '76fe1f79-3f1e-43e4-b8f4-61159de5b93c';
 
 const env = mockEnv();
 
@@ -70,6 +72,9 @@ describe('Shopping Cart Routes', () => {
     mockWhere.mockReset();
     mockInsert.mockReset();
     mockUpdate.mockReset();
+    mockQuery.cart.findFirst.mockReset();
+    mockQuery.cart.findMany.mockReset();
+    capturedInserts.length = 0;
 
     // Mock external fetch for shipping API
     global.fetch = vi.fn().mockResolvedValue({
@@ -110,6 +115,7 @@ describe('Shopping Cart Routes', () => {
           quantity: 2,
           color: '#ff0000',
           filamentType: 'PLA',
+          filamentId: '8cfbf30a-2995-486e-a1e8-8f7d41488f1e',
           name: 'Test Product 1',
           price: 19.99,
           stripePriceId: 'price_test1',
@@ -121,6 +127,7 @@ describe('Shopping Cart Routes', () => {
           quantity: 1,
           color: '#00ff00',
           filamentType: 'PETG',
+          filamentId: null,
           name: 'Test Product 2',
           price: 29.99,
           stripePriceId: 'price_test2',
@@ -147,9 +154,11 @@ describe('Shopping Cart Routes', () => {
         quantity: 2,
         color: '#ff0000',
         filamentType: 'PLA',
+        filamentId: '8cfbf30a-2995-486e-a1e8-8f7d41488f1e',
         name: 'Test Product 1',
         price: 19.99,
       });
+      expect(data.items[1].filamentId).toBe(defaultBlackFilamentId);
     });
 
     test('returns empty cart when no items found', async () => {
@@ -187,6 +196,83 @@ describe('Shopping Cart Routes', () => {
       const res = await app.fetch(request, env);
 
       expect(res.status).toBe(400);
+    });
+
+    test('returns validation error for invalid filamentId', async () => {
+      const invalidItem = {
+        cartId: mockCartId,
+        skuNumber: 'TEST-SKU-001',
+        quantity: 1,
+        color: '#ff0000',
+        filamentType: 'PLA',
+        filamentId: 'not-a-uuid',
+      };
+
+      const request = new Request('http://localhost/cart/add', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(invalidItem),
+      });
+
+      const res = await app.fetch(request, env);
+
+      expect(res.status).toBe(400);
+    });
+
+    test('stores provided filamentId on cart items', async () => {
+      const filamentId = '8cfbf30a-2995-486e-a1e8-8f7d41488f1e';
+      mockQuery.cart.findFirst.mockResolvedValueOnce(undefined);
+
+      const request = new Request('http://localhost/cart/add', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          cartId: mockCartId,
+          skuNumber: 'TEST-SKU-001',
+          quantity: 1,
+          color: '#ff0000',
+          filamentType: 'PLA',
+          filamentId,
+        }),
+      });
+
+      const res = await app.fetch(request, env);
+
+      expect(res.status).toBe(200);
+      expect(capturedInserts).toHaveLength(1);
+      expect(capturedInserts[0]).toMatchObject({
+        cartId: mockCartId,
+        skuNumber: 'TEST-SKU-001',
+        quantity: 1,
+        color: '#ff0000',
+        filamentType: 'PLA',
+        filamentId,
+      });
+    });
+
+    test('defaults filamentId to PLA Black when omitted', async () => {
+      mockQuery.cart.findFirst.mockResolvedValueOnce(undefined);
+
+      const request = new Request('http://localhost/cart/add', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          cartId: mockCartId,
+          skuNumber: 'TEST-SKU-001',
+          quantity: 1,
+          color: '#ff0000',
+          filamentType: 'PLA',
+        }),
+      });
+
+      const res = await app.fetch(request, env);
+
+      expect(res.status).toBe(200);
+      expect(capturedInserts).toHaveLength(1);
+      expect(capturedInserts[0]).toMatchObject({
+        cartId: mockCartId,
+        filamentId: defaultBlackFilamentId,
+      });
     });
   });
 
@@ -267,6 +353,19 @@ describe('Shopping Cart Routes', () => {
 
   describe('GET /cart/shipping (authenticated)', () => {
     test('returns shipping estimate successfully', async () => {
+      const mockDraftOrderResponse = {
+        data: {
+          estimatedCosts: {
+            shippingCost: 15.99,
+          },
+        },
+      };
+
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve(mockDraftOrderResponse),
+      } as Response);
+
       // Mock user query (first database call)
       mockWhere.mockResolvedValueOnce([
         {
@@ -292,7 +391,7 @@ describe('Shopping Cart Routes', () => {
           color: '#ff0000',
           filamentType: 'PLA',
           productName: 'Test Product',
-          stl: 'http://example.com/test.stl',
+          publicFileServiceId: 'public-file-123',
         },
       ]);
 
@@ -311,6 +410,34 @@ describe('Shopping Cart Routes', () => {
       expect(res.status).toBe(200);
       const data = (await res.json()) as any;
       expect(data).toHaveProperty('shippingCost', 15.99);
+
+      expect(global.fetch).toHaveBeenCalledWith(
+        expect.stringContaining('/v2/api/orders'),
+        expect.objectContaining({
+          method: 'POST',
+          headers: expect.objectContaining({
+            'Content-Type': 'application/json',
+            Authorization: 'Bearer ' + env.SLANT_API_V2,
+          }),
+        }),
+      );
+
+      const fetchCall = (global.fetch as any).mock.calls[0];
+      const requestBody = JSON.parse(fetchCall[1].body);
+      expect(requestBody.orderItems).toEqual([
+        expect.objectContaining({
+          publicFileServiceId: 'public-file-123',
+          filamentId: '76fe1f79-3f1e-43e4-b8f4-61159de5b93c',
+          quantity: 2,
+          orderSku: 'TEST-SKU-001',
+        }),
+      ]);
+      expect(requestBody.shippingAddress).toMatchObject({
+        city: 'encrypted-testville',
+        state: 'encrypted-ts',
+        zipCode: 'encrypted-12345',
+        country: 'US',
+      });
     });
 
     test('returns 400 when cartId is missing', async () => {
@@ -401,7 +528,7 @@ describe('Shopping Cart Routes', () => {
       expect(data.error).toBe('User not found');
     });
 
-    test('handles upstream shipping API failure', async () => {
+    test('returns 400 when a cart item is missing publicFileServiceId', async () => {
       // Mock user and cart data
       mockWhere
         .mockResolvedValueOnce([
@@ -426,7 +553,55 @@ describe('Shopping Cart Routes', () => {
             color: '#ff0000',
             filamentType: 'PLA',
             productName: 'Test Product',
-            stl: 'http://example.com/test.stl',
+            publicFileServiceId: null,
+          },
+        ]);
+
+      const request = new Request(
+        `http://localhost/cart/shipping?cartId=${mockCartId}`,
+        {
+          method: 'GET',
+          headers: {
+            Cookie: 'token=s.mocked.signed.cookie',
+          },
+        },
+      );
+
+      const res = await app.fetch(request, env);
+
+      expect(res.status).toBe(400);
+      const data = (await res.json()) as any;
+      expect(data.error).toBe('Missing publicFileServiceId for cart item');
+      expect(data.skuNumber).toBe('TEST-SKU-001');
+      expect(global.fetch).not.toHaveBeenCalled();
+    });
+
+    test('handles upstream draft order estimate failure', async () => {
+      // Mock user and cart data
+      mockWhere
+        .mockResolvedValueOnce([
+          {
+            id: mockUserId,
+            email: 'test@example.com',
+            firstName: 'encrypted-test',
+            lastName: 'encrypted-user',
+            shippingAddress: 'encrypted-123-main-st',
+            city: 'encrypted-testville',
+            state: 'encrypted-ts',
+            zipCode: 'encrypted-12345',
+            country: 'encrypted-usa',
+            phone: 'encrypted-123-456-7890',
+          },
+        ])
+        .mockResolvedValueOnce([
+          {
+            id: 1,
+            skuNumber: 'TEST-SKU-001',
+            quantity: 2,
+            color: '#ff0000',
+            filamentType: 'PLA',
+            productName: 'Test Product',
+            publicFileServiceId: 'public-file-123',
           },
         ]);
 
@@ -451,7 +626,9 @@ describe('Shopping Cart Routes', () => {
 
       expect(res.status).toBe(502);
       const data = (await res.json()) as any;
-      expect(data.error).toBe('Upstream estimate failed');
+      expect(data.error).toBe('Upstream draft order estimate failed');
+      expect(data.status).toBe(500);
+      expect(data.details).toBe('Internal Server Error');
     });
 
     test('returns 403 when cart is owned by a different user', async () => {
@@ -481,7 +658,7 @@ describe('Shopping Cart Routes', () => {
           color: '#ff0000',
           filamentType: 'PLA',
           productName: 'Test Product',
-          stl: 'http://example.com/test.stl',
+          publicFileServiceId: 'public-file-123',
         },
       ]);
 

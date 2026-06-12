@@ -331,7 +331,10 @@ export const estimateV2Doc = {
             message: 'File price estimated successfully',
             data: {
               publicFileServiceId: 'a1b2c3d4-e5f6-7890-abcd-ef1234567890',
+              total: 24.75,
               estimatedCost: 24.75,
+              pricePerUnit: 24.75,
+              subtotal: 24.75,
               quantity: 5,
               filamentId: '76fe1f79-3f1e-43e4-b8f4-61159de5b93c',
               slicer: {

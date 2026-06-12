@@ -8,6 +8,9 @@ import {
 } from 'drizzle-orm/sqlite-core';
 import { z } from 'zod';
 
+export const DEFAULT_PLA_BLACK_FILAMENT_ID =
+  '76fe1f79-3f1e-43e4-b8f4-61159de5b93c';
+
 export const cart = sqliteTable('cart', {
   id: integer('id').primaryKey(),
   cartId: text('cart_id').notNull(),
@@ -16,7 +19,7 @@ export const cart = sqliteTable('cart', {
   quantity: integer('quantity').default(1).notNull(),
   color: text('color').default('#000000'),
   filamentType: text('filament_type').notNull(),
-  filamentId: text('filament_id'),
+  filamentId: text('filament_id').default(DEFAULT_PLA_BLACK_FILAMENT_ID),
 });
 
 export const leads = sqliteTable('leads', {
@@ -476,7 +479,7 @@ export const uploadedFilesTable = sqliteTable('uploaded_files', {
 
   // Estimate data (default PLA BLACK, quantity 1)
   defaultFilamentId: text('default_filament_id').default(
-    '76fe1f79-3f1e-43e4-b8f4-61159de5b93c',
+    DEFAULT_PLA_BLACK_FILAMENT_ID,
   ), // PLA BLACK
   estimatedCost: real('estimated_cost'), // USD
   estimatedQuantity: integer('estimated_quantity').default(1),

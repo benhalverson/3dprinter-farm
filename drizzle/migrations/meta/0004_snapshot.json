@@ -1,5 +1,5 @@
 {
-  "version": "6",
+  "version": "7",
   "dialect": "sqlite",
   "id": "1dcb0fd1-8c7d-4dc2-8502-4a86260f124c",
   "prevId": "21df51a5-db92-4a1e-8acc-00071f61a470",
@@ -180,7 +180,8 @@
           "type": "text",
           "primaryKey": false,
           "notNull": false,
-          "autoincrement": false
+          "autoincrement": false,
+          "default": "'76fe1f79-3f1e-43e4-b8f4-61159de5b93c'"
         }
       },
       "indexes": {},
