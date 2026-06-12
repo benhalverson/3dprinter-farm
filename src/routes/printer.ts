@@ -44,8 +44,8 @@ const SlantDirectUploadResponseSchema = z.object({
 const SlantConfirmUploadResponseSchema = z.object({
   data: z.object({
     publicFileServiceId: z.string().min(1),
-    name: z.string().optional(),
-    fileURL: z.string().optional(),
+    name: z.string().min(1),
+    fileURL: z.string().min(1),
     STLMetrics: z.unknown().optional(),
   }),
 });
