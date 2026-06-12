@@ -491,3 +491,22 @@ export const uploadedFilesTable = sqliteTable('uploaded_files', {
     .notNull()
     .default(sql`(unixepoch())`),
 });
+
+// ─── Notification Attempts ─────────────────────────────────────────────────────
+
+export const notificationAttempts = sqliteTable('notification_attempts', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  orderId: text('order_id').notNull(),
+  notificationType: text('notification_type').notNull(), // order_confirmation, order_shipped, order_delivered, order_canceled, admin_failure_alert
+  recipientEmail: text('recipient_email').notNull(),
+  status: text('status').notNull().default('pending'), // pending, sent, failed, skipped
+  providerMessageId: text('provider_message_id'),
+  errorMessage: text('error_message'),
+  idempotencyKey: text('idempotency_key').notNull().unique(), // orderId + notificationType + statusTransition
+  createdAt: integer('created_at', { mode: 'timestamp_ms' })
+    .notNull()
+    .default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`),
+  updatedAt: integer('updated_at', { mode: 'timestamp_ms' })
+    .default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`),
+  sentAt: integer('sent_at', { mode: 'timestamp_ms' }),
+});
