@@ -22,6 +22,13 @@
       "when": 1741861443002,
       "tag": "0002_cart_user_ownership",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1781170130000,
+      "tag": "0003_cart_filament_id",
+      "breakpoints": true
     }
   ]
 }

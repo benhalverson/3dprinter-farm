@@ -1,10 +1,16 @@
 import { zValidator } from '@hono/zod-validator';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, isNull, or } from 'drizzle-orm';
 import { describeRoute } from 'hono-openapi';
 import Stripe from 'stripe';
 import { z } from 'zod';
-import { BASE_URL_V2 } from '../constants';
-import { addCartItemSchema, cart, productsTable, users } from '../db/schema';
+import { BASE_URL, BASE_URL_V2  } from '../constants';
+import {
+  addCartItemSchema,
+  cart,
+  DEFAULT_PLA_BLACK_FILAMENT_ID,
+  productsTable,
+  users,
+} from '../db/schema';
 import factory from '../factory';
 import { authMiddleware, optionalAuthMiddleware } from '../utils/authMiddleware';
 import { generateOrderNumber } from '../utils/generateOrderNumber';
@@ -429,6 +435,7 @@ const shoppingCart = factory
                     quantity: z.number(),
                     color: z.string(),
                     filamentType: z.string(),
+                    filamentId: z.string().uuid(),
                     name: z.string(),
                     price: z.number(),
                     stripePriceId: z.string().optional(),
@@ -465,6 +472,7 @@ const shoppingCart = factory
             quantity: cart.quantity,
             color: cart.color,
             filamentType: cart.filamentType,
+            filamentId: cart.filamentId,
             name: productsTable.name,
             price: productsTable.price,
             stripePriceId: productsTable.stripePriceId,
@@ -485,6 +493,7 @@ const shoppingCart = factory
             quantity: item.quantity,
             color: item.color,
             filamentType: item.filamentType,
+            filamentId: item.filamentId ?? DEFAULT_PLA_BLACK_FILAMENT_ID,
             name: item.name,
             price: item.price,
             stripePriceId: item.stripePriceId,
@@ -527,11 +536,19 @@ const shoppingCart = factory
     optionalAuthMiddleware,
     zValidator('json', addCartItemSchema),
     async c => {
-      const { cartId, skuNumber, quantity, color, filamentType } =
+      const { cartId, skuNumber, quantity, color, filamentType, filamentId } =
         c.req.valid('json');
 
       // Bind the cart item to the authenticated user when a session is present.
       const userId: string | null = getCallerUserId(c) ?? null;
+      const effectiveFilamentId = filamentId ?? DEFAULT_PLA_BLACK_FILAMENT_ID;
+      const filamentMatchCondition =
+        effectiveFilamentId === DEFAULT_PLA_BLACK_FILAMENT_ID
+          ? or(
+              eq(cart.filamentId, effectiveFilamentId),
+              isNull(cart.filamentId),
+            )
+          : eq(cart.filamentId, effectiveFilamentId);
 
       try {
         const existing = await c.var.db.query.cart.findFirst({
@@ -540,6 +557,7 @@ const shoppingCart = factory
             eq(cart.skuNumber, skuNumber),
             eq(cart.color, color),
             eq(cart.filamentType, filamentType),
+            filamentMatchCondition,
           ),
         });
 
@@ -553,6 +571,7 @@ const shoppingCart = factory
             .update(cart)
             .set({
               quantity: existing.quantity + quantity,
+              filamentId: existing.filamentId ?? effectiveFilamentId,
             })
             .where(eq(cart.id, existing.id));
         } else {
@@ -563,6 +582,7 @@ const shoppingCart = factory
             quantity,
             color,
             filamentType,
+            filamentId: effectiveFilamentId,
           });
         }
 

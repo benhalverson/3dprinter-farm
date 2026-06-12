@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, test, vi } from 'vitest';
 import app from '../../src/index';
 import { mockAuth, mockBetterAuth } from '../mocks/auth';
 import {
+  capturedInserts,
   mockDrizzle,
   mockInsert,
   mockQuery,
@@ -59,6 +60,7 @@ vi.mock('../../src/utils/generateOrderNumber', () => ({
 
 const mockCartId = 'a1b2c3d4-e5f6-7890-abcd-ef1234567890';
 const mockUserId = 1;
+const defaultBlackFilamentId = '76fe1f79-3f1e-43e4-b8f4-61159de5b93c';
 
 const env = mockEnv();
 
@@ -70,6 +72,9 @@ describe('Shopping Cart Routes', () => {
     mockWhere.mockReset();
     mockInsert.mockReset();
     mockUpdate.mockReset();
+    mockQuery.cart.findFirst.mockReset();
+    mockQuery.cart.findMany.mockReset();
+    capturedInserts.length = 0;
 
     // Mock external fetch for shipping API
     global.fetch = vi.fn().mockResolvedValue({
@@ -110,6 +115,7 @@ describe('Shopping Cart Routes', () => {
           quantity: 2,
           color: '#ff0000',
           filamentType: 'PLA',
+          filamentId: '8cfbf30a-2995-486e-a1e8-8f7d41488f1e',
           name: 'Test Product 1',
           price: 19.99,
           stripePriceId: 'price_test1',
@@ -121,6 +127,7 @@ describe('Shopping Cart Routes', () => {
           quantity: 1,
           color: '#00ff00',
           filamentType: 'PETG',
+          filamentId: null,
           name: 'Test Product 2',
           price: 29.99,
           stripePriceId: 'price_test2',
@@ -147,9 +154,11 @@ describe('Shopping Cart Routes', () => {
         quantity: 2,
         color: '#ff0000',
         filamentType: 'PLA',
+        filamentId: '8cfbf30a-2995-486e-a1e8-8f7d41488f1e',
         name: 'Test Product 1',
         price: 19.99,
       });
+      expect(data.items[1].filamentId).toBe(defaultBlackFilamentId);
     });
 
     test('returns empty cart when no items found', async () => {
@@ -187,6 +196,83 @@ describe('Shopping Cart Routes', () => {
       const res = await app.fetch(request, env);
 
       expect(res.status).toBe(400);
+    });
+
+    test('returns validation error for invalid filamentId', async () => {
+      const invalidItem = {
+        cartId: mockCartId,
+        skuNumber: 'TEST-SKU-001',
+        quantity: 1,
+        color: '#ff0000',
+        filamentType: 'PLA',
+        filamentId: 'not-a-uuid',
+      };
+
+      const request = new Request('http://localhost/cart/add', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(invalidItem),
+      });
+
+      const res = await app.fetch(request, env);
+
+      expect(res.status).toBe(400);
+    });
+
+    test('stores provided filamentId on cart items', async () => {
+      const filamentId = '8cfbf30a-2995-486e-a1e8-8f7d41488f1e';
+      mockQuery.cart.findFirst.mockResolvedValueOnce(undefined);
+
+      const request = new Request('http://localhost/cart/add', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          cartId: mockCartId,
+          skuNumber: 'TEST-SKU-001',
+          quantity: 1,
+          color: '#ff0000',
+          filamentType: 'PLA',
+          filamentId,
+        }),
+      });
+
+      const res = await app.fetch(request, env);
+
+      expect(res.status).toBe(200);
+      expect(capturedInserts).toHaveLength(1);
+      expect(capturedInserts[0]).toMatchObject({
+        cartId: mockCartId,
+        skuNumber: 'TEST-SKU-001',
+        quantity: 1,
+        color: '#ff0000',
+        filamentType: 'PLA',
+        filamentId,
+      });
+    });
+
+    test('defaults filamentId to PLA Black when omitted', async () => {
+      mockQuery.cart.findFirst.mockResolvedValueOnce(undefined);
+
+      const request = new Request('http://localhost/cart/add', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          cartId: mockCartId,
+          skuNumber: 'TEST-SKU-001',
+          quantity: 1,
+          color: '#ff0000',
+          filamentType: 'PLA',
+        }),
+      });
+
+      const res = await app.fetch(request, env);
+
+      expect(res.status).toBe(200);
+      expect(capturedInserts).toHaveLength(1);
+      expect(capturedInserts[0]).toMatchObject({
+        cartId: mockCartId,
+        filamentId: defaultBlackFilamentId,
+      });
     });
   });
 

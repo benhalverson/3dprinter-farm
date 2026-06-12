@@ -86,22 +86,22 @@ describe('Printer V2 Upload Routes', () => {
         },
       };
 
-      global.fetch = vi.fn().mockImplementation((url: string) => {
-        if (url.includes('/v2/presigned-upload')) {
+      const fetchMock = vi.fn().mockImplementation((url: string) => {
+        if (url.includes('files/direct-upload')) {
           return Promise.resolve({
             ok: true,
             text: async () => JSON.stringify(mockPresignedData),
             json: async () => mockPresignedData,
           } as Response);
         }
-        if (url.includes('/v2/confirm')) {
+        if (url.includes('files/confirm-upload')) {
           return Promise.resolve({
             ok: true,
             text: async () => JSON.stringify(mockConfirmData),
             json: async () => mockConfirmData,
           } as Response);
         }
-        if (url.includes('/v2/estimate')) {
+        if (url.includes('/estimate')) {
           return Promise.resolve({
             ok: true,
             text: async () => JSON.stringify(mockEstimateData),
@@ -117,6 +117,7 @@ describe('Printer V2 Upload Routes', () => {
           json: async () => ({}),
         } as Response);
       });
+      global.fetch = fetchMock;
 
       // Create a mock STL file
       const file = new File([MOCK_STL_CONTENT], 'test-model.stl', {
@@ -149,6 +150,22 @@ describe('Printer V2 Upload Routes', () => {
         'https://slant3d.com/files/test-model.stl',
       );
       expect(data.data.estimate.cost).toBe(15.99);
+
+      const calledUrls = fetchMock.mock.calls.map(([url]) => String(url));
+      expect(calledUrls).toContain(
+        'https://slant3dapi.com/v2/api/files/direct-upload',
+      );
+      expect(calledUrls).toContain(
+        'https://slant3dapi.com/v2/api/files/confirm-upload',
+      );
+      expect(calledUrls).toContain(
+        'https://slant3dapi.com/v2/api/files/f47ac10b-58cc-4372-a567-0e02b2c3d479/estimate',
+      );
+      expect(
+        calledUrls.some(url => url.includes('/v2/presigned-upload')),
+      ).toBe(false);
+      expect(calledUrls.some(url => url.includes('/v2/confirm'))).toBe(false);
+      expect(calledUrls.some(url => url.includes('/v2/estimate'))).toBe(false);
     });
 
     test('should reject non-STL file types', async () => {
@@ -170,6 +187,50 @@ describe('Printer V2 Upload Routes', () => {
       expect(response.status).toBe(400);
       expect(data.success).toBe(false);
       expect(data.error).toBe('File validation failed');
+    });
+
+    test('should reject empty STL files', async () => {
+      const file = new File([], 'empty.stl', { type: 'model/stl' });
+
+      const formData = new FormData();
+      formData.append('file', file);
+
+      const request = new Request('http://localhost/v2/upload', {
+        method: 'POST',
+        headers: authHeaders,
+        body: formData,
+      });
+
+      const response = await app.fetch(request, env);
+      const data = await response.json();
+
+      expect(response.status).toBe(400);
+      expect(data.success).toBe(false);
+      expect(data.error).toBe('File validation failed');
+      expect(data.details).toBe('File is empty');
+    });
+
+    test('should reject oversized STL files', async () => {
+      const file = new File([new Uint8Array(100 * 1024 * 1024 + 1)], 'large.stl', {
+        type: 'model/stl',
+      });
+
+      const formData = new FormData();
+      formData.append('file', file);
+
+      const request = new Request('http://localhost/v2/upload', {
+        method: 'POST',
+        headers: authHeaders,
+        body: formData,
+      });
+
+      const response = await app.fetch(request, env);
+      const data = await response.json();
+
+      expect(response.status).toBe(400);
+      expect(data.success).toBe(false);
+      expect(data.error).toBe('File validation failed');
+      expect(data.details).toBe('File is too large (max 100MB)');
     });
 
     test('should accept file with .stl extension even without proper MIME type', async () => {
@@ -221,21 +282,21 @@ describe('Printer V2 Upload Routes', () => {
       };
 
       global.fetch = vi.fn().mockImplementation((url: string) => {
-        if (url.includes('/v2/presigned-upload')) {
+        if (url.includes('files/direct-upload')) {
           return Promise.resolve({
             ok: true,
             text: async () => JSON.stringify(mockPresignedData),
             json: async () => mockPresignedData,
           } as Response);
         }
-        if (url.includes('/v2/confirm')) {
+        if (url.includes('files/confirm-upload')) {
           return Promise.resolve({
             ok: true,
             text: async () => JSON.stringify(mockConfirmData),
             json: async () => mockConfirmData,
           } as Response);
         }
-        if (url.includes('/v2/estimate')) {
+        if (url.includes('/estimate')) {
           return Promise.resolve({
             ok: true,
             text: async () => JSON.stringify(mockEstimateData),
@@ -292,21 +353,11 @@ describe('Printer V2 Upload Routes', () => {
     });
 
     test('should return 500 when SLANT_PLATFORM_ID is missing', async () => {
-      // Mock presigned-upload endpoint to fail due to missing platform ID
-      global.fetch = vi.fn().mockImplementation((url: string) => {
-        if (url.includes('/v2/presigned-upload')) {
-          return Promise.resolve({
-            ok: false,
-            status: 500,
-            text: async () => 'Missing SLANT_PLATFORM_ID',
-            json: async () => ({
-              success: false,
-              error: 'Missing SLANT_PLATFORM_ID',
-            }),
-          } as Response);
-        }
-        return Promise.resolve({ ok: false } as Response);
-      });
+      const envWithoutPlatformId = {
+        ...env,
+        SLANT_PLATFORM_ID: '',
+      };
+      global.fetch = vi.fn();
 
       const file = new File([MOCK_STL_CONTENT], 'test-model.stl', {
         type: 'model/stl',
@@ -320,11 +371,13 @@ describe('Printer V2 Upload Routes', () => {
         body: formData,
       });
 
-      const response = await app.fetch(request, env);
+      const response = await app.fetch(request, envWithoutPlatformId);
       const data = await response.json();
 
       expect(response.status).toBe(500);
       expect(data.success).toBe(false);
+      expect(data.error).toBe('Missing SLANT_PLATFORM_ID environment variable.');
+      expect(global.fetch).not.toHaveBeenCalled();
     });
 
     test('should handle R2 bucket upload failures', async () => {
@@ -342,9 +395,10 @@ describe('Printer V2 Upload Routes', () => {
       };
 
       global.fetch = vi.fn().mockImplementation((url: string) => {
-        if (url.includes('/v2/presigned-upload')) {
+        if (url.includes('files/direct-upload')) {
           return Promise.resolve({
             ok: true,
+            text: async () => JSON.stringify(mockPresignedData),
             json: async () => mockPresignedData,
           } as Response);
         }
@@ -382,7 +436,7 @@ describe('Printer V2 Upload Routes', () => {
     test('should handle Slant3D API failures with JSON error response', async () => {
       // Mock presigned-upload to fail
       global.fetch = vi.fn().mockImplementation((url: string) => {
-        if (url.includes('/v2/presigned-upload')) {
+        if (url.includes('files/direct-upload')) {
           return Promise.resolve({
             ok: false,
             status: 400,
@@ -423,7 +477,7 @@ describe('Printer V2 Upload Routes', () => {
     test('should handle Slant3D API failures with text error response', async () => {
       // Mock presigned-upload to fail with text response
       global.fetch = vi.fn().mockImplementation((url: string) => {
-        if (url.includes('/v2/presigned-upload')) {
+        if (url.includes('files/direct-upload')) {
           return Promise.resolve({
             ok: false,
             status: 500,
@@ -524,21 +578,21 @@ describe('Printer V2 Upload Routes', () => {
       };
 
       global.fetch = vi.fn().mockImplementation((url: string) => {
-        if (url.includes('/v2/presigned-upload')) {
+        if (url.includes('files/direct-upload')) {
           return Promise.resolve({
             ok: true,
             text: async () => JSON.stringify(mockPresignedData),
             json: async () => mockPresignedData,
           } as Response);
         }
-        if (url.includes('/v2/confirm')) {
+        if (url.includes('files/confirm-upload')) {
           return Promise.resolve({
             ok: true,
             text: async () => JSON.stringify(mockConfirmData),
             json: async () => mockConfirmData,
           } as Response);
         }
-        if (url.includes('/v2/estimate')) {
+        if (url.includes('/estimate')) {
           return Promise.resolve({
             ok: true,
             text: async () => JSON.stringify(mockEstimateData),
