@@ -836,20 +836,19 @@ const product = factory
           JSON.stringify(estimateDataRaw),
         );
 
-        // Handle both possible response structures from Slant3D
-        // V2 API returns: { total, pricePerUnit, subtotal, etc }
-        const estimateData = estimateDataRaw.data as
-          | Record<string, unknown>
-          | undefined;
-        const basePrice =
-          (estimateData?.total as number | undefined) ??
-          (estimateData?.pricePerUnit as number | undefined) ??
-          (estimateData?.subtotal as number | undefined) ??
-          (estimateData?.estimatedCost as number | undefined) ??
-          (estimateDataRaw.total as number | undefined) ??
-          (estimateDataRaw.pricePerUnit as number | undefined) ??
-          (estimateDataRaw.estimatedCost as number | undefined) ??
-          (estimateDataRaw.cost as number | undefined);
+        const estimateData = z
+          .object({
+            data: z
+              .object({
+                total: z.number(),
+              })
+              .passthrough(),
+          })
+          .safeParse(estimateDataRaw);
+
+        const basePrice = estimateData.success
+          ? estimateData.data.data.total
+          : undefined;
 
         console.log('Slant3D estimated base price:', basePrice);
         console.log('Markup percentage from request:', data.price);

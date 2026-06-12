@@ -28,7 +28,41 @@ import {
   uploadFileDoc,
   v2UploadDoc,
 } from './docs/printer-docs';
-import { FilamentTypeSchema } from './schemas/printer-schemas';
+import {
+  FilePlaceholderSchema,
+  FilamentTypeSchema,
+} from './schemas/printer-schemas';
+
+const SlantDirectUploadResponseSchema = z.object({
+  data: z.object({
+    presignedUrl: z.string().min(1),
+    key: z.string().min(1),
+    filePlaceholder: FilePlaceholderSchema,
+  }),
+});
+
+const SlantConfirmUploadResponseSchema = z.object({
+  data: z.object({
+    publicFileServiceId: z.string().min(1),
+    name: z.string().min(1),
+    fileURL: z.string().min(1),
+    STLMetrics: z.unknown().optional(),
+  }),
+});
+
+const SlantEstimateResponseSchema = z.object({
+  data: z
+    .object({
+      total: z.number(),
+      pricePerUnit: z.number().optional(),
+      subtotal: z.number().optional(),
+      quantity: z.number().optional(),
+      filamentId: z.string().optional(),
+      slicer: z.record(z.string(), z.unknown()).optional(),
+      publicFileServiceId: z.string().optional(),
+    })
+    .passthrough(),
+});
 
 const printer = factory
   .createApp()
@@ -441,24 +475,43 @@ const printer = factory
         );
       }
 
-      const estimateData = (await response.json()) as {
-        data: {
-          publicFileServiceId: string;
-          estimatedCost: number;
-          quantity: number;
-          filamentId: string;
-          slicer?: Record<string, unknown>;
-        };
-      };
+      const estimateData = SlantEstimateResponseSchema.safeParse(
+        await response.json(),
+      );
+      if (!estimateData.success) {
+        return c.json(
+          {
+            success: false,
+            error: 'Malformed estimate response from Slant3D V2 API',
+            details: estimateData.error.flatten(),
+          },
+          500,
+        );
+      }
 
       console.log('=== Estimate Success ===');
       console.log('Response data:', JSON.stringify(estimateData));
+
+      const normalizedEstimateData = {
+        ...estimateData.data.data,
+        publicFileServiceId:
+          estimateData.data.data.publicFileServiceId ?? publicFileServiceId,
+        total: estimateData.data.data.total,
+        estimatedCost: estimateData.data.data.total,
+        quantity: estimateData.data.data.quantity ?? quantity,
+        filamentId: estimateData.data.data.filamentId ?? effectiveFilamentId,
+        slicer:
+          estimateData.data.data.slicer ??
+          (typeof slicer === 'object' && slicer !== null && !Array.isArray(slicer)
+            ? (slicer as Record<string, unknown>)
+            : undefined),
+      };
 
       return c.json(
         {
           success: true,
           message: 'File price estimated successfully',
-          data: estimateData.data,
+          data: normalizedEstimateData,
         },
         200,
       );
@@ -598,7 +651,19 @@ const printer = factory
         }
 
         console.log('Response ok, parsing JSON...');
-        const slant3DData = await slant3DResponse.json();
+        const slant3DData = SlantDirectUploadResponseSchema.safeParse(
+          await slant3DResponse.json(),
+        );
+        if (!slant3DData.success) {
+          return c.json(
+            {
+              success: false,
+              error: 'Malformed direct upload response from Slant3D V2 API',
+              details: slant3DData.error.flatten(),
+            },
+            500,
+          );
+        }
         console.log('Presigned URL obtained successfully');
 
         return c.json(
@@ -607,14 +672,9 @@ const printer = factory
             message:
               'Presigned URL generated successfully. Upload file to presignedUrl, then call /v2/confirm.',
             data: {
-              presignedUrl: (
-                slant3DData as unknown as { data: { presignedUrl: string } }
-              ).data.presignedUrl,
-              key: (slant3DData as unknown as { data: { key: string } }).data
-                .key,
-              filePlaceholder: (
-                slant3DData as unknown as { data: { filePlaceholder: unknown } }
-              ).data.filePlaceholder,
+              presignedUrl: slant3DData.data.data.presignedUrl,
+              key: slant3DData.data.data.key,
+              filePlaceholder: slant3DData.data.data.filePlaceholder,
             },
           },
           200,
@@ -690,25 +750,29 @@ const printer = factory
         );
       }
 
-      const slant3DData = await slant3DResponse.json();
+      const slant3DData = SlantConfirmUploadResponseSchema.safeParse(
+        await slant3DResponse.json(),
+      );
+      if (!slant3DData.success) {
+        return c.json(
+          {
+            success: false,
+            error: 'Malformed confirm upload response from Slant3D V2 API',
+            details: slant3DData.error.flatten(),
+          },
+          500,
+        );
+      }
 
       return c.json(
         {
           success: true,
           message: 'Upload confirmed and file processed successfully',
           data: {
-            publicFileServiceId: (
-              slant3DData as unknown as {
-                data: { publicFileServiceId: string };
-              }
-            ).data.publicFileServiceId,
-            name: (slant3DData as unknown as { data: { name: string } }).data
-              .name,
-            fileURL: (slant3DData as unknown as { data: { fileURL: string } })
-              .data.fileURL,
-            STLMetrics: (
-              slant3DData as unknown as { data: { STLMetrics: unknown } }
-            ).data.STLMetrics,
+            publicFileServiceId: slant3DData.data.data.publicFileServiceId,
+            name: slant3DData.data.data.name,
+            fileURL: slant3DData.data.data.fileURL,
+            STLMetrics: slant3DData.data.data.STLMetrics,
           },
         },
         200,
