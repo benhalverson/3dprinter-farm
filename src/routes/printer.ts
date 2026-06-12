@@ -500,7 +500,11 @@ const printer = factory
         estimatedCost: estimateData.data.data.total,
         quantity: estimateData.data.data.quantity ?? quantity,
         filamentId: estimateData.data.data.filamentId ?? effectiveFilamentId,
-        slicer: estimateData.data.data.slicer ?? slicer,
+        slicer:
+          estimateData.data.data.slicer ??
+          (typeof slicer === 'object' && slicer !== null && !Array.isArray(slicer)
+            ? (slicer as Record<string, unknown>)
+            : undefined),
       };
 
       return c.json(
