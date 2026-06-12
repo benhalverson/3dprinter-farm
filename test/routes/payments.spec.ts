@@ -1,9 +1,6 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import app from '../../src/index';
-import type {
-  PaymentStatusResponse,
-  PayPalOrderResponse,
-} from '../../src/types';
+import type { PaymentStatusResponse } from '../../src/types';
 import { mockAuth } from '../mocks/auth';
 import {
   capturedInserts,
@@ -37,11 +34,6 @@ vi.mock('stripe', () => {
     })),
   };
 });
-
-// Mock PayPal access token utility
-vi.mock('../../src/utils/payPalAccess', () => ({
-  getPayPalAccessToken: vi.fn().mockResolvedValue('mock-paypal-access-token'),
-}));
 
 // Mock profile crypto utilities – spread importActual so that all named
 // exports (e.g. buildEncryptedProfileUpdate, encryptStoredProfileValue,
@@ -148,25 +140,8 @@ describe('Payments Routes', () => {
     });
   });
 
-  describe.skip('POST /paypal', () => {
-    test('creates PayPal order with default quantity', async () => {
-      const mockPayPalResponse = {
-        id: 'paypal-order-123',
-        status: 'CREATED',
-        links: [
-          {
-            href: 'https://api-m.sandbox.paypal.com/v2/checkout/orders/paypal-order-123',
-            rel: 'self',
-            method: 'GET',
-          },
-        ],
-      };
-
-      vi.mocked(global.fetch).mockResolvedValueOnce({
-        ok: true,
-        json: () => Promise.resolve(mockPayPalResponse),
-      } as Response);
-
+  describe('POST /paypal', () => {
+    test('returns not found after legacy route removal', async () => {
       const res = await app.fetch(
         new Request('http://localhost/paypal', {
           method: 'POST',
@@ -174,81 +149,7 @@ describe('Payments Routes', () => {
         env,
       );
 
-      expect(res.status).toBe(200);
-      const data = (await res.json()) as PayPalOrderResponse;
-      expect(data).toEqual(mockPayPalResponse);
-
-      // Verify PayPal API was called with correct parameters
-      expect(global.fetch).toHaveBeenCalledWith(
-        'https://api-m.sandbox.paypal.com/v2/checkout/orders',
-        expect.objectContaining({
-          method: 'POST',
-          headers: {
-            Authorization: 'Bearer mock-paypal-access-token',
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            intent: 'CAPTURE',
-            purchase_units: [
-              {
-                amount: {
-                  currency_code: 'USD',
-                  value: '10.00', // Default qty=1 * 10
-                },
-              },
-            ],
-          }),
-        }),
-      );
-    });
-
-    test('creates PayPal order with custom quantity', async () => {
-      const mockPayPalResponse = {
-        id: 'paypal-order-456',
-        status: 'CREATED',
-      };
-
-      (global.fetch as any).mockResolvedValueOnce({
-        ok: true,
-        json: () => Promise.resolve(mockPayPalResponse),
-      });
-
-      const res = await app.fetch(
-        new Request('http://localhost/paypal?qty=5', {
-          method: 'POST',
-        }),
-        env,
-      );
-
-      expect(res.status).toBe(200);
-
-      // Verify correct amount calculation (qty=5 * 10 = 50.00)
-      expect(global.fetch).toHaveBeenCalledWith(
-        'https://api-m.sandbox.paypal.com/v2/checkout/orders',
-        expect.objectContaining({
-          body: expect.stringContaining('"value":"50.00"'),
-        }),
-      );
-    });
-
-    test('handles PayPal API error', async () => {
-      (global.fetch as any).mockResolvedValueOnce({
-        ok: false,
-        status: 500,
-        json: () => Promise.resolve({ error: 'PayPal API error' }),
-      });
-
-      const res = await app.fetch(
-        new Request('http://localhost/paypal', {
-          method: 'POST',
-        }),
-        env,
-      );
-
-      // Should return the error response from PayPal
-      expect(res.status).toBe(200); // The endpoint returns whatever PayPal returns
-      const data = (await res.json()) as any;
-      expect(data).toEqual({ error: 'PayPal API error' });
+      expect(res.status).toBe(404);
     });
   });
 
@@ -605,6 +506,39 @@ describe('Payments Routes', () => {
       });
       expect(global.fetch).not.toHaveBeenCalled();
       expect(mockDelete).not.toHaveBeenCalled();
+    });
+
+    test('acknowledges unhandled Stripe events with the payments webhook response shape', async () => {
+      const unhandledEventPayload = {
+        type: 'charge.succeeded',
+        data: {
+          object: {
+            id: 'ch_test_123',
+          },
+        },
+      };
+
+      mockStripeWebhooks.constructEventAsync.mockResolvedValue(
+        unhandledEventPayload,
+      );
+
+      const res = await app.fetch(
+        new Request('http://localhost/webhook/stripe', {
+          method: 'POST',
+          headers: {
+            'stripe-signature': 'valid-signature',
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(unhandledEventPayload),
+        }),
+        env,
+      );
+
+      expect(res.status).toBe(200);
+      const data = (await res.json()) as any;
+      expect(data).toEqual({
+        received: true,
+      });
     });
 
     test('does not clear the cart when Slant draft creation fails', async () => {

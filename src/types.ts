@@ -174,18 +174,6 @@ export type OrderResponse = {
   printingCost: number;
 };
 
-// Payment-related types
-export interface PayPalOrderResponse {
-  id: string;
-  status: string;
-  links?: Array<{
-    href: string;
-    rel: string;
-    method: string;
-  }>;
-  error?: string;
-}
-
 export interface CartItemWithProduct {
   id: number;
   skuNumber: string | null;
