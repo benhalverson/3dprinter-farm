@@ -3,7 +3,7 @@ import { and, eq, isNull, or } from 'drizzle-orm';
 import { describeRoute } from 'hono-openapi';
 import Stripe from 'stripe';
 import { z } from 'zod';
-import { BASE_URL, BASE_URL_V2  } from '../constants';
+import { BASE_URL, BASE_URL_V2 } from '../constants';
 import {
   addCartItemSchema,
   cart,
@@ -55,9 +55,6 @@ const createCheckoutSchema = z.object({
     })
     .optional(),
 });
-
-// Slant3D's PLA Black filament UUID, used when cart-level filament selection is unavailable.
-const DEFAULT_BLACK_FILAMENT_ID = '76fe1f79-3f1e-43e4-b8f4-61159de5b93c';
 
 /** Extracts the authenticated caller's user ID from Hono context, if present. */
 function getCallerUserId(c: { get: (key: string) => unknown }): string | undefined {
@@ -284,7 +281,7 @@ const shoppingCart = factory
             const filamentId =
               typeof cartItem.filamentId === 'string' && cartItem.filamentId.trim()
                 ? cartItem.filamentId
-                : DEFAULT_BLACK_FILAMENT_ID;
+                : DEFAULT_PLA_BLACK_FILAMENT_ID;
             const normalizedColor = normalizeColor(cartItem.color);
             if (normalizedColor !== cartItem.color) {
               console.log('Normalized color', {
