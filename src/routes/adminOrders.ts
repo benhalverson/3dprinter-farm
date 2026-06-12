@@ -2,7 +2,7 @@ import { and, eq, like, gte, lte, or } from 'drizzle-orm';
 import { describeRoute } from 'hono-openapi';
 import { resolver } from 'hono-openapi/zod';
 import { z } from 'zod';
-import { ordersTable, orderEventsTable, users } from '../db/schema';
+import { ordersTable, orderEventsTable } from '../db/schema';
 import factory from '../factory';
 import {
   authMiddleware,
@@ -257,7 +257,7 @@ const adminOrders = factory
     async c => {
       const db = c.var.db;
       const orderId = Number(c.req.param('id'));
-      const actor = (c.get('jwtPayload') as { email?: string } | undefined)?.email ?? 'admin';
+      const actor = (c.get('jwtPayload') as { email?: string } | undefined)?.email ?? 'unknown-admin';
 
       if (Number.isNaN(orderId)) {
         return c.json({ error: 'Invalid order ID' }, 400);
@@ -346,7 +346,7 @@ const adminOrders = factory
     async c => {
       const db = c.var.db;
       const orderId = Number(c.req.param('id'));
-      const actor = (c.get('jwtPayload') as { email?: string } | undefined)?.email ?? 'admin';
+      const actor = (c.get('jwtPayload') as { email?: string } | undefined)?.email ?? 'unknown-admin';
 
       if (Number.isNaN(orderId)) {
         return c.json({ error: 'Invalid order ID' }, 400);
