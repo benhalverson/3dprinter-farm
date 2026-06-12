@@ -250,9 +250,7 @@ describe('Shopping Cart Routes', () => {
       });
     });
 
-    test('defaults filamentId to PLA Black when omitted', async () => {
-      mockQuery.cart.findFirst.mockResolvedValueOnce(undefined);
-
+    test('returns validation error when filamentId is omitted', async () => {
       const request = new Request('http://localhost/cart/add', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -267,12 +265,8 @@ describe('Shopping Cart Routes', () => {
 
       const res = await app.fetch(request, env);
 
-      expect(res.status).toBe(200);
-      expect(capturedInserts).toHaveLength(1);
-      expect(capturedInserts[0]).toMatchObject({
-        cartId: mockCartId,
-        filamentId: defaultBlackFilamentId,
-      });
+      expect(res.status).toBe(400);
+      expect(capturedInserts).toHaveLength(0);
     });
   });
 
@@ -355,8 +349,8 @@ describe('Shopping Cart Routes', () => {
     test('returns shipping estimate successfully', async () => {
       const mockDraftOrderResponse = {
         data: {
-          estimatedCosts: {
-            shippingCost: 15.99,
+          order: {
+            deliveryCost: '15.99',
           },
         },
       };
@@ -417,27 +411,37 @@ describe('Shopping Cart Routes', () => {
           method: 'POST',
           headers: expect.objectContaining({
             'Content-Type': 'application/json',
-            Authorization: 'Bearer ' + env.SLANT_API_V2,
+            Authorization: `Bearer ${env.SLANT_API_V2}`,
           }),
         }),
       );
 
       const fetchCall = (global.fetch as any).mock.calls[0];
       const requestBody = JSON.parse(fetchCall[1].body);
-      expect(requestBody.orderItems).toEqual([
+      expect(requestBody).toMatchObject({
+        platformId: env.SLANT_PLATFORM_ID,
+        ownerId: 'user_123',
+        customer: {
+          details: {
+            email: 'test@example.com',
+            address: {
+              line1: 'encrypted-123-main-st',
+              city: 'encrypted-testville',
+              state: 'encrypted-ts',
+              zip: 'encrypted-12345',
+              country: 'US',
+            },
+          },
+        },
+      });
+      expect(requestBody.items).toEqual([
         expect.objectContaining({
+          type: 'PRINT',
           publicFileServiceId: 'public-file-123',
           filamentId: '76fe1f79-3f1e-43e4-b8f4-61159de5b93c',
           quantity: 2,
-          orderSku: 'TEST-SKU-001',
         }),
       ]);
-      expect(requestBody.shippingAddress).toMatchObject({
-        city: 'encrypted-testville',
-        state: 'encrypted-ts',
-        zipCode: 'encrypted-12345',
-        country: 'US',
-      });
     });
 
     test('returns 400 when cartId is missing', async () => {
@@ -734,7 +738,12 @@ describe('Shopping Cart Routes', () => {
     test('returns 403 when cart is owned by a different authenticated user', async () => {
       // findMany returns items owned by a different user
       mockQuery.cart.findMany.mockResolvedValueOnce([
-        { id: 1, cartId: mockCartId, userId: 'different_user_456', quantity: 2 },
+        {
+          id: 1,
+          cartId: mockCartId,
+          userId: 'different_user_456',
+          quantity: 2,
+        },
       ]);
 
       const request = new Request('http://localhost/cart/update', {
@@ -888,9 +897,7 @@ describe('Shopping Cart Routes', () => {
     });
 
     test('returns 404 when no items with Stripe price IDs found', async () => {
-      mockWhere.mockResolvedValueOnce([
-        { stripePriceId: null, quantity: 1 },
-      ]);
+      mockWhere.mockResolvedValueOnce([{ stripePriceId: null, quantity: 1 }]);
 
       const res = await app.fetch(
         new Request(`http://localhost/cart/${mockCartId}/checkout`, {

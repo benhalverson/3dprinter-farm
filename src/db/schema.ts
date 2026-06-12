@@ -393,20 +393,34 @@ export const orderSchema = z
   })
   .strict();
 
-export const addProductSchema = z.object({
-  name: z.string(),
-  description: z.string(),
-  stl: z.string(),
-  price: z.number(),
-  filamentType: z.string(),
-  color: z.string(),
-  image: z.string(),
-  imageGallery: z.array(z.string()).min(1).optional(),
-  // Accept multiple categories on create; optional for now to support existing data
-  categoryIds: z.array(z.number().int()).optional(),
-  // Also allow a single categoryId for convenience (accept number or array)
-  categoryId: z.union([z.number().int(), z.array(z.number().int())]).optional(),
-});
+const markupPercentageSchema = z
+  .number()
+  .positive('Markup percentage must be greater than 0');
+
+export const addProductSchema = z
+  .object({
+    name: z.string(),
+    description: z.string(),
+    stl: z.string(),
+    price: markupPercentageSchema
+      .optional()
+      .describe('Deprecated alias for markupPercentage.'),
+    markupPercentage: markupPercentageSchema
+      .optional()
+      .describe('Percentage markup to apply to the Slant3D estimated cost.'),
+    filamentType: z.string(),
+    color: z.string(),
+    image: z.string(),
+    imageGallery: z.array(z.string()).min(1).optional(),
+    // Accept multiple categories on create; optional for now to support existing data
+    categoryIds: z.array(z.number().int()).optional(),
+    // Also allow a single categoryId for convenience (accept number or array)
+    categoryId: z.union([z.number().int(), z.array(z.number().int())]).optional(),
+  })
+  .refine(data => data.price !== undefined || data.markupPercentage !== undefined, {
+    message: 'Either price or markupPercentage is required',
+    path: ['markupPercentage'],
+  });
 
 export const updateProductSchema = z.object({
   id: z.number(),
@@ -441,7 +455,7 @@ export const addCartItemSchema = z.object({
   quantity: z.number().int().min(1).max(69),
   color: z.string(),
   filamentType: z.string(),
-  filamentId: z.string().uuid().optional(),
+  filamentId: z.string().uuid(),
 });
 
 // Table for storing uploaded STL files with estimates from Slant3D

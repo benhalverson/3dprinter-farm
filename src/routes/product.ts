@@ -413,7 +413,19 @@ const product = factory
       const user = c.get('jwtPayload') as { id: string; email: string } | undefined;
       if (!user) return c.json({ error: 'Unauthorized' }, 401);
       const data = await c.req.valid('json');
-      const { categoryIds, categoryId, imageGallery, ...rest } = data;
+      const {
+        categoryIds,
+        categoryId,
+        imageGallery,
+        price: legacyMarkupPercentage,
+        markupPercentage,
+        ...productFields
+      } = data;
+      const requestedMarkupPercentage =
+        markupPercentage ?? legacyMarkupPercentage;
+      if (requestedMarkupPercentage === undefined) {
+        return c.json({ error: 'Markup percentage is required' }, 400);
+      }
       // Normalize category inputs: accept categoryIds array, categoryId number, or categoryId array
       let normalizedCategoryIds: number[] | undefined;
       if (Array.isArray(categoryIds)) {
@@ -470,7 +482,10 @@ const product = factory
       };
       console.log('slicing result', slicingResult);
       const basePrice = slicingResult.data.price;
-      const markupPrice = calculateMarkupPrice(basePrice, data.price);
+      const markupPrice = calculateMarkupPrice(
+        basePrice,
+        requestedMarkupPercentage,
+      );
 
       let stripePriceId = null;
       if (markupPrice) {
@@ -490,7 +505,7 @@ const product = factory
           : null;
 
       const productDataToInsert = {
-        ...rest,
+        ...productFields,
         price: markupPrice,
         skuNumber: skuNumber,
         stripeProductId: stripeProduct.id,
@@ -611,7 +626,19 @@ const product = factory
         if (!user) return c.json({ error: 'Unauthorized' }, 401);
 
         const data = await c.req.valid('json');
-        const { categoryIds, categoryId, imageGallery, ...rest } = data;
+        const {
+          categoryIds,
+          categoryId,
+          imageGallery,
+          price: legacyMarkupPercentage,
+          markupPercentage,
+          ...productFields
+        } = data;
+        const requestedMarkupPercentage =
+          markupPercentage ?? legacyMarkupPercentage;
+        if (requestedMarkupPercentage === undefined) {
+          return c.json({ error: 'Markup percentage is required' }, 400);
+        }
         let normalizedCategoryIds: number[] | undefined;
         if (Array.isArray(categoryIds)) {
           normalizedCategoryIds = categoryIds;
@@ -851,7 +878,7 @@ const product = factory
           : undefined;
 
         console.log('Slant3D estimated base price:', basePrice);
-        console.log('Markup percentage from request:', data.price);
+        console.log('Markup percentage from request:', requestedMarkupPercentage);
 
         if (!basePrice || basePrice <= 0) {
           return c.json(
@@ -865,7 +892,10 @@ const product = factory
 
         let markupPrice: number;
         try {
-          markupPrice = calculateMarkupPrice(basePrice, data.price);
+          markupPrice = calculateMarkupPrice(
+            basePrice,
+            requestedMarkupPercentage,
+          );
         } catch (err: unknown) {
           console.error(
             'Error calculating markup price:',
@@ -900,7 +930,7 @@ const product = factory
             : null;
 
         const productDataToInsert = {
-          ...rest,
+          ...productFields,
           price: markupPrice,
           skuNumber: skuNumber,
           stripeProductId: stripeProduct.id,
