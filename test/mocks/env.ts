@@ -26,5 +26,6 @@ export function mockEnv(): Bindings {
     ENCRYPTION_PASSPHRASE: 'test-passphrase',
     R2_PUBLIC_BASE_URL: 'https://uploads.example.com',
     R2_PHOTO_BASE_URL: 'https://photos.example.com',
+    SLANT_WEBHOOK_SECRET: 'test-slant-webhook-secret',
   };
 }
