@@ -6,6 +6,10 @@ import { z } from 'zod';
 import { BASE_URL } from '../constants';
 import { cart, productsTable, users } from '../db/schema';
 import factory from '../factory';
+import {
+  sendAdminFailureAlert,
+  sendOrderConfirmation,
+} from '../lib/notifications';
 import type {
   CartItemWithProduct,
   Slant3DOrderData,
@@ -378,6 +382,14 @@ const paymentsRouter = factory
                 'Slant3D order creation failed:',
                 response.status,
               );
+              // Send admin alert on Slant3D failure
+              await sendAdminFailureAlert(
+                db,
+                c.env,
+                cartId,
+                'slant3d_order_creation',
+                `Slant3D returned HTTP ${response.status}: ${errorText}`,
+              ).catch(e => console.error('Failed to send admin alert:', e));
               return c.json({ error: 'Order creation failed' }, 502);
             }
 
@@ -389,12 +401,41 @@ const paymentsRouter = factory
             await db.delete(cart).where(eq(cart.cartId, cartId));
             console.log('Cart cleared for cartId:', cartId);
 
+            // Send order confirmation email after successful Slant3D processing
+            const slantOrderId = orderResponse.orderId || cartId;
+            const orderNum = orderDataArray[0]?.orderNumber || slantOrderId;
+            await sendOrderConfirmation(
+              db,
+              c.env,
+              slantOrderId,
+              email,
+              orderNum,
+            ).catch(async (notifError) => {
+              console.error('Failed to send confirmation email:', notifError);
+              // Alert admin if customer notification fails
+              await sendAdminFailureAlert(
+                db,
+                c.env,
+                slantOrderId,
+                'customer_notification_failure',
+                notifError instanceof Error ? notifError.message : 'Unknown notification error',
+              ).catch(e => console.error('Failed to send admin alert:', e));
+            });
+
             return c.json({
               success: true,
               orderId: orderResponse.orderId || 'created',
             });
           } catch (error) {
             console.error('Error processing payment_intent.succeeded:', error);
+            // Send admin alert on processing failure
+            await sendAdminFailureAlert(
+              db,
+              c.env,
+              cartId,
+              'payment_intent_processing',
+              error instanceof Error ? error.message : 'Unknown processing error',
+            ).catch(e => console.error('Failed to send admin alert:', e));
             return c.json({ error: 'Order processing failed' }, 500);
           }
         }
@@ -571,6 +612,14 @@ const paymentsRouter = factory
                 'Slant3D order creation failed:',
                 response.status,
               );
+              // Send admin alert on Slant3D failure
+              await sendAdminFailureAlert(
+                db,
+                c.env,
+                cartId,
+                'slant3d_checkout_order_creation',
+                `Slant3D returned HTTP ${response.status}`,
+              ).catch(e => console.error('Failed to send admin alert:', e));
               return c.json({ error: 'Order creation failed' }, 502);
             }
 
@@ -581,8 +630,25 @@ const paymentsRouter = factory
             // Clear the cart after successful order
             await db.delete(cart).where(eq(cart.cartId, cartId));
 
-            // TODO: Store order record in your database for tracking
-            // TODO: Send confirmation email to customer
+            // Send order confirmation email after successful Slant3D processing
+            const slantOrderId = orderResponse.orderId || cartId;
+            const orderNum = orderDataArray[0]?.orderNumber || slantOrderId;
+            await sendOrderConfirmation(
+              db,
+              c.env,
+              slantOrderId,
+              email,
+              orderNum,
+            ).catch(async (notifError) => {
+              console.error('Failed to send confirmation email:', notifError);
+              await sendAdminFailureAlert(
+                db,
+                c.env,
+                slantOrderId,
+                'customer_notification_failure',
+                notifError instanceof Error ? notifError.message : 'Unknown notification error',
+              ).catch(e => console.error('Failed to send admin alert:', e));
+            });
 
             return c.json({
               success: true,
@@ -590,6 +656,13 @@ const paymentsRouter = factory
             });
           } catch (error) {
             console.error('Error creating Slant3D order:', error);
+            await sendAdminFailureAlert(
+              db,
+              c.env,
+              cartId,
+              'checkout_session_processing',
+              error instanceof Error ? error.message : 'Unknown error',
+            ).catch(e => console.error('Failed to send admin alert:', e));
             return c.json({ error: 'Order creation failed' }, 500);
           }
         }
