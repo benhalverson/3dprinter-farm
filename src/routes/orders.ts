@@ -137,7 +137,7 @@ const ordersRouter = factory
 
       // 5. Update local order status
       const previousStatus = order.localStatus;
-      const now = new Date(Math.floor(Date.now() / 1000) * 1000);
+      const now = new Date();
 
       const updateFields: Record<string, unknown> = {
         localStatus: status,

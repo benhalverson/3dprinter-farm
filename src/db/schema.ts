@@ -512,7 +512,7 @@ export const ordersV2Table = sqliteTable('orders_v2', {
   // Stripe identifiers
   stripeCheckoutSessionId: text('stripe_checkout_session_id'),
   stripePaymentIntentId: text('stripe_payment_intent_id'),
-  stripeEventId: text('stripe_event_id').unique(), // idempotency
+  stripeEventId: text('stripe_event_id').unique(), // deduplication for Stripe webhook events
 
   // Slant3D identifier
   slantPublicOrderId: text('slant_public_order_id'),
