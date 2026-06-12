@@ -125,8 +125,10 @@ This project uses Drizzle ORM for database schema management and migrations. Bel
 When you make changes to the database schema in `src/db/schema.ts`, generate a migration file:
 
 ```bash
-npx drizzle-kit generate
+pnpm run db:generate
 ```
+
+Equivalent raw command: `npx drizzle-kit generate`
 
 This will:
 - Create a new migration file in `drizzle/migrations/`
@@ -138,10 +140,10 @@ To apply migrations to your local development database:
 
 ```bash
 # Option 1: Apply all pending migrations
-npx drizzle-kit migrate
+pnpm run db:migrate:local
 
 # Option 2: Push schema changes directly (development only)
-npx drizzle-kit push
+pnpm run db:push:local
 ```
 
 **Note**: `drizzle-kit push` is faster for development but doesn't create migration files. Use `generate` + `migrate` for production-ready changes.
@@ -158,6 +160,30 @@ pnpm run dev
 #### Prerequisites
 - Ensure you're authenticated with Cloudflare: `npx wrangler auth login`
 - Have the correct database name configured in `wrangler.toml`
+- Ensure the target D1 binding points at `migrations_dir = "./drizzle/migrations"`
+
+#### Recommended remote workflow
+
+Use Drizzle to generate reviewed SQL migration files locally, then let Wrangler apply any pending migrations remotely in order.
+
+```bash
+# 1. Generate the next migration locally
+pnpm run db:generate
+
+# 2. Test locally
+pnpm run db:migrate:local
+
+# 3. Apply all pending migrations to production D1
+pnpm run db:migrate:remote
+```
+
+Equivalent raw remote command:
+
+```bash
+npx wrangler d1 migrations apply ecommerce --remote
+```
+
+Wrangler tracks applied migrations for the configured database, so re-running the command is safe when the remote database is already up to date.
 
 #### Cloudflare Dashboard workflow
 
@@ -180,29 +206,7 @@ For the Better Auth organization-role migration in this repository, make sure `d
 - `invitation`
 - `session.active_organization_id`
 
-#### 1. Apply Individual Migration Files
-For each migration file that needs to be applied to the remote database:
-
-```bash
-npx wrangler d1 execute DATABASE_NAME --remote --file=drizzle/migrations/MIGRATION_FILE.sql
-```
-
-**Example**:
-```bash
-npx wrangler d1 execute ecommerce --remote --file=drizzle/migrations/0002_uneven_glorian.sql
-```
-
-#### 2. Apply Multiple Migrations
-If you have multiple migration files to apply, run them in order:
-
-```bash
-# Apply migrations in chronological order
-npx wrangler d1 execute ecommerce --remote --file=drizzle/migrations/0001_initial.sql
-npx wrangler d1 execute ecommerce --remote --file=drizzle/migrations/0002_add_column.sql
-npx wrangler d1 execute ecommerce --remote --file=drizzle/migrations/0003_update_indexes.sql
-```
-
-#### 3. Execute Custom SQL Scripts
+#### Fallback: Execute Custom SQL Scripts
 For data cleanup or custom operations:
 
 ```bash
@@ -216,7 +220,9 @@ npx wrangler d1 execute ecommerce --remote --file=cleanup.sql
 rm cleanup.sql
 ```
 
-#### 4. Verify Remote Changes
+Use `wrangler d1 execute --file=...` for exceptional one-off fixes or recovery steps, not as the standard migration path.
+
+#### Verify Remote Changes
 Check that your migrations were applied successfully:
 
 ```bash
@@ -227,7 +233,7 @@ npx wrangler d1 execute ecommerce --remote --command="SELECT sql FROM sqlite_mas
 npx wrangler d1 execute ecommerce --remote --command="PRAGMA table_info(products);"
 ```
 
-#### 5. Deploy Updated Code
+#### Deploy Updated Code
 After applying database migrations, deploy your updated application:
 
 ```bash
@@ -238,20 +244,20 @@ pnpm run deploy
 
 #### Development Workflow
 1. **Make schema changes** in `src/db/schema.ts`
-2. **Generate migration** with `npx drizzle-kit generate`
-3. **Test locally** with `npx drizzle-kit migrate` or `npx drizzle-kit push`
+2. **Generate migration** with `pnpm run db:generate`
+3. **Test locally** with `pnpm run db:migrate:local` or `pnpm run db:push:local`
 4. **Verify functionality** by running `pnpm run dev`
 5. **Commit changes** including both schema and migration files
 
 #### Production Deployment
 1. **Review migration files** before applying to production
 2. **Backup database** (if applicable) before running migrations
-3. **Apply migrations** to remote D1 database using `wrangler d1 execute`
+3. **Apply migrations** to remote D1 database using `pnpm run db:migrate:remote`
 4. **Deploy application** with `pnpm run deploy`
 5. **Test endpoints** to ensure everything works correctly
 
 #### Important Notes
-- **Order matters**: Apply migrations in chronological order (0001, 0002, 0003, etc.)
+- **Order matters**: Wrangler applies pending migrations in order from `drizzle/migrations/`
 - **No rollbacks**: D1 doesn't support automatic rollbacks, plan migrations carefully
 - **Downtime**: Remote migrations may cause brief downtime during execution
 - **Testing**: Always test migrations locally before applying to production

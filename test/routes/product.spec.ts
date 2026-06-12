@@ -290,8 +290,10 @@ describe('Product Routes', () => {
     // Inserted product should have null categoryId during transition
     const [productInsertOnly] = capturedInserts as Array<{
       categoryId: number | null;
+      price: number;
     }>;
     expect(productInsertOnly).toHaveProperty('categoryId', null);
+    expect(productInsertOnly.price).toBe(11.5);
   });
 
   test('POST /add-product handles slicer API failure', async () => {
@@ -370,10 +372,11 @@ describe('Product Routes', () => {
     // First insert is product; second insert is batch insert of join rows
     expect(capturedInserts.length).toBe(2);
     const [productInsert, batchJoinInsert] = capturedInserts as unknown as [
-      { id?: number; categoryId: number | null },
+      { id?: number; categoryId: number | null; price: number },
       Array<{ productId: number; categoryId: number; orderIndex: number }>,
     ];
     expect(productInsert).toMatchObject({ categoryId: 2 });
+    expect(productInsert.price).toBe(15);
     // Batch insert should contain all three category joins
     expect(Array.isArray(batchJoinInsert)).toBe(true);
     expect(batchJoinInsert.length).toBe(3);
@@ -570,7 +573,7 @@ describe('Product Routes', () => {
         name: 'V2 Product',
         description: 'desc',
         stl: 'https://uploads.example.com/test-file.stl',
-        price: 15,
+        markupPercentage: 15,
         image: 'url/to/image.jpg',
         filamentType: 'PLA',
         color: '#ffffff',
@@ -588,6 +591,9 @@ describe('Product Routes', () => {
     expect(data.product).toMatchObject({
       id: 7,
       publicFileServiceId: 'file_123',
+    });
+    expect(capturedInserts[0]).toMatchObject({
+      price: 11.5,
     });
   });
 

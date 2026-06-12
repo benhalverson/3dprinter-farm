@@ -3,6 +3,10 @@
   "version": "0.0.0",
   "private": true,
   "scripts": {
+    "db:generate": "drizzle-kit generate",
+    "db:migrate:local": "drizzle-kit migrate",
+    "db:push:local": "drizzle-kit push",
+    "db:migrate:remote": "wrangler d1 migrations apply ecommerce --remote",
     "generate:project-notes": "node --disable-warning=ExperimentalWarning --experimental-default-type=module --experimental-strip-types tools/project-notes/generate-project-notes.ts",
     "validate:project-notes-pr": "node --disable-warning=ExperimentalWarning --experimental-default-type=module --experimental-strip-types tools/project-notes/validate-pr-notes.ts",
     "deploy": "wrangler deploy",
