@@ -36,7 +36,7 @@ import {
 const SlantDirectUploadResponseSchema = z.object({
   data: z.object({
     presignedUrl: z.string().min(1),
-    key: z.string().optional(),
+    key: z.string().min(1),
     filePlaceholder: FilePlaceholderSchema,
   }),
 });
