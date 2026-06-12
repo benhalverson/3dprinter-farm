@@ -186,6 +186,7 @@ const paymentsRouter = factory
               quantity: cart.quantity,
               color: cart.color,
               filamentType: cart.filamentType,
+              filamentId: cart.filamentId,
               productName: productsTable.name,
               stl: productsTable.stl,
             })
@@ -423,6 +424,7 @@ const paymentsRouter = factory
               quantity: cart.quantity,
               color: cart.color,
               filamentType: cart.filamentType,
+              filamentId: cart.filamentId,
               productName: productsTable.name,
               stl: productsTable.stl,
             })
