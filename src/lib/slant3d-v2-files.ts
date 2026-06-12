@@ -77,6 +77,10 @@ async function slant3DFileRequest<T>(
   body: unknown,
   errorMessage: string,
 ): Promise<T> {
+  if (!env.SLANT_API_V2) {
+    throw new Slant3DFileApiError('Missing SLANT_API_V2 environment variable.', 500);
+  }
+
   const response = await fetch(`${BASE_URL_V2}${path}`, {
     method: 'POST',
     headers: {
