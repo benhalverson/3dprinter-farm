@@ -185,7 +185,7 @@ const shoppingCart = factory
           (typeof cartItems)[number] & { publicFileServiceId: string }
         >;
 
-        // Build orderData array per API spec from each cart item.
+        // Build Slant3D V2 draft-order payload from each cart item.
         // Normalize colors to allowed enumeration expected by upstream API.
         const allowedColors = new Set([
           'black',
@@ -1136,7 +1136,10 @@ interface CartShippingItem {
 function hasPublicFileServiceId<T extends { publicFileServiceId?: string | null }>(
   item: T,
 ): item is T & { publicFileServiceId: string } {
-  return typeof item.publicFileServiceId === 'string' && item.publicFileServiceId.length > 0;
+  return (
+    typeof item.publicFileServiceId === 'string' &&
+    item.publicFileServiceId.trim().length > 0
+  );
 }
 
 function normalizeCountryCode(country: string | null | undefined): string {
