@@ -5,6 +5,12 @@ import { z } from 'zod';
 import { BASE_URL, BASE_URL_V2 } from '../constants';
 import { orderSchema, uploadedFilesTable } from '../db/schema';
 import factory from '../factory';
+import {
+  confirmSlant3DUpload,
+  createSlant3DDirectUpload,
+  estimateSlant3DFile,
+  Slant3DFileApiError,
+} from '../lib/slant3d-v2-files';
 import type {
   ErrorResponse,
   FilamentColorsResponse,
@@ -28,41 +34,7 @@ import {
   uploadFileDoc,
   v2UploadDoc,
 } from './docs/printer-docs';
-import {
-  FilePlaceholderSchema,
-  FilamentTypeSchema,
-} from './schemas/printer-schemas';
-
-const SlantDirectUploadResponseSchema = z.object({
-  data: z.object({
-    presignedUrl: z.string().min(1),
-    key: z.string().min(1),
-    filePlaceholder: FilePlaceholderSchema,
-  }),
-});
-
-const SlantConfirmUploadResponseSchema = z.object({
-  data: z.object({
-    publicFileServiceId: z.string().min(1),
-    name: z.string().min(1),
-    fileURL: z.string().min(1),
-    STLMetrics: z.unknown().optional(),
-  }),
-});
-
-const SlantEstimateResponseSchema = z.object({
-  data: z
-    .object({
-      total: z.number(),
-      pricePerUnit: z.number().optional(),
-      subtotal: z.number().optional(),
-      quantity: z.number().optional(),
-      filamentId: z.string().optional(),
-      slicer: z.record(z.string(), z.unknown()).optional(),
-      publicFileServiceId: z.string().optional(),
-    })
-    .passthrough(),
-});
+import { FilamentTypeSchema } from './schemas/printer-schemas';
 
 const printer = factory
   .createApp()
@@ -404,53 +376,33 @@ const printer = factory
       const DEFAULT_BLACK_FILAMENT_ID = '76fe1f79-3f1e-43e4-b8f4-61159de5b93c';
       const effectiveFilamentId = filamentId || DEFAULT_BLACK_FILAMENT_ID;
 
-      const estimateRequest = {
-        options: {
-          filamentId: effectiveFilamentId,
-          quantity: quantity,
-          ...(slicer && { slicer }),
-        },
+      const estimateOptions = {
+        filamentId: effectiveFilamentId,
+        quantity,
+        ...(slicer && { slicer }),
       };
 
       const estimateUrl = `${BASE_URL_V2}files/${publicFileServiceId}/estimate`;
       console.log('=== Slant3D Estimate Request ===');
       console.log('URL:', estimateUrl);
-      console.log('Body:', JSON.stringify(estimateRequest));
       console.log(
-        'Authorization:',
-        c.env.SLANT_API_V2 ? 'Bearer [REDACTED]' : 'MISSING!',
+        'Body:',
+        JSON.stringify({
+          options: estimateOptions,
+        }),
       );
 
-      const response = await fetch(estimateUrl, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${c.env.SLANT_API_V2}`,
-        },
-        body: JSON.stringify(estimateRequest),
-      });
-
-      console.log(
-        'Slant3D Response Status:',
-        response.status,
-        response.statusText,
-      );
-
-      if (!response.ok) {
-        let errorDetails: unknown;
-        let rawText = '';
-        try {
-          rawText = await response.text();
-          console.log('Raw error response:', rawText);
-          errorDetails = rawText ? JSON.parse(rawText) : {};
-        } catch (e) {
-          console.error('Error parsing Slant3D response:', e);
-          errorDetails = rawText || 'Failed to parse error body';
+      let estimateData;
+      try {
+        estimateData = await estimateSlant3DFile(c.env, publicFileServiceId, estimateOptions);
+      } catch (error: unknown) {
+        if (!(error instanceof Slant3DFileApiError)) {
+          throw error;
         }
 
         console.error('=== Slant3D Estimate Error ===');
-        console.error('Status:', response.status);
-        console.error('Error body:', errorDetails);
+        console.error('Status:', error.status);
+        console.error('Error body:', error.details);
         console.error('Possible causes:');
         console.error(
           '- publicFileServiceId does not exist:',
@@ -462,28 +414,24 @@ const printer = factory
         return c.json(
           {
             success: false,
-            error: 'Failed to estimate file price from Slant3D V2 API',
-            details: errorDetails,
-            publicFileServiceId: publicFileServiceId,
-            status: response.status,
+            error: error.message,
+            details: error.details,
+            publicFileServiceId,
+            status: error.status,
             hint:
-              response.status === 500
+              error.status === 500
                 ? 'File may not exist in Slant3D. Did you upload via /v2/presigned-upload and /v2/confirm?'
                 : 'Check request parameters',
           },
-          response.status === 400 ? 400 : 500,
+          error.status === 400 ? 400 : 500,
         );
       }
 
-      const estimateData = SlantEstimateResponseSchema.safeParse(
-        await response.json(),
-      );
-      if (!estimateData.success) {
+      if (typeof estimateData.total !== 'number') {
         return c.json(
           {
             success: false,
             error: 'Malformed estimate response from Slant3D V2 API',
-            details: estimateData.error.flatten(),
           },
           500,
         );
@@ -493,15 +441,15 @@ const printer = factory
       console.log('Response data:', JSON.stringify(estimateData));
 
       const normalizedEstimateData = {
-        ...estimateData.data.data,
+        ...estimateData,
         publicFileServiceId:
-          estimateData.data.data.publicFileServiceId ?? publicFileServiceId,
-        total: estimateData.data.data.total,
-        estimatedCost: estimateData.data.data.total,
-        quantity: estimateData.data.data.quantity ?? quantity,
-        filamentId: estimateData.data.data.filamentId ?? effectiveFilamentId,
+          estimateData.publicFileServiceId ?? publicFileServiceId,
+        total: estimateData.total,
+        estimatedCost: estimateData.total,
+        quantity: estimateData.quantity ?? quantity,
+        filamentId: estimateData.filamentId ?? effectiveFilamentId,
         slicer:
-          estimateData.data.data.slicer ??
+          estimateData.slicer ??
           (typeof slicer === 'object' && slicer !== null && !Array.isArray(slicer)
             ? (slicer as Record<string, unknown>)
             : undefined),
@@ -604,66 +552,34 @@ const printer = factory
           );
         }
 
-        // Request presigned URL from Slant3D V2 API
-        const presignedRequest = {
-          name: fileNameStr.replace(/\.stl$/i, ''),
-          platformId: c.env.SLANT_PLATFORM_ID,
-          ownerId: ownerId,
-        };
-
-        console.log('Presigned request:', JSON.stringify(presignedRequest));
+        console.log(
+          'Presigned request:',
+          JSON.stringify({
+            name: fileNameStr.replace(/\.stl$/i, ''),
+            platformId: c.env.SLANT_PLATFORM_ID,
+            ownerId,
+          }),
+        );
         console.log('Fetching from:', `${BASE_URL_V2}files/direct-upload`);
 
-        const slant3DResponse = await fetch(
-          `${BASE_URL_V2}files/direct-upload`,
-          {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              Authorization: `Bearer ${c.env.SLANT_API_V2}`,
-            },
-            body: JSON.stringify(presignedRequest),
-          },
-        );
+        const slant3DData = await createSlant3DDirectUpload(c.env, {
+          name: fileNameStr.replace(/\.stl$/i, ''),
+          ownerId,
+        });
 
-        console.log('Response status:', slant3DResponse.status);
-        console.log('Response ok:', slant3DResponse.ok);
-
-        if (!slant3DResponse.ok) {
-          let errorDetails: unknown;
-          const responseText = await slant3DResponse.text();
-          console.log('Response text:', responseText);
-          try {
-            errorDetails = JSON.parse(responseText);
-          } catch (_e) {
-            errorDetails = responseText;
-          }
-
-          return c.json(
-            {
-              success: false,
-              error: 'Failed to generate presigned URL from Slant3D V2 API',
-              details: errorDetails,
-              status: slant3DResponse.status,
-            },
-            500,
-          );
-        }
-
-        console.log('Response ok, parsing JSON...');
-        const slant3DData = SlantDirectUploadResponseSchema.safeParse(
-          await slant3DResponse.json(),
-        );
-        if (!slant3DData.success) {
+        if (
+          typeof slant3DData.presignedUrl !== 'string' ||
+          typeof slant3DData.key !== 'string'
+        ) {
           return c.json(
             {
               success: false,
               error: 'Malformed direct upload response from Slant3D V2 API',
-              details: slant3DData.error.flatten(),
             },
             500,
           );
         }
+
         console.log('Presigned URL obtained successfully');
 
         return c.json(
@@ -672,14 +588,26 @@ const printer = factory
             message:
               'Presigned URL generated successfully. Upload file to presignedUrl, then call /v2/confirm.',
             data: {
-              presignedUrl: slant3DData.data.data.presignedUrl,
-              key: slant3DData.data.data.key,
-              filePlaceholder: slant3DData.data.data.filePlaceholder,
+              presignedUrl: slant3DData.presignedUrl,
+              key: slant3DData.key,
+              filePlaceholder: slant3DData.filePlaceholder,
             },
           },
           200,
         );
       } catch (error: unknown) {
+        if (error instanceof Slant3DFileApiError) {
+          return c.json(
+            {
+              success: false,
+              error: error.message,
+              details: error.details,
+              status: error.status,
+            },
+            500,
+          );
+        }
+
         console.error('=== CATCH BLOCK ===');
         console.error('Presigned upload error:', error);
         console.error(
@@ -712,53 +640,13 @@ const printer = factory
         );
       }
 
-      // Confirm upload with Slant3D V2 API
-      const confirmRequest = {
-        filePlaceholder,
-      };
+      const slant3DData = await confirmSlant3DUpload(c.env, filePlaceholder);
 
-      const slant3DResponse = await fetch(
-        `${BASE_URL_V2}files/confirm-upload`,
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${c.env.SLANT_API_V2}`,
-          },
-          body: JSON.stringify(confirmRequest),
-        },
-      );
-
-      console.log('confirmation Response status:', slant3DResponse);
-
-      if (!slant3DResponse.ok) {
-        let errorDetails: unknown;
-        try {
-          errorDetails = await slant3DResponse.json();
-        } catch (e) {
-          console.error(`Error parsing Slant3D response:`, e);
-          errorDetails = await slant3DResponse.text();
-        }
-
-        return c.json(
-          {
-            success: false,
-            error: 'Failed to confirm upload with Slant3D V2 API',
-            details: errorDetails,
-          },
-          500,
-        );
-      }
-
-      const slant3DData = SlantConfirmUploadResponseSchema.safeParse(
-        await slant3DResponse.json(),
-      );
-      if (!slant3DData.success) {
+      if (!slant3DData.publicFileServiceId || !slant3DData.name || !slant3DData.fileURL) {
         return c.json(
           {
             success: false,
             error: 'Malformed confirm upload response from Slant3D V2 API',
-            details: slant3DData.error.flatten(),
           },
           500,
         );
@@ -769,15 +657,26 @@ const printer = factory
           success: true,
           message: 'Upload confirmed and file processed successfully',
           data: {
-            publicFileServiceId: slant3DData.data.data.publicFileServiceId,
-            name: slant3DData.data.data.name,
-            fileURL: slant3DData.data.data.fileURL,
-            STLMetrics: slant3DData.data.data.STLMetrics,
+            publicFileServiceId: slant3DData.publicFileServiceId,
+            name: slant3DData.name,
+            fileURL: slant3DData.fileURL,
+            STLMetrics: slant3DData.STLMetrics,
           },
         },
         200,
       );
     } catch (error: unknown) {
+      if (error instanceof Slant3DFileApiError) {
+        return c.json(
+          {
+            success: false,
+            error: error.message,
+            details: error.details,
+          },
+          500,
+        );
+      }
+
       console.error('Presigned confirm error:', error);
       return c.json(
         {
@@ -872,47 +771,41 @@ const printer = factory
       console.log('File size:', fileSize);
       console.log('User ID:', userId);
 
-      // Step 1: Request presigned upload URL via local endpoint
-      console.log('\nStep 1: Requesting presigned URL...');
-      const presignedLocalResponse = await fetch(
-        new URL('/v2/presigned-upload', c.req.url).toString(),
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            fileName: fileName,
-            ownerId: userId?.toString() || 'anonymous',
-          }),
-        },
-      );
-
-      if (!presignedLocalResponse.ok) {
-        const errorText = await presignedLocalResponse.text();
-        console.error('Presigned URL error:', errorText);
-        let errorDetails: unknown;
-        try {
-          errorDetails = JSON.parse(errorText);
-        } catch {
-          errorDetails = errorText;
-        }
+      if (!c.env.SLANT_PLATFORM_ID) {
         return c.json(
           {
             success: false,
-            error: 'Failed to get presigned URL',
-            details: errorDetails,
+            error: 'Missing SLANT_PLATFORM_ID environment variable.',
           },
           500,
         );
       }
 
-      const presignedData = (await presignedLocalResponse.json()) as {
-        success: boolean;
-        data: { presignedUrl: string; filePlaceholder: unknown; key: string };
-      };
+      // Step 1: Request presigned upload URL from Slant3D
+      console.log('\nStep 1: Requesting presigned URL...');
+      let presignedData;
+      try {
+        presignedData = await createSlant3DDirectUpload(c.env, {
+          name: fileName.replace(/\.stl$/i, ''),
+          ownerId: userId?.toString() || 'anonymous',
+        });
+      } catch (error: unknown) {
+        if (!(error instanceof Slant3DFileApiError)) {
+          throw error;
+        }
 
-      const { presignedUrl, filePlaceholder } = presignedData.data;
+        console.error('Presigned URL error:', error.details);
+        return c.json(
+          {
+            success: false,
+            error: 'Failed to get presigned URL',
+            details: error.details,
+          },
+          500,
+        );
+      }
+
+      const { presignedUrl, filePlaceholder } = presignedData;
       console.log('✓ Presigned URL obtained');
 
       // Step 2: Upload file to presigned URL (Slant3D's S3)
@@ -941,122 +834,70 @@ const printer = factory
 
       console.log(`✓ File uploaded to S3 (HTTP ${uploadResponse.status})`);
 
-      // Step 3: Confirm upload via local endpoint
+      // Step 3: Confirm upload with Slant3D
       console.log('\nStep 3: Confirming upload...');
-      const confirmLocalResponse = await fetch(
-        new URL('/v2/confirm', c.req.url).toString(),
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({ filePlaceholder }),
-        },
-      );
-
-      if (!confirmLocalResponse.ok) {
-        const errorText = await confirmLocalResponse.text();
-        console.error('Confirm upload error:', errorText);
-        let errorDetails: unknown;
-        try {
-          errorDetails = JSON.parse(errorText);
-        } catch {
-          errorDetails = errorText;
+      let confirmData;
+      try {
+        confirmData = await confirmSlant3DUpload(c.env, filePlaceholder);
+      } catch (error: unknown) {
+        if (!(error instanceof Slant3DFileApiError)) {
+          throw error;
         }
+
+        console.error('Confirm upload error:', error.details);
         return c.json(
           {
             success: false,
             error: 'Failed to confirm upload',
-            details: errorDetails,
+            details: error.details,
           },
           500,
         );
       }
 
-      const confirmData = (await confirmLocalResponse.json()) as {
-        success: boolean;
-        data: {
-          publicFileServiceId: string;
-          name: string;
-          fileURL: string;
-          STLMetrics: {
-            dimensionX: number;
-            dimensionY: number;
-            dimensionZ: number;
-            volume: number;
-            weight: number;
-            surfaceArea: number;
-          };
-        };
-      };
-
-      const { publicFileServiceId, fileURL, STLMetrics } = confirmData.data;
+      const { publicFileServiceId, fileURL, STLMetrics } = confirmData;
       console.log('✓ Upload confirmed');
       console.log('Public File Service ID:', publicFileServiceId);
 
-      // Step 4: Get estimate with default PLA BLACK, quantity 1 via local endpoint
+      // Step 4: Get estimate with default PLA BLACK, quantity 1 from Slant3D
       console.log('\nStep 4: Getting price estimate...');
       const defaultFilamentId = '76fe1f79-3f1e-43e4-b8f4-61159de5b93c'; // PLA BLACK
-      const estimateLocalResponse = await fetch(
-        new URL('/v2/estimate', c.req.url).toString(),
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            publicFileServiceId,
-            options: {
-              filamentId: defaultFilamentId,
-              quantity: 1,
-            },
-          }),
-        },
-      );
+      let estimateData;
+      try {
+        estimateData = await estimateSlant3DFile(c.env, publicFileServiceId, {
+          filamentId: defaultFilamentId,
+          quantity: 1,
+        });
+      } catch (error: unknown) {
+        if (!(error instanceof Slant3DFileApiError)) {
+          throw error;
+        }
 
-      if (!estimateLocalResponse.ok) {
-        const errorText = await estimateLocalResponse.text();
-        console.error('Estimate error:', errorText);
+        console.error('Estimate error:', error.details);
         return c.json(
           {
             success: false,
-            error: 'Failed to estimate file price from Slant3D V2 API',
-            details: errorText,
+            error: error.message,
+            details: error.details,
           },
           500,
         );
       }
 
-      const estimateData = (await estimateLocalResponse.json()) as {
-        success: boolean;
-        data?: {
-          estimatedCost?: number;
-          total?: number;
-          pricePerUnit?: number;
-          subtotal?: number;
-          quantity?: number;
-        };
-        error?: unknown;
-      };
-
       const costCandidate = [
-        estimateData.data?.estimatedCost,
-        estimateData.data?.total,
-        estimateData.data?.pricePerUnit,
-        estimateData.data?.subtotal,
+        estimateData.estimatedCost,
+        estimateData.total,
+        estimateData.pricePerUnit,
+        estimateData.subtotal,
       ].find(v => typeof v === 'number') as number | undefined;
 
-      if (!estimateData.success || typeof costCandidate !== 'number') {
+      if (typeof costCandidate !== 'number') {
         console.error('Estimate response missing cost:', estimateData);
         return c.json(
           {
             success: false,
             error: 'Failed to estimate file price from Slant3D V2 API',
-            details:
-              estimateData.error ??
-              (estimateData.success
-                ? 'Estimated cost not returned'
-                : 'Estimate call did not succeed'),
+            details: 'Estimated cost not returned',
           },
           500,
         );
