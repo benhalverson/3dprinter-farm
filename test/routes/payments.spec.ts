@@ -472,6 +472,39 @@ describe('Payments Routes', () => {
       });
     });
 
+    test('acknowledges unhandled Stripe events with the payments webhook response shape', async () => {
+      const unhandledEventPayload = {
+        type: 'charge.succeeded',
+        data: {
+          object: {
+            id: 'ch_test_123',
+          },
+        },
+      };
+
+      mockStripeWebhooks.constructEventAsync.mockResolvedValue(
+        unhandledEventPayload,
+      );
+
+      const res = await app.fetch(
+        new Request('http://localhost/webhook/stripe', {
+          method: 'POST',
+          headers: {
+            'stripe-signature': 'valid-signature',
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(unhandledEventPayload),
+        }),
+        env,
+      );
+
+      expect(res.status).toBe(200);
+      const data = (await res.json()) as any;
+      expect(data).toEqual({
+        received: true,
+      });
+    });
+
     test('handles network errors during order creation', async () => {
       // Mock cart and user data
       mockWhere
