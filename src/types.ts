@@ -66,6 +66,7 @@ export type Bindings = {
   ENCRYPTION_PASSPHRASE: string;
   R2_PUBLIC_BASE_URL: string;
   R2_PHOTO_BASE_URL: string;
+  SLANT_WEBHOOK_SECRET?: string;
 };
 
 export interface SliceResponse {

@@ -491,3 +491,78 @@ export const uploadedFilesTable = sqliteTable('uploaded_files', {
     .notNull()
     .default(sql`(unixepoch())`),
 });
+
+// ─── Order Lifecycle Tables ───────────────────────────────────────────────────
+
+export const orderStatusEnum = [
+  'DRAFT',
+  'PROCESSING',
+  'SHIPPED',
+  'DELIVERED',
+  'CANCELED',
+] as const;
+export type OrderStatus = (typeof orderStatusEnum)[number];
+
+export const ordersV2Table = sqliteTable('orders_v2', {
+  id: text('id').primaryKey(), // local UUID
+  orderNumber: text('order_number').notNull().unique(),
+  userId: text('user_id').references(() => users.id, { onDelete: 'set null' }),
+  cartId: text('cart_id'),
+
+  // Stripe identifiers
+  stripeCheckoutSessionId: text('stripe_checkout_session_id'),
+  stripePaymentIntentId: text('stripe_payment_intent_id'),
+  stripeEventId: text('stripe_event_id').unique(), // idempotency
+
+  // Slant3D identifier
+  slantPublicOrderId: text('slant_public_order_id'),
+
+  // Statuses
+  localStatus: text('local_status').notNull().default('DRAFT'),
+  slantStatus: text('slant_status'),
+
+  // Totals
+  totalAmountCents: integer('total_amount_cents'),
+  currency: text('currency').default('usd'),
+
+  // Item snapshot (JSON)
+  itemSnapshot: text('item_snapshot'), // JSON array of cart items at purchase
+
+  // Customer/shipping snapshot (JSON)
+  customerSnapshot: text('customer_snapshot'), // JSON with shipping/billing info
+
+  // Timestamps
+  createdAt: integer('created_at', { mode: 'timestamp' })
+    .notNull()
+    .default(sql`(unixepoch())`),
+  updatedAt: integer('updated_at', { mode: 'timestamp' })
+    .notNull()
+    .default(sql`(unixepoch())`),
+  processedAt: integer('processed_at', { mode: 'timestamp' }),
+  shippedAt: integer('shipped_at', { mode: 'timestamp' }),
+  deliveredAt: integer('delivered_at', { mode: 'timestamp' }),
+  canceledAt: integer('canceled_at', { mode: 'timestamp' }),
+});
+
+export const orderEventSourceEnum = [
+  'stripe',
+  'slant3d',
+  'admin',
+  'system',
+] as const;
+export type OrderEventSource = (typeof orderEventSourceEnum)[number];
+
+export const orderEventsTable = sqliteTable('order_events', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  orderId: text('order_id')
+    .notNull()
+    .references(() => ordersV2Table.id, { onDelete: 'cascade' }),
+  externalEventId: text('external_event_id'), // for idempotency
+  source: text('source').notNull(), // stripe | slant3d | admin | system
+  previousStatus: text('previous_status'),
+  nextStatus: text('next_status'),
+  metadata: text('metadata'), // JSON payload or summary
+  createdAt: integer('created_at', { mode: 'timestamp' })
+    .notNull()
+    .default(sql`(unixepoch())`),
+});
