@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import app from '../../src';
 import { mockAuth, mockBetterAuth } from '../mocks/auth';
-import { mockDrizzle, mockWhere, mockAll, mockInsert, mockUpdate } from '../mocks/drizzle';
+import { mockAll, mockDrizzle, mockInsert, mockWhere } from '../mocks/drizzle';
 import { mockEnv } from '../mocks/env';
 import { mockGlobalFetch } from '../mocks/fetch';
 
@@ -223,6 +223,21 @@ describe('Admin Orders API', () => {
       expect(res.status).toBe(403);
     });
 
+    test('returns 400 for invalid order ID', async () => {
+      mockAdminUser();
+
+      const res = await app.fetch(
+        new Request('http://localhost/admin/orders/not-a-number', {
+          headers: { Cookie: 'better-auth.session_token=mock-session-token' },
+        }),
+        env,
+      );
+
+      expect(res.status).toBe(400);
+      const body = await res.json();
+      expect(body.error).toBe('Invalid order ID');
+    });
+
     test('returns 404 for missing order', async () => {
       mockAdminUser();
 
@@ -337,6 +352,22 @@ describe('Admin Orders API', () => {
       );
 
       expect(res.status).toBe(403);
+    });
+
+    test('returns 400 for invalid order ID', async () => {
+      mockAdminUser();
+
+      const res = await app.fetch(
+        new Request('http://localhost/admin/orders/not-a-number/retry', {
+          method: 'POST',
+          headers: { Cookie: 'better-auth.session_token=mock-session-token' },
+        }),
+        env,
+      );
+
+      expect(res.status).toBe(400);
+      const body = await res.json();
+      expect(body.error).toBe('Invalid order ID');
     });
 
     test('returns 404 for missing order', async () => {
@@ -474,6 +505,25 @@ describe('Admin Orders API', () => {
       );
 
       expect(res.status).toBe(403);
+    });
+
+    test('returns 400 for invalid order ID', async () => {
+      mockAdminUser();
+
+      const res = await app.fetch(
+        new Request(
+          'http://localhost/admin/orders/not-a-number/resend-notification',
+          {
+            method: 'POST',
+            headers: { Cookie: 'better-auth.session_token=mock-session-token' },
+          },
+        ),
+        env,
+      );
+
+      expect(res.status).toBe(400);
+      const body = await res.json();
+      expect(body.error).toBe('Invalid order ID');
     });
 
     test('returns 404 for missing order', async () => {
