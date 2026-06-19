@@ -318,6 +318,27 @@ export const ordersTable = sqliteTable('ordersTable', {
   billToState: text('bill_to_state'),
   billToZip: text('bill_to_zip'),
   billToCountryISO: text('bill_to_country_iso'),
+
+  // Order lifecycle fields
+  status: text('status').default('pending'),
+  slantStatus: text('slant_status'),
+  slantPublicOrderId: text('slant_public_order_id'),
+  stripeCheckoutSessionId: text('stripe_checkout_session_id'),
+  stripePaymentIntentId: text('stripe_payment_intent_id'),
+  customerEmail: text('customer_email'),
+  createdAt: text('created_at').default(sql`CURRENT_TIMESTAMP`),
+  updatedAt: text('updated_at').default(sql`CURRENT_TIMESTAMP`),
+});
+
+export const orderEventsTable = sqliteTable('order_events', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  orderId: integer('order_id')
+    .notNull()
+    .references(() => ordersTable.id, { onDelete: 'cascade' }),
+  type: text('type').notNull(),
+  detail: text('detail'),
+  actor: text('actor'),
+  createdAt: text('created_at').default(sql`CURRENT_TIMESTAMP`).notNull(),
 });
 
 export const leadsSchema = z.object({
