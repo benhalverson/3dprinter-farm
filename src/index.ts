@@ -4,6 +4,7 @@ import { cors } from 'hono/cors';
 import { logger } from 'hono/logger';
 import { openAPISpecs } from 'hono-openapi';
 import factory from './factory';
+import adminOrders from './routes/adminOrders';
 import auth from './routes/auth';
 import email from './routes/email';
 import paymentsRouter from './routes/payments';
@@ -47,7 +48,8 @@ const app = factory
   .route('/', printer)
   .route('/', email)
   .route('/', paymentsRouter)
-  .route('/', shoppingCart);
+  .route('/', shoppingCart)
+  .route('/', adminOrders);
 
 app.get(
   '/open-api',

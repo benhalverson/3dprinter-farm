@@ -318,6 +318,27 @@ export const ordersTable = sqliteTable('ordersTable', {
   billToState: text('bill_to_state'),
   billToZip: text('bill_to_zip'),
   billToCountryISO: text('bill_to_country_iso'),
+
+  // Order lifecycle fields
+  status: text('status').default('pending'),
+  slantStatus: text('slant_status'),
+  slantPublicOrderId: text('slant_public_order_id'),
+  stripeCheckoutSessionId: text('stripe_checkout_session_id'),
+  stripePaymentIntentId: text('stripe_payment_intent_id'),
+  customerEmail: text('customer_email'),
+  createdAt: text('created_at').default(sql`CURRENT_TIMESTAMP`),
+  updatedAt: text('updated_at').default(sql`CURRENT_TIMESTAMP`),
+});
+
+export const orderEventsTable = sqliteTable('order_events', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  orderId: integer('order_id')
+    .notNull()
+    .references(() => ordersTable.id, { onDelete: 'cascade' }),
+  type: text('type').notNull(),
+  detail: text('detail'),
+  actor: text('actor'),
+  createdAt: text('created_at').default(sql`CURRENT_TIMESTAMP`).notNull(),
 });
 
 export const leadsSchema = z.object({
@@ -393,20 +414,34 @@ export const orderSchema = z
   })
   .strict();
 
-export const addProductSchema = z.object({
-  name: z.string(),
-  description: z.string(),
-  stl: z.string(),
-  price: z.number(),
-  filamentType: z.string(),
-  color: z.string(),
-  image: z.string(),
-  imageGallery: z.array(z.string()).min(1).optional(),
-  // Accept multiple categories on create; optional for now to support existing data
-  categoryIds: z.array(z.number().int()).optional(),
-  // Also allow a single categoryId for convenience (accept number or array)
-  categoryId: z.union([z.number().int(), z.array(z.number().int())]).optional(),
-});
+const markupPercentageSchema = z
+  .number()
+  .positive('Markup percentage must be greater than 0');
+
+export const addProductSchema = z
+  .object({
+    name: z.string(),
+    description: z.string(),
+    stl: z.string(),
+    price: markupPercentageSchema
+      .optional()
+      .describe('Deprecated alias for markupPercentage.'),
+    markupPercentage: markupPercentageSchema
+      .optional()
+      .describe('Percentage markup to apply to the Slant3D estimated cost.'),
+    filamentType: z.string(),
+    color: z.string(),
+    image: z.string(),
+    imageGallery: z.array(z.string()).min(1).optional(),
+    // Accept multiple categories on create; optional for now to support existing data
+    categoryIds: z.array(z.number().int()).optional(),
+    // Also allow a single categoryId for convenience (accept number or array)
+    categoryId: z.union([z.number().int(), z.array(z.number().int())]).optional(),
+  })
+  .refine(data => data.price !== undefined || data.markupPercentage !== undefined, {
+    message: 'Either price or markupPercentage is required',
+    path: ['markupPercentage'],
+  });
 
 export const updateProductSchema = z.object({
   id: z.number(),
@@ -441,7 +476,7 @@ export const addCartItemSchema = z.object({
   quantity: z.number().int().min(1).max(69),
   color: z.string(),
   filamentType: z.string(),
-  filamentId: z.string().uuid().optional().nullable(),
+  filamentId: z.string().uuid(),
 });
 
 export const stripeFulfillmentTable = sqliteTable('stripe_fulfillment', {

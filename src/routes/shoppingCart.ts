@@ -1,9 +1,9 @@
 import { zValidator } from '@hono/zod-validator';
-import { and, eq, isNull, or } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { describeRoute } from 'hono-openapi';
 import Stripe from 'stripe';
 import { z } from 'zod';
-import { BASE_URL, BASE_URL_V2 } from '../constants';
+import { BASE_URL_V2 } from '../constants';
 import {
   addCartItemSchema,
   cart,
@@ -12,11 +12,11 @@ import {
   users,
 } from '../db/schema';
 import factory from '../factory';
-import { authMiddleware, optionalAuthMiddleware } from '../utils/authMiddleware';
-import { generateOrderNumber } from '../utils/generateOrderNumber';
 import {
-  decryptStoredShippingProfile,
-} from '../utils/profileCrypto';
+  authMiddleware,
+  optionalAuthMiddleware,
+} from '../utils/authMiddleware';
+import { decryptStoredShippingProfile } from '../utils/profileCrypto';
 
 // Schema for update cart item
 const updateCartItemSchema = z.object({
@@ -57,7 +57,9 @@ const createCheckoutSchema = z.object({
 });
 
 /** Extracts the authenticated caller's user ID from Hono context, if present. */
-function getCallerUserId(c: { get: (key: string) => unknown }): string | undefined {
+function getCallerUserId(c: {
+  get: (key: string) => unknown;
+}): string | undefined {
   const payload = c.get('jwtPayload') as { id?: string } | undefined;
   return payload?.id ?? undefined;
 }
@@ -133,14 +135,8 @@ const shoppingCart = factory
           state,
           zipCode,
           country,
-          phone: decryptedPhone,
         } = await decryptStoredShippingProfile(userRow, passphrase);
         const decryptMs = performance.now() - decryptStart;
-        let phone = decryptedPhone;
-        // Sanitize phone - keep digits and leading +, enforce <=20 chars
-        phone = phone ? phone.replace(/[^+0-9]/g, '') : '';
-        if (phone.length > 20) phone = phone.slice(0, 20);
-        if (!phone) phone = '0000000000'; // fallback minimal placeholder if upstream requires
 
         // Pull cart contents and join products to enrich data.
         const cartQueryStart = performance.now();
@@ -152,6 +148,7 @@ const shoppingCart = factory
             quantity: cart.quantity,
             color: cart.color,
             filamentType: cart.filamentType,
+            filamentId: cart.filamentId,
             productName: productsTable.name,
             publicFileServiceId: productsTable.publicFileServiceId,
           })
@@ -168,7 +165,10 @@ const shoppingCart = factory
 
         // Enforce cart ownership: reject if the cart is owned by a different user.
         // Use != null (loose) to treat both null and undefined as "no owner".
-        if (cartItems[0].cartUserId != null && cartItems[0].cartUserId !== userId) {
+        if (
+          cartItems[0].cartUserId != null &&
+          cartItems[0].cartUserId !== userId
+        ) {
           return c.json({ error: 'Forbidden' }, 403);
         }
 
@@ -255,31 +255,36 @@ const shoppingCart = factory
         };
 
         const payloadBuildStart = performance.now();
+        if (!c.env.SLANT_PLATFORM_ID) {
+          return c.json(
+            { error: 'Missing SLANT_PLATFORM_ID environment variable.' },
+            500,
+          );
+        }
         const countryCode = normalizeCountryCode(country);
         const recipientName = `${firstName} ${lastName}`.trim() || email;
         const address = {
           name: recipientName,
-          street1: shippingAddress,
-          street2: '',
-          street3: '',
+          line1: shippingAddress,
+          line2: '',
           city,
           state,
-          zipCode,
+          zip: zipCode,
           country: countryCode,
-          isResidential: true,
         };
         const draftOrderPayload = {
-          orderNumber: generateOrderNumber(),
+          platformId: c.env.SLANT_PLATFORM_ID,
+          ownerId: userId,
           customer: {
-            email,
-            phone,
-            name: recipientName,
+            details: {
+              email,
+              address,
+            },
           },
-          billingAddress: address,
-          shippingAddress: address,
-          orderItems: printableCartItems.map(cartItem => {
+          items: printableCartItems.map(cartItem => {
             const filamentId =
-              typeof cartItem.filamentId === 'string' && cartItem.filamentId.trim()
+              typeof cartItem.filamentId === 'string' &&
+              cartItem.filamentId.trim()
                 ? cartItem.filamentId
                 : DEFAULT_PLA_BLACK_FILAMENT_ID;
             const normalizedColor = normalizeColor(cartItem.color);
@@ -290,13 +295,10 @@ const shoppingCart = factory
               });
             }
             return {
+              type: 'PRINT',
               publicFileServiceId: cartItem.publicFileServiceId,
               filamentId,
               quantity: cartItem.quantity,
-              orderItemName: cartItem.productName,
-              orderSku: cartItem.skuNumber,
-              orderItemColor: normalizedColor,
-              profile: cartItem.filamentType,
             };
           }),
         };
@@ -304,14 +306,36 @@ const shoppingCart = factory
 
         // Draft and estimate the order with Slant3D V2.
         const upstreamStart = performance.now();
-        const response = await fetch(`${BASE_URL_V2}orders`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: 'Bearer '.concat(c.env.SLANT_API_V2),
-          },
-          body: JSON.stringify(draftOrderPayload),
+        const upstreamUrl = `${BASE_URL_V2}orders`;
+        const upstreamHost = new URL(upstreamUrl).host;
+        console.log('cart/shipping upstream request', {
+          url: upstreamUrl,
+          host: upstreamHost,
+          hasSlantApiV2: Boolean(c.env.SLANT_API_V2),
+          cartId,
+          userId,
+          ...summarizeDraftOrderPayload(draftOrderPayload),
         });
+
+        let response: Response;
+        try {
+          response = await fetch(upstreamUrl, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: 'Bearer '.concat(c.env.SLANT_API_V2),
+            },
+            body: JSON.stringify(draftOrderPayload),
+          });
+        } catch (error) {
+          console.error('cart/shipping upstream fetch failed before response', {
+            url: upstreamUrl,
+            host: upstreamHost,
+            upstreamMs: Number((performance.now() - upstreamStart).toFixed(2)),
+            error: serializeError(error),
+          });
+          throw error;
+        }
         const upstreamMs = performance.now() - upstreamStart;
 
         const totalMs = Number((performance.now() - requestStart).toFixed(2));
@@ -325,8 +349,11 @@ const shoppingCart = factory
         };
 
         // Gate timing log on hot path to reduce overhead/log volume.
-        const sampleEnv = (c.env as any)?.CART_SHIPPING_TIMING_SAMPLE_RATE;
-        const sampleRate = typeof sampleEnv === 'string' ? Number(sampleEnv) : NaN;
+        const sampleEnv = (
+          c.env as { CART_SHIPPING_TIMING_SAMPLE_RATE?: unknown }
+        ).CART_SHIPPING_TIMING_SAMPLE_RATE;
+        const sampleRate =
+          typeof sampleEnv === 'string' ? Number(sampleEnv) : NaN;
         const isValidSampleRate =
           Number.isFinite(sampleRate) && sampleRate > 0 && sampleRate <= 1;
 
@@ -343,6 +370,11 @@ const shoppingCart = factory
           console.error(
             'Upstream draft order estimate error:',
             response.status,
+            {
+              url: upstreamUrl,
+              host: upstreamHost,
+              timings,
+            },
             errorDetails,
           );
           return c.json(
@@ -359,9 +391,19 @@ const shoppingCart = factory
         const shippingCost = extractShippingCost(data);
 
         if (shippingCost === undefined) {
+          console.error(
+            'cart/shipping upstream response missing shipping cost',
+            {
+              url: upstreamUrl,
+              host: upstreamHost,
+              timings,
+              response: data,
+            },
+          );
           return c.json(
             {
-              error: 'Upstream draft order estimate response missing shipping cost',
+              error:
+                'Upstream draft order estimate response missing shipping cost',
             },
             502,
           );
@@ -535,17 +577,17 @@ const shoppingCart = factory
     async c => {
       const { cartId, skuNumber, quantity, color, filamentType, filamentId } =
         c.req.valid('json');
+      console.log('POST /cart/add called with', {
+        cartId,
+        skuNumber,
+        quantity,
+        color,
+        filamentType,
+        filamentId,
+      });
 
       // Bind the cart item to the authenticated user when a session is present.
       const userId: string | null = getCallerUserId(c) ?? null;
-      const effectiveFilamentId = filamentId ?? DEFAULT_PLA_BLACK_FILAMENT_ID;
-      const filamentMatchCondition =
-        effectiveFilamentId === DEFAULT_PLA_BLACK_FILAMENT_ID
-          ? or(
-              eq(cart.filamentId, effectiveFilamentId),
-              isNull(cart.filamentId),
-            )
-          : eq(cart.filamentId, effectiveFilamentId);
 
       try {
         const existing = await c.var.db.query.cart.findFirst({
@@ -554,21 +596,25 @@ const shoppingCart = factory
             eq(cart.skuNumber, skuNumber),
             eq(cart.color, color),
             eq(cart.filamentType, filamentType),
-            filamentMatchCondition,
+            eq(cart.filamentId, filamentId),
           ),
         });
 
         if (existing) {
           // Enforce ownership: if the existing item has an owner, it must match the caller.
           // Use != null (loose) to treat both null and undefined as "no owner".
-          if (existing.userId != null && userId !== null && existing.userId !== userId) {
+          if (
+            existing.userId != null &&
+            userId !== null &&
+            existing.userId !== userId
+          ) {
             return c.json({ error: 'Forbidden' }, 403);
           }
           await c.var.db
             .update(cart)
             .set({
               quantity: existing.quantity + quantity,
-              filamentId: existing.filamentId ?? effectiveFilamentId,
+              filamentId,
             })
             .where(eq(cart.id, existing.id));
         } else {
@@ -579,12 +625,13 @@ const shoppingCart = factory
             quantity,
             color,
             filamentType,
-            filamentId: effectiveFilamentId,
+            filamentId,
           });
         }
 
         return c.json({ message: 'Item added to cart successfully' });
-      } catch (_error) {
+      } catch (error) {
+        console.error('POST /cart/add failed:', error);
         return c.json({ error: 'Failed to add item to cart' }, 500);
       }
     },
@@ -872,11 +919,17 @@ const shoppingCart = factory
     zValidator('json', createCheckoutSchema),
     async c => {
       const cartId = c.req.param('cartId');
-      const { successUrl, cancelUrl, customerEmail: bodyEmail, shippingAddress } =
-        c.req.valid('json');
+      const {
+        successUrl,
+        cancelUrl,
+        customerEmail: bodyEmail,
+        shippingAddress,
+      } = c.req.valid('json');
 
       // Extract userId and customerEmail from the authenticated session
-      const jwtPayload = c.get('jwtPayload') as { id?: string; email?: string } | undefined;
+      const jwtPayload = c.get('jwtPayload') as
+        | { id?: string; email?: string }
+        | undefined;
       const userId = jwtPayload?.id ? String(jwtPayload.id) : undefined;
       const customerEmail = bodyEmail ?? jwtPayload?.email;
 
@@ -1031,7 +1084,9 @@ const shoppingCart = factory
       if (!userId) {
         return c.json({ error: 'Unauthorized' }, 401);
       }
-      const jwtPayload = c.get('jwtPayload') as { id?: string; email?: string } | undefined;
+      const jwtPayload = c.get('jwtPayload') as
+        | { id?: string; email?: string }
+        | undefined;
       if (!customerEmail) {
         customerEmail = jwtPayload?.email;
       }
@@ -1150,9 +1205,9 @@ interface CartShippingItem {
   publicFileServiceId?: string | null;
 }
 
-function hasPublicFileServiceId<T extends { publicFileServiceId?: string | null }>(
-  item: T,
-): item is T & { publicFileServiceId: string } {
+function hasPublicFileServiceId<
+  T extends { publicFileServiceId?: string | null },
+>(item: T): item is T & { publicFileServiceId: string } {
   return (
     typeof item.publicFileServiceId === 'string' &&
     item.publicFileServiceId.trim().length > 0
@@ -1161,7 +1216,9 @@ function hasPublicFileServiceId<T extends { publicFileServiceId?: string | null 
 
 function normalizeCountryCode(country: string | null | undefined): string {
   const trimmed = country?.trim();
-  return trimmed && /^[A-Za-z]{2}$/.test(trimmed) ? trimmed.toUpperCase() : 'US';
+  return trimmed && /^[A-Za-z]{2}$/.test(trimmed)
+    ? trimmed.toUpperCase()
+    : 'US';
 }
 
 function extractShippingCost(response: DraftOrderResponse): number | undefined {
@@ -1171,15 +1228,18 @@ function extractShippingCost(response: DraftOrderResponse): number | undefined {
     ['shippingCost'],
     ['shipping_cost'],
     ['estimatedShippingCost'],
+    ['deliveryCost'],
     ['data', 'shippingCost'],
     ['data', 'shipping_cost'],
     ['data', 'estimatedShippingCost'],
+    ['data', 'deliveryCost'],
     ['data', 'shipping', 'shippingCost'],
     ['data', 'shipping', 'shipping_cost'],
     ['data', 'estimate', 'shippingCost'],
     ['data', 'estimate', 'shipping_cost'],
     ['data', 'estimatedCosts', 'shippingCost'],
     ['data', 'estimatedCosts', 'shipping_cost'],
+    ['data', 'order', 'deliveryCost'],
   ];
 
   for (const path of candidates) {
@@ -1220,7 +1280,72 @@ function toFiniteNumber(value: unknown): number | undefined {
   return undefined;
 }
 
-function parseUpstreamErrorDetails(errorText: string): string | Record<string, unknown> {
+function summarizeDraftOrderPayload(payload: {
+  platformId: string;
+  ownerId: string;
+  customer: {
+    details: {
+      email: string;
+      address: {
+        line1: string;
+        city: string;
+        state: string;
+        zip: string;
+        country: string;
+      };
+    };
+  };
+  items: Array<{
+    type: string;
+    publicFileServiceId: string;
+    filamentId: string;
+    quantity: number;
+  }>;
+}) {
+  return {
+    platformId: payload.platformId,
+    ownerId: payload.ownerId,
+    customer: {
+      hasEmail: payload.customer.details.email.length > 0,
+    },
+    shippingAddress: {
+      hasLine1: payload.customer.details.address.line1.length > 0,
+      cityPresent: payload.customer.details.address.city.length > 0,
+      state: payload.customer.details.address.state,
+      zip: payload.customer.details.address.zip,
+      country: payload.customer.details.address.country,
+    },
+    itemCount: payload.items.length,
+    items: payload.items.map(item => ({
+      type: item.type,
+      publicFileServiceId: item.publicFileServiceId,
+      filamentId: item.filamentId,
+      quantity: item.quantity,
+    })),
+  };
+}
+
+function serializeError(error: unknown): Record<string, unknown> {
+  if (error instanceof Error) {
+    const errorRecord = error as Error & {
+      cause?: unknown;
+      remote?: unknown;
+    };
+    return {
+      name: error.name,
+      message: error.message,
+      stack: error.stack,
+      cause: errorRecord.cause,
+      remote: errorRecord.remote,
+    };
+  }
+
+  return { value: String(error) };
+}
+
+function parseUpstreamErrorDetails(
+  errorText: string,
+): string | Record<string, unknown> {
   if (!errorText) {
     return '';
   }
