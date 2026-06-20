@@ -43,6 +43,13 @@
       "when": 1781900601152,
       "tag": "0005_salty_thunderbolt_ross",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1781170439429,
+      "tag": "0006_add_stripe_fulfillment",
+      "breakpoints": true
     }
   ]
 }

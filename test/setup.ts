@@ -225,7 +225,7 @@ vi.mock('drizzle-orm/d1', () => {
         }),
       }),
       delete: () => ({
-        where: () => mocks.drizzle.mockDelete,
+        where: () => mocks.drizzle.mockDelete(),
       }),
       query: mocks.drizzle.mockQuery,
     })),

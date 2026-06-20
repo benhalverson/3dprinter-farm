@@ -479,6 +479,21 @@ export const addCartItemSchema = z.object({
   filamentId: z.string().uuid(),
 });
 
+export const stripeFulfillmentTable = sqliteTable('stripe_fulfillment', {
+  idempotencyKey: text('idempotency_key').primaryKey(),
+  stripeEventId: text('stripe_event_id').notNull(),
+  stripeObjectId: text('stripe_object_id').notNull(),
+  cartId: text('cart_id').notNull(),
+  status: text('status').notNull().default('processed'),
+  slantOrderId: text('slant_order_id'),
+  createdAt: integer('created_at', { mode: 'timestamp' })
+    .notNull()
+    .default(sql`(unixepoch())`),
+  updatedAt: integer('updated_at', { mode: 'timestamp' })
+    .notNull()
+    .default(sql`(unixepoch())`),
+});
+
 // Table for storing uploaded STL files with estimates from Slant3D
 export const uploadedFilesTable = sqliteTable('uploaded_files', {
   id: integer('id').primaryKey({ autoIncrement: true }),

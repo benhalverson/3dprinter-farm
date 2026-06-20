@@ -3,6 +3,8 @@ import app from '../../src/index';
 import type { PaymentStatusResponse } from '../../src/types';
 import { mockAuth } from '../mocks/auth';
 import {
+  capturedInserts,
+  mockDelete,
   mockDrizzle,
   mockInsert,
   mockUpdate,
@@ -86,8 +88,10 @@ describe('Payments Routes', () => {
     mockWhere.mockReset();
     mockInsert.mockReset();
     mockUpdate.mockReset();
+    mockDelete.mockReset();
     mockStripeCreate.mockReset();
     mockStripeWebhooks.constructEventAsync.mockReset();
+    capturedInserts.length = 0;
 
     // Default fetch mock for external APIs
     global.fetch = vi.fn();
@@ -150,64 +154,92 @@ describe('Payments Routes', () => {
   });
 
   describe('POST /webhook/stripe', () => {
-    const mockWebhookPayload = {
+    const defaultFilamentId = '76fe1f79-3f1e-43e4-b8f4-61159de5b93c';
+    const checkoutSessionPayload = {
+      id: 'evt_checkout_123',
       type: 'checkout.session.completed',
       data: {
         object: {
           id: 'cs_test_123',
+          payment_intent: 'pi_test_123',
           metadata: {
             cartId: mockCartId,
             userId: mockUserId.toString(),
           },
+          customer_details: {
+            email: 'checkout@example.com',
+          },
         },
       },
+    };
+    const paymentIntentPayload = {
+      id: 'evt_payment_intent_123',
+      type: 'payment_intent.succeeded',
+      data: {
+        object: {
+          id: 'pi_test_123',
+          metadata: {
+            cartId: mockCartId,
+            userId: mockUserId.toString(),
+            customerEmail: 'intent@example.com',
+          },
+          receipt_email: 'intent@example.com',
+        },
+      },
+    };
+
+    const mockCartItem = (overrides: Record<string, unknown> = {}) => ({
+      id: 1,
+      skuNumber: 'TEST-SKU-001',
+      quantity: 2,
+      color: '#ff0000',
+      filamentType: 'PLA',
+      filamentId: '11111111-1111-4111-8111-111111111111',
+      productName: 'Test Product',
+      publicFileServiceId: 'file-service-123',
+      ...overrides,
+    });
+
+    const mockUserRow = {
+      id: mockUserId,
+      email: 'encrypted-test@example.com',
+      firstName: 'encrypted-John',
+      lastName: 'encrypted-Doe',
+      shippingAddress: 'encrypted-123 Main St',
+      city: 'encrypted-Test City',
+      state: 'encrypted-TS',
+      zipCode: 'encrypted-12345',
+      phone: 'encrypted-555-0123',
     };
 
     beforeEach(() => {
       // Mock successful webhook signature verification (async)
       mockStripeWebhooks.constructEventAsync.mockResolvedValue(
-        mockWebhookPayload,
+        checkoutSessionPayload,
       );
     });
 
-    test('processes successful payment webhook', async () => {
-      // Mock cart items query
-      mockWhere.mockResolvedValueOnce([
+    test('processes checkout session webhooks through Slant V2', async () => {
+      mockWhere
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([mockCartItem()])
+        .mockResolvedValueOnce([mockUserRow]);
+      mockInsert.mockResolvedValueOnce([
         {
-          id: 1,
-          skuNumber: 'TEST-SKU-001',
-          quantity: 2,
-          color: '#ff0000',
-          filamentType: 'PLA',
-          productName: 'Test Product',
-          stl: 'http://example.com/test.stl',
+          idempotencyKey: 'pi_test_123',
         },
       ]);
-
-      // Mock user query
-      mockWhere.mockResolvedValueOnce([
-        {
-          id: mockUserId,
-          email: 'encrypted-test@example.com',
-          firstName: 'encrypted-John',
-          lastName: 'encrypted-Doe',
-          shippingAddress: 'encrypted-123 Main St',
-          city: 'encrypted-Test City',
-          state: 'encrypted-TS',
-          zipCode: 'encrypted-12345',
-          phone: 'encrypted-555-0123',
-        },
-      ]);
-
-      // Mock successful Slant3D API response
-      (global.fetch as any).mockResolvedValueOnce({
-        ok: true,
-        json: () => Promise.resolve({ orderId: 'slant3d-order-123' }),
-      });
-
-      // Mock cart deletion
-      const mockDelete = vi.fn().mockResolvedValue({ changes: 1 });
-      mockWhere.mockResolvedValueOnce({ delete: mockDelete });
+      mockDelete.mockResolvedValueOnce({ changes: 1 });
+      (global.fetch as any)
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () =>
+            Promise.resolve({ data: { publicOrderId: 'slant3d-order-123' } }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () => Promise.resolve({ success: true }),
+        });
 
       const res = await app.fetch(
         new Request('http://localhost/webhook/stripe', {
@@ -216,7 +248,7 @@ describe('Payments Routes', () => {
             'stripe-signature': 'valid-signature',
             'Content-Type': 'application/json',
           },
-          body: JSON.stringify(mockWebhookPayload),
+          body: JSON.stringify(checkoutSessionPayload),
         }),
         env,
       );
@@ -227,26 +259,92 @@ describe('Payments Routes', () => {
         success: true,
         orderId: 'slant3d-order-123',
       });
-
-      // Verify Stripe webhook signature was verified
       expect(mockStripeWebhooks.constructEventAsync).toHaveBeenCalledWith(
-        JSON.stringify(mockWebhookPayload),
+        JSON.stringify(checkoutSessionPayload),
         'valid-signature',
         'whsec_123',
       );
-
-      // Verify Slant3D API was called
-      expect(global.fetch).toHaveBeenCalledWith(
-        expect.stringContaining('estimate'),
+      expect(global.fetch).toHaveBeenCalledTimes(2);
+      expect(global.fetch).toHaveBeenNthCalledWith(
+        1,
+        'https://slant3dapi.com/v2/api/orders',
         expect.objectContaining({
           method: 'POST',
-          headers: {
+          headers: expect.objectContaining({
             'Content-Type': 'application/json',
-            'api-key': 'fake-api-key',
-          },
-          body: expect.stringContaining('test@example.com'),
+            Authorization: expect.any(String),
+          }),
         }),
       );
+      expect(global.fetch).toHaveBeenNthCalledWith(
+        2,
+        'https://slant3dapi.com/v2/api/orders/slant3d-order-123',
+        expect.objectContaining({
+          method: 'POST',
+        }),
+      );
+
+      const draftBody = JSON.parse((global.fetch as any).mock.calls[0][1].body);
+      expect(draftBody.items[0]).toMatchObject({
+        publicFileServiceId: 'file-service-123',
+        filamentId: '11111111-1111-4111-8111-111111111111',
+        quantity: 2,
+      });
+
+      const processBody = JSON.parse(
+        (global.fetch as any).mock.calls[1][1].body,
+      );
+      expect(processBody.metadata.idempotencyKey).toBe('pi_test_123');
+      expect(JSON.stringify(processBody)).not.toContain('publicPaymentServiceId');
+      expect(mockDelete).toHaveBeenCalledTimes(1);
+      expect(capturedInserts).toHaveLength(1);
+    });
+
+    test('processes payment intent webhooks and falls back to the default filament', async () => {
+      mockStripeWebhooks.constructEventAsync.mockResolvedValue(
+        paymentIntentPayload,
+      );
+      mockWhere
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([mockCartItem({ filamentId: null })])
+        .mockResolvedValueOnce([mockUserRow]);
+      mockInsert.mockResolvedValueOnce([
+        {
+          idempotencyKey: 'pi_test_123',
+        },
+      ]);
+      mockDelete.mockResolvedValueOnce({ changes: 1 });
+      (global.fetch as any)
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () =>
+            Promise.resolve({ data: { publicOrderId: 'slant3d-order-456' } }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () => Promise.resolve({ success: true }),
+        });
+
+      const res = await app.fetch(
+        new Request('http://localhost/webhook/stripe', {
+          method: 'POST',
+          headers: {
+            'stripe-signature': 'valid-signature',
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(paymentIntentPayload),
+        }),
+        env,
+      );
+
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({
+        success: true,
+        orderId: 'slant3d-order-456',
+      });
+
+      const draftBody = JSON.parse((global.fetch as any).mock.calls[0][1].body);
+      expect(draftBody.items[0].filamentId).toBe(defaultFilamentId);
     });
 
     test('returns error when signature is missing', async () => {
@@ -256,7 +354,7 @@ describe('Payments Routes', () => {
           headers: {
             'Content-Type': 'application/json',
           },
-          body: JSON.stringify(mockWebhookPayload),
+          body: JSON.stringify(checkoutSessionPayload),
         }),
         env,
       );
@@ -280,7 +378,7 @@ describe('Payments Routes', () => {
             'stripe-signature': 'invalid-signature',
             'Content-Type': 'application/json',
           },
-          body: JSON.stringify(mockWebhookPayload),
+          body: JSON.stringify(checkoutSessionPayload),
         }),
         env,
       );
@@ -294,6 +392,7 @@ describe('Payments Routes', () => {
 
     test('returns error when metadata is missing', async () => {
       const incompletePayload = {
+        id: 'evt_checkout_missing',
         type: 'checkout.session.completed',
         data: {
           object: {
@@ -326,9 +425,10 @@ describe('Payments Routes', () => {
       });
     });
 
-    test('returns error when cart is not found', async () => {
-      // Mock empty cart
-      mockWhere.mockResolvedValueOnce([]);
+    test('returns error when publicFileServiceId is missing', async () => {
+      mockWhere
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([mockCartItem({ publicFileServiceId: null })]);
 
       const res = await app.fetch(
         new Request('http://localhost/webhook/stripe', {
@@ -337,35 +437,56 @@ describe('Payments Routes', () => {
             'stripe-signature': 'valid-signature',
             'Content-Type': 'application/json',
           },
-          body: JSON.stringify(mockWebhookPayload),
+          body: JSON.stringify(checkoutSessionPayload),
         }),
         env,
       );
 
-      expect(res.status).toBe(404);
+      expect(res.status).toBe(400);
       const data = (await res.json()) as any;
       expect(data).toEqual({
-        error: 'Cart not found',
+        error: 'Missing publicFileServiceId',
       });
+      expect(global.fetch).not.toHaveBeenCalled();
+      expect(mockDelete).not.toHaveBeenCalled();
     });
 
-    test('returns error when user is not found', async () => {
-      // Mock cart items
+    test('returns error when filamentId is invalid', async () => {
+      mockWhere
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([
+          mockCartItem({ filamentId: 'not-a-uuid' }),
+        ]);
+
+      const res = await app.fetch(
+        new Request('http://localhost/webhook/stripe', {
+          method: 'POST',
+          headers: {
+            'stripe-signature': 'valid-signature',
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(checkoutSessionPayload),
+        }),
+        env,
+      );
+
+      expect(res.status).toBe(400);
+      expect(await res.json()).toEqual({
+        error: 'Invalid filamentId',
+      });
+      expect(global.fetch).not.toHaveBeenCalled();
+      expect(mockDelete).not.toHaveBeenCalled();
+    });
+
+    test('does not create duplicate Slant orders for retried webhooks', async () => {
       mockWhere.mockResolvedValueOnce([
         {
-          id: 1,
-          skuNumber: 'TEST-SKU-001',
-          quantity: 1,
-          color: '#000000',
-          filamentType: 'PLA',
-          productName: 'Test Product',
-          stl: 'http://example.com/test.stl',
+          idempotencyKey: 'pi_test_123',
+          status: 'processed',
+          slantOrderId: 'slant3d-order-existing',
         },
       ]);
 
-      // Mock empty user result
-      mockWhere.mockResolvedValueOnce([]);
-
       const res = await app.fetch(
         new Request('http://localhost/webhook/stripe', {
           method: 'POST',
@@ -373,103 +494,18 @@ describe('Payments Routes', () => {
             'stripe-signature': 'valid-signature',
             'Content-Type': 'application/json',
           },
-          body: JSON.stringify(mockWebhookPayload),
-        }),
-        env,
-      );
-
-      expect(res.status).toBe(404);
-      const data = (await res.json()) as any;
-      expect(data).toEqual({
-        error: 'User not found',
-      });
-    });
-
-    test('returns error when Slant3D API fails', async () => {
-      // Mock cart and user data
-      mockWhere
-        .mockResolvedValueOnce([
-          {
-            id: 1,
-            skuNumber: 'TEST-SKU-001',
-            quantity: 1,
-            color: '#000000',
-            filamentType: 'PLA',
-            productName: 'Test Product',
-            stl: 'http://example.com/test.stl',
-          },
-        ])
-        .mockResolvedValueOnce([
-          {
-            id: mockUserId,
-            email: 'encrypted-test@example.com',
-            firstName: 'encrypted-John',
-            lastName: 'encrypted-Doe',
-            shippingAddress: 'encrypted-123 Main St',
-            city: 'encrypted-Test City',
-            state: 'encrypted-TS',
-            zipCode: 'encrypted-12345',
-            phone: 'encrypted-555-0123',
-          },
-        ]);
-
-      // Mock failed Slant3D API response
-      (global.fetch as any).mockResolvedValueOnce({
-        ok: false,
-        status: 500,
-        text: () => Promise.resolve('Internal Server Error'),
-      });
-
-      const res = await app.fetch(
-        new Request('http://localhost/webhook/stripe', {
-          method: 'POST',
-          headers: {
-            'stripe-signature': 'valid-signature',
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify(mockWebhookPayload),
-        }),
-        env,
-      );
-
-      expect(res.status).toBe(502);
-      const data = (await res.json()) as any;
-      expect(data).toEqual({
-        error: 'Order creation failed',
-      });
-    });
-
-    test('acknowledges non-checkout events', async () => {
-      const nonCheckoutPayload = {
-        type: 'payment_intent.succeeded',
-        data: {
-          object: {
-            id: 'pi_test_123',
-          },
-        },
-      };
-
-      mockStripeWebhooks.constructEventAsync.mockResolvedValue(
-        nonCheckoutPayload,
-      );
-
-      const res = await app.fetch(
-        new Request('http://localhost/webhook/stripe', {
-          method: 'POST',
-          headers: {
-            'stripe-signature': 'valid-signature',
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify(nonCheckoutPayload),
+          body: JSON.stringify(checkoutSessionPayload),
         }),
         env,
       );
 
       expect(res.status).toBe(200);
-      const data = (await res.json()) as any;
-      expect(data).toEqual({
-        received: true,
+      expect(await res.json()).toEqual({
+        success: true,
+        orderId: 'slant3d-order-existing',
       });
+      expect(global.fetch).not.toHaveBeenCalled();
+      expect(mockDelete).not.toHaveBeenCalled();
     });
 
     test('acknowledges unhandled Stripe events with the payments webhook response shape', async () => {
@@ -505,36 +541,18 @@ describe('Payments Routes', () => {
       });
     });
 
-    test('handles network errors during order creation', async () => {
-      // Mock cart and user data
+    test('does not clear the cart when Slant draft creation fails', async () => {
       mockWhere
+        .mockResolvedValueOnce([])
         .mockResolvedValueOnce([
-          {
-            id: 1,
-            skuNumber: 'TEST-SKU-001',
-            quantity: 1,
-            color: '#000000',
-            filamentType: 'PLA',
-            productName: 'Test Product',
-            stl: 'http://example.com/test.stl',
-          },
+          mockCartItem(),
         ])
-        .mockResolvedValueOnce([
-          {
-            id: mockUserId,
-            email: 'encrypted-test@example.com',
-            firstName: 'encrypted-John',
-            lastName: 'encrypted-Doe',
-            shippingAddress: 'encrypted-123 Main St',
-            city: 'encrypted-Test City',
-            state: 'encrypted-TS',
-            zipCode: 'encrypted-12345',
-            phone: 'encrypted-555-0123',
-          },
-        ]);
+        .mockResolvedValueOnce([mockUserRow]);
 
-      // Mock network error
-      (global.fetch as any).mockRejectedValueOnce(new Error('Network error'));
+      (global.fetch as any).mockResolvedValueOnce({
+        ok: false,
+        status: 500,
+      });
 
       const res = await app.fetch(
         new Request('http://localhost/webhook/stripe', {
@@ -543,16 +561,51 @@ describe('Payments Routes', () => {
             'stripe-signature': 'valid-signature',
             'Content-Type': 'application/json',
           },
-          body: JSON.stringify(mockWebhookPayload),
+          body: JSON.stringify(checkoutSessionPayload),
         }),
         env,
       );
 
-      expect(res.status).toBe(500);
-      const data = (await res.json()) as any;
-      expect(data).toEqual({
-        error: 'Order creation failed',
+      expect(res.status).toBe(502);
+      expect(await res.json()).toEqual({
+        error: 'Order draft failed',
       });
+      expect(mockDelete).not.toHaveBeenCalled();
+    });
+
+    test('does not clear the cart when Slant order processing fails', async () => {
+      mockWhere
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([mockCartItem()])
+        .mockResolvedValueOnce([mockUserRow]);
+      (global.fetch as any)
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () =>
+            Promise.resolve({ data: { publicOrderId: 'slant3d-order-789' } }),
+        })
+        .mockResolvedValueOnce({
+          ok: false,
+          status: 500,
+        });
+
+      const res = await app.fetch(
+        new Request('http://localhost/webhook/stripe', {
+          method: 'POST',
+          headers: {
+            'stripe-signature': 'valid-signature',
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(checkoutSessionPayload),
+        }),
+        env,
+      );
+
+      expect(res.status).toBe(502);
+      expect(await res.json()).toEqual({
+        error: 'Order process failed',
+      });
+      expect(mockDelete).not.toHaveBeenCalled();
     });
   });
 });
