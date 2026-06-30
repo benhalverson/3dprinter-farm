@@ -28,7 +28,7 @@
     "@vitest/snapshot": "3.2.6",
     "drizzle-kit": "^0.31.0",
     "typescript": "^5.5.2",
-    "vite": "6.4.2",
+    "vite": "6.4.3",
     "vitest": "3.2.6",
     "wrangler": "^4.13.2"
   },
