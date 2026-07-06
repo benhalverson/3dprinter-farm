@@ -300,10 +300,16 @@ describe('Printer V2 Routes', () => {
       const response = await app.fetch(request, env);
       const data = await response.json();
 
-      expect(response.status).toBe(500);
+      expect(response.status).toBe(502);
       expect(data.success).toBe(false);
-      expect(data.error).toBe('Failed to estimate file price');
-      expect(data.details).toBe('Network error');
+      expect(data.error).toBe(
+        'Failed to estimate file price from Slant3D V2 API',
+      );
+      expect(data.details).toEqual({
+        url: `https://slant3dapi.com/v2/api/files/${validPublicFileServiceId}/estimate`,
+        cause: 'Network error',
+      });
+      expect(data.status).toBe(502);
     });
 
     test('should handle malformed response from Slant3D API', async () => {
@@ -333,7 +339,9 @@ describe('Printer V2 Routes', () => {
 
       expect(response.status).toBe(500);
       expect(data.success).toBe(false);
-      expect(data.error).toBe('Malformed estimate response from Slant3D V2 API');
+      expect(data.error).toBe(
+        'Malformed estimate response from Slant3D V2 API',
+      );
     });
 
     test('should handle malformed error response from Slant3D API', async () => {

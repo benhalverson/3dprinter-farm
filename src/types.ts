@@ -19,8 +19,10 @@ import type { orderSchema } from './db/schema';
  *  - RATE_LIMIT_KV     – KV namespace used by the rate-limiting middleware
  *  - SLANT_API         – Slant3D v1 API key
  *  - SLANT_API_V2      – Slant3D v2 API bearer token
+ *  - SLANT_API_V2_BASE_URL – Optional override for the Slant3D v2 API origin
  *  - SLANT_PLATFORM_ID – Slant3D platform identifier
  *  - STRIPE_SECRET_KEY / STRIPE_WEBHOOK_SECRET – Stripe credentials
+ *  - SLANT_WEBHOOK_SECRET – Optional Slant3D platform webhook shared secret
  *  - DOMAIN            – Public base URL (e.g. https://rc-store.benhalverson.dev)
  *  - JWT_SECRET        – Secret for JWT signing
  *  - BETTER_AUTH_SECRET – Secret for Better Auth sessions (≥ 32 chars)
@@ -37,7 +39,9 @@ export type Bindings = {
   PHOTO_BUCKET: R2Bucket;
   SLANT_API: string;
   SLANT_API_V2: string;
+  SLANT_API_V2_BASE_URL?: string;
   SLANT_PLATFORM_ID: string;
+  SLANT_WEBHOOK_SECRET?: string;
   STRIPE_SECRET_KEY: string;
   STRIPE_WEBHOOK_SECRET: string;
   DOMAIN: string;

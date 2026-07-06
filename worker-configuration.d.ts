@@ -20,6 +20,7 @@ declare namespace Cloudflare {
 		RP_NAME: string;
 		SLANT_API: string;
 		SLANT_API_V2: string;
+		SLANT_API_V2_BASE_URL: string;
 		SLANT_PLATFORM_ID: string;
 		ENCRYPTION_PASSPHRASE: string;
 		R2_PUBLIC_BASE_URL: string;

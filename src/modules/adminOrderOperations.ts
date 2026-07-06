@@ -243,8 +243,8 @@ function createDrizzleAdminOrderReadAdapter(
       return { ...order, events };
     },
 
-    getLifecycle(orderId) {
-      return db
+    async getLifecycle(orderId) {
+      const lifecycle = await db
         .select({
           id: ordersTable.id,
           status: ordersTable.status,
@@ -253,6 +253,8 @@ function createDrizzleAdminOrderReadAdapter(
         .from(ordersTable)
         .where(eq(ordersTable.id, orderId))
         .get();
+
+      return lifecycle ?? null;
     },
   };
 }

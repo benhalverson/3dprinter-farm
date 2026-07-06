@@ -296,7 +296,7 @@ describe('POST /v2/presigned-upload', () => {
     const response = await app.fetch(request, env);
     const data = await response.json();
 
-    expect(response.status).toBe(500);
+    expect(response.status).toBe(403);
     expect(data.success).toBe(false);
     expect(data.error).toBe(
       'Failed to generate presigned URL from Slant3D V2 API',
@@ -322,10 +322,16 @@ describe('POST /v2/presigned-upload', () => {
     const response = await app.fetch(request, env);
     const data = await response.json();
 
-    expect(response.status).toBe(500);
+    expect(response.status).toBe(502);
     expect(data.success).toBe(false);
-    expect(data.error).toBe('Failed to generate presigned URL');
-    expect(data.details).toBe('Network error');
+    expect(data.error).toBe(
+      'Failed to generate presigned URL from Slant3D V2 API',
+    );
+    expect(data.details).toEqual({
+      url: 'https://slant3dapi.com/v2/api/files/direct-upload',
+      cause: 'Network error',
+    });
+    expect(data.status).toBe(502);
   });
 
   test('should handle invalid JSON response from Slant3D API', async () => {

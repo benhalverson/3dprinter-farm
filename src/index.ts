@@ -1,12 +1,13 @@
 import { Scalar } from '@scalar/hono-api-reference';
-import { createAuth } from '../lib/auth';
 import { cors } from 'hono/cors';
 import { logger } from 'hono/logger';
 import { openAPISpecs } from 'hono-openapi';
+import { createAuth } from '../lib/auth';
 import factory from './factory';
 import adminOrders from './routes/adminOrders';
 import auth from './routes/auth';
 import email from './routes/email';
+import ordersRouter from './routes/orders';
 import paymentsRouter from './routes/payments';
 import printer from './routes/printer';
 import product from './routes/product';
@@ -49,6 +50,7 @@ const app = factory
   .route('/', email)
   .route('/', paymentsRouter)
   .route('/', shoppingCart)
+  .route('/', ordersRouter)
   .route('/', adminOrders);
 
 app.get(

@@ -8,6 +8,7 @@ export function mockEnv(): Bindings {
     SLANT_API: 'fake-api-key',
     SLANT_API_V2: 'fake-api-key-v2',
     SLANT_PLATFORM_ID: 'test-platform-id',
+    SLANT_WEBHOOK_SECRET: 'test-slant-webhook-secret',
     BUCKET: {} as R2Bucket,
     PHOTO_BUCKET: {} as R2Bucket,
     STRIPE_SECRET_KEY: 'sk_test_123',

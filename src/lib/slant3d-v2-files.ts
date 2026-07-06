@@ -1,4 +1,4 @@
-import { BASE_URL_V2 } from '../constants';
+import { slantV2Url } from '../constants';
 import type { Bindings } from '../types';
 
 export type Slant3DFilePlaceholder = {
@@ -58,9 +58,7 @@ export class Slant3DFileApiError extends Error {
 }
 
 async function parseResponseDetails(response: Response): Promise<unknown> {
-  try {
-    return await response.json();
-  } catch {
+  if (typeof response.text === 'function') {
     try {
       const text = await response.text();
       if (!text) return {};
@@ -70,9 +68,23 @@ async function parseResponseDetails(response: Response): Promise<unknown> {
         return text;
       }
     } catch {
+      // Fall through to json() for lightweight test doubles that only mock json().
+    }
+  }
+
+  if (typeof response.json === 'function') {
+    try {
+      return await response.json();
+    } catch {
       return {};
     }
   }
+
+  return {};
+}
+
+function formatErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 async function slant3DFileRequest<T>(
@@ -82,17 +94,29 @@ async function slant3DFileRequest<T>(
   errorMessage: string,
 ): Promise<T> {
   if (!env.SLANT_API_V2) {
-    throw new Slant3DFileApiError('Missing SLANT_API_V2 environment variable.', 500);
+    throw new Slant3DFileApiError(
+      'Missing SLANT_API_V2 environment variable.',
+      500,
+    );
   }
 
-  const response = await fetch(`${BASE_URL_V2}${path}`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: 'Bearer ' + env.SLANT_API_V2,
-    },
-    body: JSON.stringify(body),
-  });
+  const url = slantV2Url(env, path);
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${env.SLANT_API_V2}`,
+      },
+      body: JSON.stringify(body),
+    });
+  } catch (error: unknown) {
+    throw new Slant3DFileApiError(errorMessage, 502, {
+      url,
+      cause: formatErrorMessage(error),
+    });
+  }
 
   if (!response.ok) {
     throw new Slant3DFileApiError(

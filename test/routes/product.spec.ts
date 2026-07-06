@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
+import { DEFAULT_PLA_BLACK_FILAMENT_ID } from '../../src/db/schema';
 import app from '../../src/index';
+import { mockBetterAuth } from '../mocks/auth';
 import {
   capturedInserts,
   mockAll,
@@ -8,7 +10,6 @@ import {
   mockUpdate,
   mockWhere,
 } from '../mocks/drizzle';
-import { mockBetterAuth } from '../mocks/auth';
 import { mockEnv } from '../mocks/env';
 
 // Mock Stripe to prevent network calls
@@ -82,57 +83,9 @@ function mockSessionRole(role: string) {
 }
 
 function mockV2AddProductDependencies() {
-  const stlBuffer = new TextEncoder().encode('solid test').buffer;
-
   (globalThis.fetch as unknown as ReturnType<typeof vi.fn>).mockImplementation(
     async (input: RequestInfo | URL) => {
       const url = typeof input === 'string' ? input : input.toString();
-
-      if (url === 'https://uploads.example.com/test-file.stl') {
-        return {
-          ok: true,
-          arrayBuffer: async () => stlBuffer,
-        } as Response;
-      }
-
-      if (url.includes('files/direct-upload')) {
-        return {
-          ok: true,
-          json: async () => ({
-            data: {
-              presignedUrl: 'https://upload.example.com/presigned',
-              filePlaceholder: {
-                publicFileServiceId: 'file_123',
-                name: 'Test Product',
-                ownerId: 'user_123',
-                platformId: 'platform_123',
-                type: 'stl',
-                createdAt: '2026-03-12T00:00:00.000Z',
-                updatedAt: '2026-03-12T00:00:00.000Z',
-              },
-            },
-          }),
-        } as Response;
-      }
-
-      if (url === 'https://upload.example.com/presigned') {
-        return {
-          ok: true,
-          status: 200,
-          statusText: 'OK',
-        } as Response;
-      }
-
-      if (url.includes('files/confirm-upload')) {
-        return {
-          ok: true,
-          json: async () => ({
-            data: {
-              publicFileServiceId: 'file_123',
-            },
-          }),
-        } as Response;
-      }
 
       if (url.includes('/estimate')) {
         return {
@@ -145,12 +98,7 @@ function mockV2AddProductDependencies() {
         } as Response;
       }
 
-      return {
-        ok: true,
-        json: async () => ({}),
-        text: async () => '',
-        arrayBuffer: async () => new ArrayBuffer(0),
-      } as Response;
+      throw new Error(`Unexpected fetch: ${url}`);
     },
   );
 }
@@ -226,6 +174,128 @@ describe('Product Routes', () => {
     expect(res.status).toBe(400);
     const data = (await res.json()) as { error: string };
     expect(data.error).toContain('at least 2 characters');
+  });
+
+  test('GET /admin/catalog/readiness returns checkout diagnostics for admins', async () => {
+    mockSessionRole('admin');
+    mockAll.mockResolvedValueOnce([
+      {
+        id: 1,
+        skuNumber: 'READY-001',
+        name: 'Ready Product',
+        stripePriceId: 'price_ready',
+        publicFileServiceId: 'file_ready',
+      },
+      {
+        id: 2,
+        skuNumber: 'BROKEN-001',
+        name: 'Broken Product',
+        stripePriceId: null,
+        publicFileServiceId: null,
+      },
+    ]);
+
+    const env = {
+      ...mockEnv(),
+      COLOR_CACHE: {
+        get: vi.fn().mockResolvedValue(
+          JSON.stringify({
+            data: [
+              {
+                publicId: DEFAULT_PLA_BLACK_FILAMENT_ID,
+                available: true,
+              },
+            ],
+          }),
+        ),
+      } as unknown as KVNamespace,
+    };
+
+    const request = new Request('http://localhost/admin/catalog/readiness', {
+      method: 'GET',
+      headers: { Cookie: fakeSignedCookie },
+    });
+
+    const res = await app.fetch(request, env);
+
+    expect(res.status).toBe(200);
+    const data = (await res.json()) as {
+      products: Array<{
+        productId: number;
+        checkoutReady: boolean;
+        reasons: string[];
+      }>;
+      summary: { total: number; ready: number; notReady: number };
+    };
+    expect(data.summary).toEqual({ total: 2, ready: 1, notReady: 1 });
+    expect(data.products[0]).toMatchObject({
+      productId: 1,
+      checkoutReady: true,
+      reasons: [],
+    });
+    expect(data.products[1]).toMatchObject({
+      productId: 2,
+      checkoutReady: false,
+      reasons: ['missing_stripe_price_id', 'missing_public_file_service_id'],
+    });
+  });
+
+  test('GET /admin/catalog/readiness flags unavailable default filament', async () => {
+    mockSessionRole('admin');
+    mockAll.mockResolvedValueOnce([
+      {
+        id: 1,
+        skuNumber: 'READY-001',
+        name: 'Ready Product',
+        stripePriceId: 'price_ready',
+        publicFileServiceId: 'file_ready',
+      },
+    ]);
+
+    const env = {
+      ...mockEnv(),
+      COLOR_CACHE: {
+        get: vi.fn().mockResolvedValue(
+          JSON.stringify({
+            data: [
+              {
+                publicId: DEFAULT_PLA_BLACK_FILAMENT_ID,
+                available: false,
+              },
+            ],
+          }),
+        ),
+      } as unknown as KVNamespace,
+    };
+
+    const request = new Request('http://localhost/admin/catalog/readiness', {
+      method: 'GET',
+      headers: { Cookie: fakeSignedCookie },
+    });
+
+    const res = await app.fetch(request, env);
+
+    expect(res.status).toBe(200);
+    const data = (await res.json()) as {
+      products: Array<{ checkoutReady: boolean; reasons: string[] }>;
+    };
+    expect(data.products[0]).toMatchObject({
+      checkoutReady: false,
+      reasons: ['unavailable_filament_id'],
+    });
+  });
+
+  test('GET /admin/catalog/readiness returns 403 for non-admin users', async () => {
+    mockSessionRole('user');
+
+    const request = new Request('http://localhost/admin/catalog/readiness', {
+      method: 'GET',
+      headers: { Cookie: fakeSignedCookie },
+    });
+
+    const res = await app.fetch(request, mockEnv());
+
+    expect(res.status).toBe(403);
   });
 
   test('POST /add-product returns 401 when not authenticated', async () => {
@@ -538,6 +608,7 @@ describe('Product Routes', () => {
         name: 'New Product',
         description: 'desc',
         stl: 'https://uploads.example.com/test-file.stl',
+        publicFileServiceId: 'file_123',
         price: 15,
         image: 'url/to/image.jpg',
         filamentType: 'PLA',
@@ -572,7 +643,8 @@ describe('Product Routes', () => {
       body: JSON.stringify({
         name: 'V2 Product',
         description: 'desc',
-        stl: 'https://uploads.example.com/test-file.stl',
+        stl: 'https://slant3d.com/files/test-file.stl',
+        publicFileServiceId: 'file_123',
         markupPercentage: 15,
         image: 'url/to/image.jpg',
         filamentType: 'PLA',
@@ -594,12 +666,24 @@ describe('Product Routes', () => {
     });
     expect(capturedInserts[0]).toMatchObject({
       price: 11.5,
+      stl: 'https://slant3d.com/files/test-file.stl',
+      publicFileServiceId: 'file_123',
+    });
+
+    const fetchCalls = (globalThis.fetch as unknown as ReturnType<typeof vi.fn>)
+      .mock.calls;
+    expect(fetchCalls).toHaveLength(1);
+    expect(String(fetchCalls[0][0])).toContain('/files/file_123/estimate');
+    expect(JSON.parse(fetchCalls[0][1].body)).toEqual({
+      options: {
+        filamentId: DEFAULT_PLA_BLACK_FILAMENT_ID,
+        quantity: 1,
+      },
     });
   });
 
-  test('POST /v2/add-product rejects untrusted STL host', async () => {
+  test('POST /v2/add-product returns 400 when publicFileServiceId is missing', async () => {
     mockSessionRole('admin');
-    mockV2AddProductDependencies();
 
     const request = new Request('http://localhost/v2/add-product', {
       method: 'POST',
@@ -610,8 +694,8 @@ describe('Product Routes', () => {
       body: JSON.stringify({
         name: 'V2 Product',
         description: 'desc',
-        stl: 'https://evil.example.com/malicious.stl',
-        price: 15,
+        stl: 'https://slant3d.com/files/test-file.stl',
+        markupPercentage: 15,
         image: 'url/to/image.jpg',
         filamentType: 'PLA',
         color: '#ffffff',
@@ -619,15 +703,25 @@ describe('Product Routes', () => {
     });
 
     const res = await app.fetch(request, mockEnv());
-    const body = (await res.json()) as { error: string };
 
     expect(res.status).toBe(400);
-    expect(body.error).toMatch(/invalid stl url/i);
+    expect(JSON.stringify(await res.json())).toContain('publicFileServiceId');
+    expect(globalThis.fetch).not.toHaveBeenCalled();
   });
 
-  test('POST /v2/add-product rejects non-https STL URL', async () => {
+  test('POST /v2/add-product returns 502 when Slant estimate cannot be reached', async () => {
     mockSessionRole('admin');
-    mockV2AddProductDependencies();
+    (
+      globalThis.fetch as unknown as ReturnType<typeof vi.fn>
+    ).mockImplementation(async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input.toString();
+
+      if (url.includes('/estimate')) {
+        throw new Error('DNS lookup failed');
+      }
+
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
 
     const request = new Request('http://localhost/v2/add-product', {
       method: 'POST',
@@ -638,8 +732,9 @@ describe('Product Routes', () => {
       body: JSON.stringify({
         name: 'V2 Product',
         description: 'desc',
-        stl: 'http://uploads.example.com/file.stl',
-        price: 15,
+        stl: 'https://slant3d.com/files/test-file.stl',
+        publicFileServiceId: 'file_123',
+        markupPercentage: 15,
         image: 'url/to/image.jpg',
         filamentType: 'PLA',
         color: '#ffffff',
@@ -647,10 +742,21 @@ describe('Product Routes', () => {
     });
 
     const res = await app.fetch(request, mockEnv());
-    const body = (await res.json()) as { error: string };
+    const data = (await res.json()) as {
+      error: string;
+      details: { url: string; cause: string };
+      status: number;
+    };
 
-    expect(res.status).toBe(400);
-    expect(body.error).toMatch(/invalid stl url/i);
+    expect(res.status).toBe(502);
+    expect(data.error).toBe(
+      'Failed to estimate file price from Slant3D V2 API',
+    );
+    expect(data.details).toEqual({
+      url: 'https://slant3dapi.com/v2/api/files/file_123/estimate',
+      cause: 'DNS lookup failed',
+    });
+    expect(data.status).toBe(502);
   });
 
   test('PUT /update-product returns 403 for authenticated non-admin users', async () => {

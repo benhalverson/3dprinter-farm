@@ -161,9 +161,9 @@ describe('Printer V2 Upload Routes', () => {
       expect(calledUrls).toContain(
         'https://slant3dapi.com/v2/api/files/f47ac10b-58cc-4372-a567-0e02b2c3d479/estimate',
       );
-      expect(
-        calledUrls.some(url => url.includes('/v2/presigned-upload')),
-      ).toBe(false);
+      expect(calledUrls.some(url => url.includes('/v2/presigned-upload'))).toBe(
+        false,
+      );
       expect(calledUrls.some(url => url.includes('/v2/confirm'))).toBe(false);
       expect(calledUrls.some(url => url.includes('/v2/estimate'))).toBe(false);
     });
@@ -211,9 +211,13 @@ describe('Printer V2 Upload Routes', () => {
     });
 
     test('should reject oversized STL files', async () => {
-      const file = new File([new Uint8Array(100 * 1024 * 1024 + 1)], 'large.stl', {
-        type: 'model/stl',
-      });
+      const file = new File(
+        [new Uint8Array(100 * 1024 * 1024 + 1)],
+        'large.stl',
+        {
+          type: 'model/stl',
+        },
+      );
 
       const formData = new FormData();
       formData.append('file', file);
@@ -376,7 +380,9 @@ describe('Printer V2 Upload Routes', () => {
 
       expect(response.status).toBe(500);
       expect(data.success).toBe(false);
-      expect(data.error).toBe('Missing SLANT_PLATFORM_ID environment variable.');
+      expect(data.error).toBe(
+        'Missing SLANT_PLATFORM_ID environment variable.',
+      );
       expect(global.fetch).not.toHaveBeenCalled();
     });
 
@@ -469,9 +475,12 @@ describe('Printer V2 Upload Routes', () => {
       const response = await app.fetch(request, env);
       const data = await response.json();
 
-      expect(response.status).toBe(500);
+      expect(response.status).toBe(400);
       expect(data.success).toBe(false);
-      expect(data.error).toBe('Failed to get presigned URL');
+      expect(data.error).toBe(
+        'Failed to generate presigned URL from Slant3D V2 API',
+      );
+      expect(data.status).toBe(400);
     });
 
     test('should handle Slant3D API failures with text error response', async () => {
@@ -529,9 +538,16 @@ describe('Printer V2 Upload Routes', () => {
       const response = await app.fetch(request, env);
       const data = await response.json();
 
-      expect(response.status).toBe(500);
+      expect(response.status).toBe(502);
       expect(data.success).toBe(false);
-      expect(data.error).toBe('Failed to upload file');
+      expect(data.error).toBe(
+        'Failed to generate presigned URL from Slant3D V2 API',
+      );
+      expect(data.details).toEqual({
+        url: 'https://slant3dapi.com/v2/api/files/direct-upload',
+        cause: 'Network error',
+      });
+      expect(data.status).toBe(502);
     });
 
     test('should handle files with dashes in filename', async () => {

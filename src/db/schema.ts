@@ -299,6 +299,7 @@ export const ordersTable = sqliteTable('ordersTable', {
     .references(() => users.id, { onDelete: 'cascade' }) // Establish relationship with users table
     .notNull(),
   orderNumber: text('order_number').notNull().unique(),
+  cartId: text('cart_id'),
   filename: text('filename'),
   fileURL: text('file_url').notNull(),
 
@@ -325,9 +326,18 @@ export const ordersTable = sqliteTable('ordersTable', {
   slantPublicOrderId: text('slant_public_order_id'),
   stripeCheckoutSessionId: text('stripe_checkout_session_id'),
   stripePaymentIntentId: text('stripe_payment_intent_id'),
+  stripeEventId: text('stripe_event_id'),
   customerEmail: text('customer_email'),
+  totalAmountCents: integer('total_amount_cents'),
+  currency: text('currency').default('usd'),
+  itemSnapshot: text('item_snapshot'),
+  customerSnapshot: text('customer_snapshot'),
   createdAt: text('created_at').default(sql`CURRENT_TIMESTAMP`),
   updatedAt: text('updated_at').default(sql`CURRENT_TIMESTAMP`),
+  processedAt: text('processed_at'),
+  shippedAt: text('shipped_at'),
+  deliveredAt: text('delivered_at'),
+  canceledAt: text('canceled_at'),
 });
 
 export const orderEventsTable = sqliteTable('order_events', {
@@ -338,8 +348,75 @@ export const orderEventsTable = sqliteTable('order_events', {
   type: text('type').notNull(),
   detail: text('detail'),
   actor: text('actor'),
+  externalEventId: text('external_event_id'),
+  source: text('source').default('admin'),
+  previousStatus: text('previous_status'),
+  nextStatus: text('next_status'),
+  metadata: text('metadata'),
   createdAt: text('created_at').default(sql`CURRENT_TIMESTAMP`).notNull(),
 });
+
+export const orderCancellationAttemptsTable = sqliteTable(
+  'order_cancellation_attempts',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    orderId: integer('order_id')
+      .notNull()
+      .references(() => ordersTable.id, { onDelete: 'cascade' }),
+    actorId: text('actor_id'),
+    actorEmail: text('actor_email'),
+    reason: text('reason'),
+    override: integer('override', { mode: 'boolean' }).default(false).notNull(),
+    slantStatus: text('slant_status'),
+    slantResult: text('slant_result'),
+    stripeRefundId: text('stripe_refund_id'),
+    stripeRefundStatus: text('stripe_refund_status'),
+    stripeResult: text('stripe_result'),
+    finalStatus: text('final_status').notNull(),
+    errorMessage: text('error_message'),
+    createdAt: text('created_at').default(sql`CURRENT_TIMESTAMP`).notNull(),
+    updatedAt: text('updated_at').default(sql`CURRENT_TIMESTAMP`).notNull(),
+  },
+);
+
+export const orderNotificationAttemptsTable = sqliteTable(
+  'order_notification_attempts',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    orderId: integer('order_id').references(() => ordersTable.id, {
+      onDelete: 'cascade',
+    }),
+    notificationType: text('notification_type').notNull(),
+    recipientEmail: text('recipient_email').notNull(),
+    status: text('status').notNull(),
+    providerMessageId: text('provider_message_id'),
+    errorMessage: text('error_message'),
+    statusTransition: text('status_transition'),
+    source: text('source').notNull(),
+    idempotencyKey: text('idempotency_key').notNull(),
+    createdAt: text('created_at').default(sql`CURRENT_TIMESTAMP`).notNull(),
+    updatedAt: text('updated_at').default(sql`CURRENT_TIMESTAMP`).notNull(),
+    sentAt: text('sent_at'),
+  },
+);
+
+export const orderReconciliationAttemptsTable = sqliteTable(
+  'order_reconciliation_attempts',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    orderId: integer('order_id')
+      .notNull()
+      .references(() => ordersTable.id, { onDelete: 'cascade' }),
+    triggerSource: text('trigger_source').notNull(),
+    startingState: text('starting_state').notNull(),
+    detectedIssueType: text('detected_issue_type'),
+    actionsTaken: text('actions_taken'),
+    resultStatus: text('result_status').notNull(),
+    errorMessage: text('error_message'),
+    createdAt: text('created_at').default(sql`CURRENT_TIMESTAMP`).notNull(),
+    updatedAt: text('updated_at').default(sql`CURRENT_TIMESTAMP`).notNull(),
+  },
+);
 
 export const leadsSchema = z.object({
   email: z.string(),
@@ -418,27 +495,46 @@ const markupPercentageSchema = z
   .number()
   .positive('Markup percentage must be greater than 0');
 
-export const addProductSchema = z
-  .object({
-    name: z.string(),
-    description: z.string(),
-    stl: z.string(),
-    price: markupPercentageSchema
-      .optional()
-      .describe('Deprecated alias for markupPercentage.'),
-    markupPercentage: markupPercentageSchema
-      .optional()
-      .describe('Percentage markup to apply to the Slant3D estimated cost.'),
-    filamentType: z.string(),
-    color: z.string(),
-    image: z.string(),
-    imageGallery: z.array(z.string()).min(1).optional(),
-    // Accept multiple categories on create; optional for now to support existing data
-    categoryIds: z.array(z.number().int()).optional(),
-    // Also allow a single categoryId for convenience (accept number or array)
-    categoryId: z.union([z.number().int(), z.array(z.number().int())]).optional(),
+const addProductBaseSchema = z.object({
+  name: z.string(),
+  description: z.string(),
+  stl: z.string(),
+  price: markupPercentageSchema
+    .optional()
+    .describe('Deprecated alias for markupPercentage.'),
+  markupPercentage: markupPercentageSchema
+    .optional()
+    .describe('Percentage markup to apply to the Slant3D estimated cost.'),
+  filamentType: z.string(),
+  color: z.string(),
+  image: z.string(),
+  imageGallery: z.array(z.string()).min(1).optional(),
+  // Accept multiple categories on create; optional for now to support existing data
+  categoryIds: z.array(z.number().int()).optional(),
+  // Also allow a single categoryId for convenience (accept number or array)
+  categoryId: z.union([z.number().int(), z.array(z.number().int())]).optional(),
+});
+
+const requiresMarkupPercentage = (data: z.infer<typeof addProductBaseSchema>) =>
+  data.price !== undefined || data.markupPercentage !== undefined;
+
+export const addProductSchema = addProductBaseSchema.refine(
+  requiresMarkupPercentage,
+  {
+    message: 'Either price or markupPercentage is required',
+    path: ['markupPercentage'],
+  },
+);
+
+export const addProductV2Schema = addProductBaseSchema
+  .extend({
+    publicFileServiceId: z
+      .string()
+      .trim()
+      .min(1, 'publicFileServiceId is required')
+      .describe('Slant3D public file id returned by /v2/confirm.'),
   })
-  .refine(data => data.price !== undefined || data.markupPercentage !== undefined, {
+  .refine(requiresMarkupPercentage, {
     message: 'Either price or markupPercentage is required',
     path: ['markupPercentage'],
   });
@@ -477,6 +573,21 @@ export const addCartItemSchema = z.object({
   color: z.string(),
   filamentType: z.string(),
   filamentId: z.string().uuid(),
+});
+
+export const stripeFulfillmentTable = sqliteTable('stripe_fulfillment', {
+  idempotencyKey: text('idempotency_key').primaryKey(),
+  stripeEventId: text('stripe_event_id').notNull(),
+  stripeObjectId: text('stripe_object_id').notNull(),
+  cartId: text('cart_id').notNull(),
+  status: text('status').notNull().default('processed'),
+  slantOrderId: text('slant_order_id'),
+  createdAt: integer('created_at', { mode: 'timestamp' })
+    .notNull()
+    .default(sql`(unixepoch())`),
+  updatedAt: integer('updated_at', { mode: 'timestamp' })
+    .notNull()
+    .default(sql`(unixepoch())`),
 });
 
 // Table for storing uploaded STL files with estimates from Slant3D

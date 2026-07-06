@@ -2,12 +2,12 @@ import {
   createSecretKey,
   decrypt,
   encrypt,
-  type WebApiKey,
+  type WebSecretKey,
 } from 'cipher-kit/web-api';
 import type { ProfileData } from '../db/schema';
 
 declare global {
-  var __cipherKitSecretKeyCache: Map<string, WebApiKey> | undefined;
+  var __cipherKitSecretKeyCache: Map<string, WebSecretKey> | undefined;
 }
 
 const ENCRYPTED_VALUE_REGEX =
@@ -15,7 +15,7 @@ const ENCRYPTED_VALUE_REGEX =
 
 type SecretKeyResult = {
   success: boolean;
-  secretKey?: WebApiKey;
+  secretKey?: WebSecretKey;
   error?: { message?: string; description?: string };
 };
 
@@ -27,13 +27,15 @@ type CipherTextResult = {
 
 function getSecretKeyCache() {
   if (!globalThis.__cipherKitSecretKeyCache) {
-    globalThis.__cipherKitSecretKeyCache = new Map<string, WebApiKey>();
+    globalThis.__cipherKitSecretKeyCache = new Map<string, WebSecretKey>();
   }
 
   return globalThis.__cipherKitSecretKeyCache;
 }
 
-function unwrapSecretKeyResult(value: WebApiKey | SecretKeyResult): WebApiKey {
+function unwrapSecretKeyResult(
+  value: WebSecretKey | SecretKeyResult,
+): WebSecretKey {
   if (value && typeof value === 'object' && 'success' in value) {
     if (!value.success || !value.secretKey) {
       throw new Error(
@@ -47,7 +49,10 @@ function unwrapSecretKeyResult(value: WebApiKey | SecretKeyResult): WebApiKey {
   return value;
 }
 
-function unwrapCipherTextResult(value: string | CipherTextResult, action: 'encrypt' | 'decrypt'): string {
+function unwrapCipherTextResult(
+  value: string | CipherTextResult,
+  action: 'encrypt' | 'decrypt',
+): string {
   if (value && typeof value === 'object' && 'success' in value) {
     if (!value.success || typeof value.result !== 'string') {
       throw new Error(
@@ -67,7 +72,7 @@ export function isCipherKitEncryptedValue(value: string) {
 
 export async function getCipherKitSecretKey(
   passphrase: string,
-): Promise<WebApiKey> {
+): Promise<WebSecretKey> {
   const cache = getSecretKeyCache();
   const cachedKey = cache.get(passphrase);
 
@@ -82,7 +87,7 @@ export async function getCipherKitSecretKey(
 
 export async function decryptStoredProfileValue(
   value: string | null,
-  secretKey: WebApiKey,
+  secretKey: WebSecretKey,
 ): Promise<string | null> {
   if (value == null || value === '') {
     return value;
@@ -97,7 +102,7 @@ export async function decryptStoredProfileValue(
 
 export async function encryptStoredProfileValue(
   value: string | null,
-  secretKey: WebApiKey,
+  secretKey: WebSecretKey,
 ): Promise<string | null> {
   if (value == null || value === '') {
     return value;
@@ -108,7 +113,7 @@ export async function encryptStoredProfileValue(
 
 export async function buildEncryptedProfileUpdate(
   profile: ProfileData,
-  secretKey: WebApiKey,
+  secretKey: WebSecretKey,
 ) {
   return {
     firstName:
@@ -130,15 +135,17 @@ export async function buildEncryptedProfileUpdate(
 
 type StoredShippingProfile = Pick<
   ProfileData,
-  | 'email'
   | 'firstName'
   | 'lastName'
   | 'shippingAddress'
   | 'city'
   | 'state'
   | 'zipCode'
+  | 'country'
   | 'phone'
->;
+> & {
+  email?: string | null;
+};
 
 export type DecryptedShippingProfile = {
   email: string;
@@ -148,6 +155,7 @@ export type DecryptedShippingProfile = {
   city: string;
   state: string;
   zipCode: string;
+  country: string;
   phone: string;
 };
 
@@ -156,16 +164,25 @@ export async function decryptStoredShippingProfile(
   passphrase: string,
 ): Promise<DecryptedShippingProfile> {
   const secretKey = await getCipherKitSecretKey(passphrase);
-  const [firstName, lastName, shippingAddress, city, state, zipCode, phone] =
-    await Promise.all([
-      decryptStoredProfileValue(profile.firstName, secretKey),
-      decryptStoredProfileValue(profile.lastName, secretKey),
-      decryptStoredProfileValue(profile.shippingAddress, secretKey),
-      decryptStoredProfileValue(profile.city, secretKey),
-      decryptStoredProfileValue(profile.state, secretKey),
-      decryptStoredProfileValue(profile.zipCode, secretKey),
-      decryptStoredProfileValue(profile.phone, secretKey),
-    ]);
+  const [
+    firstName,
+    lastName,
+    shippingAddress,
+    city,
+    state,
+    zipCode,
+    country,
+    phone,
+  ] = await Promise.all([
+    decryptStoredProfileValue(profile.firstName, secretKey),
+    decryptStoredProfileValue(profile.lastName, secretKey),
+    decryptStoredProfileValue(profile.shippingAddress, secretKey),
+    decryptStoredProfileValue(profile.city, secretKey),
+    decryptStoredProfileValue(profile.state, secretKey),
+    decryptStoredProfileValue(profile.zipCode, secretKey),
+    decryptStoredProfileValue(profile.country, secretKey),
+    decryptStoredProfileValue(profile.phone, secretKey),
+  ]);
 
   return {
     email: profile.email || '',
@@ -175,6 +192,7 @@ export async function decryptStoredShippingProfile(
     city: city || '',
     state: state || '',
     zipCode: zipCode || '',
+    country: country || '',
     phone: phone || '',
   };
 }

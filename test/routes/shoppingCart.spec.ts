@@ -64,6 +64,40 @@ const defaultBlackFilamentId = '76fe1f79-3f1e-43e4-b8f4-61159de5b93c';
 
 const env = mockEnv();
 
+function readyStripeCartItem(overrides: Record<string, unknown> = {}) {
+  return {
+    cartItemId: 1,
+    cartUserId: 'user_123',
+    skuNumber: 'TEST-SKU-001',
+    filamentType: 'PLA',
+    filamentId: defaultBlackFilamentId,
+    productSkuNumber: 'TEST-SKU-001',
+    stripePriceId: 'price_test1',
+    publicFileServiceId: 'public-file-123',
+    quantity: 1,
+    price: 19.99,
+    name: 'Test Product',
+    ...overrides,
+  };
+}
+
+function envWithAvailableFilaments(publicIds: string[]) {
+  return {
+    ...env,
+    COLOR_CACHE: {
+      get: vi.fn().mockResolvedValue(
+        JSON.stringify({
+          success: true,
+          data: publicIds.map(publicId => ({
+            publicId,
+            available: true,
+          })),
+        }),
+      ),
+    } as unknown as KVNamespace,
+  };
+}
+
 describe('Shopping Cart Routes', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -844,8 +878,14 @@ describe('Shopping Cart Routes', () => {
     test('creates checkout session with cartId and userId in metadata', async () => {
       // Mock cart items query with Stripe price IDs
       mockWhere.mockResolvedValueOnce([
-        { stripePriceId: 'price_test1', quantity: 2 },
-        { stripePriceId: 'price_test2', quantity: 1 },
+        readyStripeCartItem({ cartItemId: 1, quantity: 2 }),
+        readyStripeCartItem({
+          cartItemId: 2,
+          skuNumber: 'TEST-SKU-002',
+          productSkuNumber: 'TEST-SKU-002',
+          stripePriceId: 'price_test2',
+          quantity: 1,
+        }),
       ]);
 
       mockStripeCheckoutCreate.mockResolvedValueOnce({
@@ -896,8 +936,15 @@ describe('Shopping Cart Routes', () => {
       expect(res.status).toBe(401);
     });
 
-    test('returns 404 when no items with Stripe price IDs found', async () => {
-      mockWhere.mockResolvedValueOnce([{ stripePriceId: null, quantity: 1 }]);
+    test('returns item-level readiness errors before creating checkout', async () => {
+      mockWhere.mockResolvedValueOnce([
+        readyStripeCartItem({
+          productSkuNumber: null,
+          stripePriceId: null,
+          publicFileServiceId: null,
+          filamentId: 'not-a-uuid',
+        }),
+      ]);
 
       const res = await app.fetch(
         new Request(`http://localhost/cart/${mockCartId}/checkout`, {
@@ -911,9 +958,20 @@ describe('Shopping Cart Routes', () => {
         env,
       );
 
-      expect(res.status).toBe(404);
+      expect(res.status).toBe(409);
       const data = (await res.json()) as any;
-      expect(data.error).toBe('No items with Stripe price IDs found');
+      expect(data.error).toBe('Cart is not ready for checkout');
+      expect(data.items[0]).toMatchObject({
+        cartItemId: 1,
+        skuNumber: 'TEST-SKU-001',
+        reasons: [
+          'product_missing',
+          'missing_stripe_price_id',
+          'missing_public_file_service_id',
+          'invalid_filament_id',
+        ],
+      });
+      expect(mockStripeCheckoutCreate).not.toHaveBeenCalled();
     });
 
     test('returns 404 when cart is empty', async () => {
@@ -933,13 +991,11 @@ describe('Shopping Cart Routes', () => {
 
       expect(res.status).toBe(404);
       const data = (await res.json()) as any;
-      expect(data.error).toBe('No items with Stripe price IDs found');
+      expect(data.error).toBe('Cart is empty');
     });
 
     test('returns 500 when Stripe session creation fails', async () => {
-      mockWhere.mockResolvedValueOnce([
-        { stripePriceId: 'price_test1', quantity: 1 },
-      ]);
+      mockWhere.mockResolvedValueOnce([readyStripeCartItem()]);
 
       mockStripeCheckoutCreate.mockRejectedValueOnce(
         new Error('Stripe API error'),
@@ -970,14 +1026,7 @@ describe('Shopping Cart Routes', () => {
 
     test('creates payment intent using authenticated user id (ignores client-supplied userId)', async () => {
       // Cart items with prices
-      mockWhere.mockResolvedValueOnce([
-        {
-          stripePriceId: 'price_test1',
-          quantity: 2,
-          price: 19.99,
-          name: 'Test Product',
-        },
-      ]);
+      mockWhere.mockResolvedValueOnce([readyStripeCartItem({ quantity: 2 })]);
 
       mockPaymentIntentsCreate.mockResolvedValueOnce({
         client_secret: 'pi_test_secret_123',
@@ -1015,14 +1064,7 @@ describe('Shopping Cart Routes', () => {
     });
 
     test('creates payment intent using authenticated user id when no userId in body', async () => {
-      mockWhere.mockResolvedValueOnce([
-        {
-          stripePriceId: 'price_test1',
-          quantity: 1,
-          price: 9.99,
-          name: 'Test Product',
-        },
-      ]);
+      mockWhere.mockResolvedValueOnce([readyStripeCartItem({ price: 9.99 })]);
 
       mockPaymentIntentsCreate.mockResolvedValueOnce({
         client_secret: 'pi_test_secret_456',
@@ -1070,6 +1112,35 @@ describe('Shopping Cart Routes', () => {
       expect(res.status).toBe(404);
       const data = (await res.json()) as any;
       expect(data.error).toBe('Cart is empty');
+    });
+
+    test('rejects unavailable cached filament before creating payment intent', async () => {
+      mockWhere.mockResolvedValueOnce([
+        readyStripeCartItem({
+          filamentId: '8cfbf30a-2995-486e-a1e8-8f7d41488f1e',
+        }),
+      ]);
+
+      const res = await app.fetch(
+        new Request(`http://localhost/cart/${mockCartId}/payment-intent`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Cookie: 'better-auth.session_token=mock-session-token',
+          },
+          body: JSON.stringify({}),
+        }),
+        envWithAvailableFilaments([defaultBlackFilamentId]),
+      );
+
+      expect(res.status).toBe(409);
+      const data = (await res.json()) as any;
+      expect(data.items[0]).toMatchObject({
+        cartItemId: 1,
+        skuNumber: 'TEST-SKU-001',
+        reasons: ['unavailable_filament_id'],
+      });
+      expect(mockPaymentIntentsCreate).not.toHaveBeenCalled();
     });
   });
 });

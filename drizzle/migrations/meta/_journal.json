@@ -43,6 +43,41 @@
       "when": 1781900601152,
       "tag": "0005_salty_thunderbolt_ross",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1781170439429,
+      "tag": "0006_add_stripe_fulfillment",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1783299900000,
+      "tag": "0007_order_lifecycle_metadata",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1783300800000,
+      "tag": "0008_order_cancellation_attempts",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1783301700000,
+      "tag": "0009_order_notification_attempts",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1783302600000,
+      "tag": "0010_order_reconciliation_attempts",
+      "breakpoints": true
     }
   ]
 }
