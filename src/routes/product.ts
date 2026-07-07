@@ -194,6 +194,7 @@ const product = factory
             price: productsTable.price,
             filamentType: productsTable.filamentType,
             skuNumber: productsTable.skuNumber,
+						categoryId: productsTable.categoryId,
             color: productsTable.color,
           })
           .from(productsTable)
