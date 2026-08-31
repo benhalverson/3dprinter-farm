@@ -137,11 +137,13 @@ export interface STLMetrics {
 }
 
 export interface Slant3DFile {
+  /** Durable Slant3D file reference for estimates, orders, and URL refreshes. */
   publicFileServiceId: string;
   name: string;
   ownerId?: string;
   platformId: string;
   type: 'stl';
+  /** Presigned Slant3D download URL. This is temporary and must not be stored as the print-file reference. */
   fileURL: string;
   STLMetrics?: STLMetrics;
   createdAt: string;

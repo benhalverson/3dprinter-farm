@@ -10,12 +10,12 @@ type OpenAPISchema = Record<string, unknown>;
 
 import { BASE_URL } from '../constants';
 import {
-  DEFAULT_PLA_BLACK_FILAMENT_ID,
   addCategorySchema,
   addProductSchema,
   addProductV2Schema,
   categoryDataSchema,
   categoryTable,
+  DEFAULT_PLA_BLACK_FILAMENT_ID,
   idSchema,
   productsTable,
   productsToCategories,
@@ -24,6 +24,7 @@ import {
 import factory from '../factory';
 import {
   estimateSlant3DFile,
+  getSlant3DFile,
   type Slant3DEstimateData,
   Slant3DFileApiError,
 } from '../lib/slant3d-v2-files';
@@ -31,6 +32,7 @@ import {
   catalogReadinessResponseSchema,
   evaluateCatalogReadiness,
 } from '../modules/catalogReadiness';
+import type { Bindings } from '../types';
 import {
   authMiddleware,
   requireCatalogMutationRole,
@@ -51,6 +53,68 @@ function parseImageGallery(imageGallery: string | null): string[] {
   } catch {
     return [];
   }
+}
+
+type HydratableProduct = {
+  stl?: string | null;
+  publicFileServiceId?: string | null;
+};
+
+function formatHydrationError(error: unknown): unknown {
+  if (error instanceof Slant3DFileApiError) {
+    return {
+      message: error.message,
+      status: error.status,
+      details: error.details,
+    };
+  }
+
+  return error instanceof Error ? error.message : String(error);
+}
+
+async function hydrateProductStlUrls<T extends HydratableProduct>(
+  env: Bindings,
+  products: T[],
+): Promise<T[]> {
+  const freshUrlByFileId = new Map<string, Promise<string | null>>();
+
+  const getFreshUrl = (publicFileServiceId: string) => {
+    const cached = freshUrlByFileId.get(publicFileServiceId);
+    if (cached) return cached;
+
+    const request = getSlant3DFile(env, publicFileServiceId)
+      .then(file => {
+        if (file.fileURL) return file.fileURL;
+
+        console.error('Slant3D file hydration returned no fileURL:', {
+          publicFileServiceId,
+        });
+        return null;
+      })
+      .catch((error: unknown) => {
+        console.error('Failed to hydrate Slant3D file URL:', {
+          publicFileServiceId,
+          error: formatHydrationError(error),
+        });
+        return null;
+      });
+
+    freshUrlByFileId.set(publicFileServiceId, request);
+    return request;
+  };
+
+  return Promise.all(
+    products.map(async product => {
+      const publicFileServiceId =
+        typeof product.publicFileServiceId === 'string'
+          ? product.publicFileServiceId.trim()
+          : '';
+      if (!publicFileServiceId) return product;
+
+      const freshStlUrl = await getFreshUrl(publicFileServiceId);
+      return freshStlUrl ? { ...product, stl: freshStlUrl } : product;
+    }),
+  );
 }
 
 const product = factory
@@ -80,7 +144,12 @@ const product = factory
                           type: 'array',
                           items: { type: 'string' },
                         },
-                        stl: { type: 'string' },
+                        stl: {
+                          type: 'string',
+                          description:
+                            'Deprecated compatibility field. Product reads return a fresh Slant3D fileURL when publicFileServiceId is present; do not persist this value.',
+                        },
+                        publicFileServiceId: { type: 'string' },
                         price: { type: 'number' },
                         filamentType: { type: 'string' },
                         skuNumber: { type: 'string' },
@@ -138,6 +207,7 @@ const product = factory
               image: productsTable.image,
               imageGallery: productsTable.imageGallery,
               stl: productsTable.stl,
+              publicFileServiceId: productsTable.publicFileServiceId,
               price: productsTable.price,
               filamentType: productsTable.filamentType,
               skuNumber: productsTable.skuNumber,
@@ -148,10 +218,11 @@ const product = factory
             .all();
 
           // Parse imageGallery safely
-          const products = rawProducts.map(product => ({
+          const parsedProducts = rawProducts.map(product => ({
             ...product,
             imageGallery: parseImageGallery(product.imageGallery),
           }));
+          const products = await hydrateProductStlUrls(c.env, parsedProducts);
 
           return c.json(products);
         }
@@ -191,10 +262,11 @@ const product = factory
             image: productsTable.image,
             imageGallery: productsTable.imageGallery,
             stl: productsTable.stl,
+            publicFileServiceId: productsTable.publicFileServiceId,
             price: productsTable.price,
             filamentType: productsTable.filamentType,
             skuNumber: productsTable.skuNumber,
-						categoryId: productsTable.categoryId,
+            categoryId: productsTable.categoryId,
             color: productsTable.color,
           })
           .from(productsTable)
@@ -203,10 +275,11 @@ const product = factory
           .all();
 
         // Parse imageGallery safely
-        const products = rawProducts.map(product => ({
+        const parsedProducts = rawProducts.map(product => ({
           ...product,
           imageGallery: parseImageGallery(product.imageGallery),
         }));
+        const products = await hydrateProductStlUrls(c.env, parsedProducts);
 
         const pagination = {
           page,
@@ -252,7 +325,12 @@ const product = factory
                           type: 'array',
                           items: { type: 'string' },
                         },
-                        stl: { type: 'string' },
+                        stl: {
+                          type: 'string',
+                          description:
+                            'Deprecated compatibility field. Product reads return a fresh Slant3D fileURL when publicFileServiceId is present; do not persist this value.',
+                        },
+                        publicFileServiceId: { type: 'string' },
                         price: { type: 'number' },
                         filamentType: { type: 'string' },
                         skuNumber: { type: 'string' },
@@ -351,6 +429,7 @@ const product = factory
             image: productsTable.image,
             imageGallery: productsTable.imageGallery,
             stl: productsTable.stl,
+            publicFileServiceId: productsTable.publicFileServiceId,
             price: productsTable.price,
             filamentType: productsTable.filamentType,
             skuNumber: productsTable.skuNumber,
@@ -363,10 +442,11 @@ const product = factory
           .all();
 
         // Parse imageGallery safely
-        const products = rawProducts.map(product => ({
+        const parsedProducts = rawProducts.map(product => ({
           ...product,
           imageGallery: parseImageGallery(product.imageGallery),
         }));
+        const products = await hydrateProductStlUrls(c.env, parsedProducts);
 
         const pagination = {
           page,
@@ -628,7 +708,7 @@ const product = factory
     requireCatalogMutationRole,
     describeRoute({
       description:
-        'Add a new product using Slant3D V2 API. The STL must already be uploaded by calling /v2/presigned-upload, uploading the file to the returned presignedUrl from the browser, then calling /v2/confirm. Submit the confirmed fileURL as stl and publicFileServiceId from /v2/confirm.',
+        'Add a new product using Slant3D V2 API. The STL must already be uploaded by calling /v2/presigned-upload, uploading the file to the returned presignedUrl from the browser, then calling /v2/confirm. Submit publicFileServiceId from /v2/confirm as the durable print file reference; stl is optional and deprecated.',
       tags: ['Products'],
       requestBody: {
         content: {
@@ -712,6 +792,7 @@ const product = factory
           price: legacyMarkupPercentage,
           markupPercentage,
           publicFileServiceId,
+          stl: _deprecatedStl,
           ...productFields
         } = data;
         const requestedMarkupPercentage =
@@ -849,6 +930,7 @@ const product = factory
           stripePriceId: stripePriceId,
           imageGallery: JSON.stringify(imageGallery || []),
           categoryId: primaryCategoryId,
+          stl: publicFileServiceId,
           publicFileServiceId,
         };
 
@@ -917,7 +999,7 @@ const product = factory
         .from(productsTable)
         .where(eq(productsTable.id, parsedData.id))
         .all();
-      const rawProduct = response[0];
+      const [rawProduct] = await hydrateProductStlUrls(c.env, response);
 
       if (!rawProduct) {
         return c.json({ error: 'Product not found' }, 404);
