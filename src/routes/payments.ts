@@ -3,11 +3,8 @@ import type { Context } from 'hono';
 import { describeRoute } from 'hono-openapi';
 import Stripe from 'stripe';
 import { z } from 'zod';
-import { BASE_URL_V2 } from '../constants';
 import {
   cart,
-  orderEventsTable,
-  ordersTable,
   productsTable,
   stripeFulfillmentTable,
   users,
@@ -17,7 +14,10 @@ import {
   sendAdminFailureAlert,
   sendOrderNotification,
 } from '../modules/orderNotifications';
-import { generateOrderNumber } from '../utils/generateOrderNumber';
+import {
+  createPaidOrderFulfillment,
+  type PaidOrderProfile,
+} from '../modules/paidOrderFulfillment';
 import { decryptStoredShippingProfile } from '../utils/profileCrypto';
 
 // Schemas
@@ -40,26 +40,8 @@ const _stripeWebhookSchema = z.object({
   }),
 });
 
-const DEFAULT_SLANT_FILAMENT_ID = '76fe1f79-3f1e-43e4-b8f4-61159de5b93c';
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-const ALLOWED_COLORS = new Set([
-  'black',
-  'white',
-  'gray',
-  'grey',
-  'yellow',
-  'red',
-  'gold',
-  'purple',
-  'blue',
-  'orange',
-  'green',
-  'pink',
-  'matteBlack',
-  'lunarRegolith',
-  'petgBlack',
-]);
 
 type StripeWebhookMetadata = {
   cartId?: string;
@@ -81,8 +63,6 @@ type CartFulfillmentItem = {
   publicFileServiceId: string | null;
 };
 
-type ShippingProfile = Awaited<ReturnType<typeof decryptStoredShippingProfile>>;
-
 type StripeFulfillmentInput = {
   cartId: string;
   userId: string;
@@ -93,22 +73,6 @@ type StripeFulfillmentInput = {
   idempotencyKey: string;
   customerEmail?: string;
 };
-
-function normalizePhone(value: string) {
-  const digits = (value || '').replace(/\D/g, '');
-  return digits.length >= 10 ? digits : '0000000000';
-}
-
-function normalizeColor(raw: string | null | undefined): string {
-  if (!raw) return 'black';
-  const trimmed = raw.trim();
-  if (ALLOWED_COLORS.has(trimmed)) return trimmed;
-  const lower = trimmed.toLowerCase();
-  for (const color of ALLOWED_COLORS) {
-    if (color.toLowerCase() === lower) return color;
-  }
-  return 'black';
-}
 
 function isUuid(value: string) {
   return UUID_PATTERN.test(value);
@@ -237,221 +201,6 @@ async function loadCartFulfillmentItems(c: Context, cartId: string) {
   }
 
   return { items };
-}
-
-function buildOrderItemSnapshot(items: CartFulfillmentItem[]) {
-  return items.map(item => ({
-    skuNumber: item.skuNumber,
-    name: item.productName,
-    quantity: item.quantity,
-    color: item.color,
-    filamentType: item.filamentType,
-    filamentId: item.filamentId || DEFAULT_SLANT_FILAMENT_ID,
-    publicFileServiceId: item.publicFileServiceId,
-    image: item.productImage,
-    price: item.productPrice,
-  }));
-}
-
-function buildCustomerSnapshot(
-  profile: ShippingProfile,
-  input: StripeFulfillmentInput,
-) {
-  const fullName = `${profile.firstName} ${profile.lastName}`.trim();
-
-  return {
-    email: profile.email || input.customerEmail || null,
-    firstName: profile.firstName,
-    lastName: profile.lastName,
-    name: fullName || profile.email || input.customerEmail || null,
-    phone: normalizePhone(profile.phone || ''),
-    shippingAddress: {
-      street1: profile.shippingAddress,
-      street2: '',
-      city: profile.city,
-      state: profile.state,
-      zipCode: profile.zipCode,
-      country: 'US',
-      isResidential: true,
-    },
-  };
-}
-
-function calculateTotalAmountCents(items: CartFulfillmentItem[]) {
-  return items.reduce((sum, item) => {
-    const itemPrice =
-      typeof item.productPrice === 'number' ? item.productPrice : 0;
-    return sum + Math.round(itemPrice * 100) * item.quantity;
-  }, 0);
-}
-
-async function persistProcessedOrder(args: {
-  c: Context;
-  input: StripeFulfillmentInput;
-  profile: ShippingProfile;
-  items: CartFulfillmentItem[];
-  orderNumber: string;
-  publicOrderId: string;
-}) {
-  const { c, input, profile, items, orderNumber, publicOrderId } = args;
-  const firstItem = items[0];
-  const now = new Date().toISOString();
-  const fullName =
-    `${profile.firstName} ${profile.lastName}`.trim() || profile.email;
-  const itemSnapshot = buildOrderItemSnapshot(items);
-  const customerSnapshot = buildCustomerSnapshot(profile, input);
-
-  const [localOrder] = await c.var.db
-    .insert(ordersTable)
-    .values({
-      userId: input.userId,
-      orderNumber,
-      cartId: input.cartId,
-      filename: firstItem?.productName || firstItem?.skuNumber || orderNumber,
-      fileURL:
-        firstItem?.stl ||
-        firstItem?.publicFileServiceId ||
-        `slant3d:${publicOrderId}`,
-      shipToName: fullName,
-      shipToStreet1: profile.shippingAddress,
-      shipToStreet2: '',
-      shipToCity: profile.city,
-      shipToState: profile.state,
-      shipToZip: profile.zipCode,
-      shipToCountryISO: 'US',
-      billToStreet1: profile.shippingAddress,
-      billToStreet2: '',
-      billToCity: profile.city,
-      billToState: profile.state,
-      billToZip: profile.zipCode,
-      billToCountryISO: 'US',
-      status: 'processing',
-      slantStatus: 'PROCESSING',
-      slantPublicOrderId: publicOrderId,
-      stripeCheckoutSessionId: input.stripeCheckoutSessionId ?? null,
-      stripePaymentIntentId: input.stripePaymentIntentId ?? null,
-      stripeEventId: input.stripeEventId,
-      customerEmail: profile.email || input.customerEmail || null,
-      totalAmountCents: calculateTotalAmountCents(items),
-      currency: 'usd',
-      itemSnapshot: JSON.stringify(itemSnapshot),
-      customerSnapshot: JSON.stringify(customerSnapshot),
-      createdAt: now,
-      updatedAt: now,
-      processedAt: now,
-    })
-    .returning({ id: ordersTable.id });
-
-  if (!localOrder?.id) {
-    throw new Error('Failed to persist processed order');
-  }
-
-  await c.var.db.insert(orderEventsTable).values({
-    orderId: localOrder.id,
-    type: 'stripe_fulfillment_processed',
-    detail: `Stripe payment processed into Slant3D order ${publicOrderId}`,
-    actor: 'stripe',
-    externalEventId: input.stripeEventId,
-    source: 'stripe',
-    previousStatus: 'paid',
-    nextStatus: 'PROCESSING',
-    metadata: JSON.stringify({
-      cartId: input.cartId,
-      stripeObjectId: input.stripeObjectId,
-      stripeCheckoutSessionId: input.stripeCheckoutSessionId,
-      stripePaymentIntentId: input.stripePaymentIntentId,
-      slantPublicOrderId: publicOrderId,
-    }),
-    createdAt: now,
-  });
-
-  return localOrder.id;
-}
-
-function buildSlantDraftPayload(args: {
-  c: Context;
-  input: StripeFulfillmentInput;
-  profile: ShippingProfile;
-  items: CartFulfillmentItem[];
-  orderNumber: string;
-}) {
-  const { c, input, profile, items, orderNumber } = args;
-  const fullName =
-    `${profile.firstName} ${profile.lastName}`.trim() || profile.email;
-
-  return {
-    orderNumber,
-    platformId: c.env.SLANT_PLATFORM_ID,
-    customer: {
-      email: profile.email || input.customerEmail || 'guest@example.com',
-      phone: normalizePhone(profile.phone || ''),
-      name: fullName,
-    },
-    billingAddress: {
-      street1: profile.shippingAddress,
-      street2: '',
-      city: profile.city,
-      state: profile.state,
-      zipCode: profile.zipCode,
-      country: 'US',
-      isResidential: true,
-    },
-    shippingAddress: {
-      name: fullName,
-      street1: profile.shippingAddress,
-      street2: '',
-      city: profile.city,
-      state: profile.state,
-      zipCode: profile.zipCode,
-      country: 'US',
-      isResidential: true,
-    },
-    items: items.map(item => {
-      if (!item.publicFileServiceId) {
-        throw new Error('Missing publicFileServiceId');
-      }
-
-      return {
-        name: item.productName,
-        sku: item.skuNumber,
-        quantity: item.quantity,
-        publicFileServiceId: item.publicFileServiceId,
-        filamentId: item.filamentId || DEFAULT_SLANT_FILAMENT_ID,
-        color: normalizeColor(item.color),
-        profile: item.filamentType,
-      };
-    }),
-    metadata: {
-      cartId: input.cartId,
-      stripeEventId: input.stripeEventId,
-      stripeObjectId: input.stripeObjectId,
-      idempotencyKey: input.idempotencyKey,
-    },
-  };
-}
-
-function extractSlantOrderId(payload: unknown): string | undefined {
-  if (!payload || typeof payload !== 'object') {
-    return undefined;
-  }
-
-  const response = payload as {
-    publicOrderId?: string;
-    orderId?: string;
-    data?: {
-      publicOrderId?: string;
-      orderId?: string;
-      id?: string;
-    };
-  };
-
-  return (
-    response.publicOrderId ||
-    response.orderId ||
-    response.data?.publicOrderId ||
-    response.data?.orderId ||
-    response.data?.id
-  );
 }
 
 const paymentsRouter = factory
@@ -626,129 +375,53 @@ const paymentsRouter = factory
           return c.json({ error: 'Order processing failed' }, 500);
         }
 
-        const orderNumber = generateOrderNumber();
-        const draftPayload = buildSlantDraftPayload({
-          c,
-          input,
-          profile,
-          items,
-          orderNumber,
+        const fulfillment = createPaidOrderFulfillment({
+          db: c.var.db,
+          env: c.env,
         });
-
-        const authHeaders = {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${c.env.SLANT_API_V2}`,
-        };
-
-        let publicOrderId: string | undefined;
+        let completed: Awaited<ReturnType<typeof fulfillment.fulfillPaidOrder>>;
         try {
-          const draftResponse = await fetch(`${BASE_URL_V2}orders`, {
-            method: 'POST',
-            headers: authHeaders,
-            body: JSON.stringify(draftPayload),
+          completed = await fulfillment.fulfillPaidOrder({
+            fulfillment: input,
+            profile: profile as PaidOrderProfile,
+            items,
           });
-
-          if (!draftResponse.ok) {
-            console.error('Slant3D order draft failed:', draftResponse.status);
-            await sendAdminFailureAlert({
-              db: c.var.db,
-              env: c.env,
-              source: 'stripe',
-              statusTransition: 'slant_draft_failed',
-              reason: 'Slant3D order draft failed after Stripe payment',
-              details: `Stripe event ${input.stripeEventId}, object ${input.stripeObjectId}, HTTP ${draftResponse.status}`,
-            });
-            return c.json({ error: 'Order draft failed' }, 502);
-          }
-
-          const draftData = await draftResponse.json();
-          publicOrderId = extractSlantOrderId(draftData);
-
-          if (!publicOrderId) {
-            console.error('Slant3D draft response missing public order id');
-            await sendAdminFailureAlert({
-              db: c.var.db,
-              env: c.env,
-              source: 'stripe',
-              statusTransition: 'slant_draft_missing_order_id',
-              reason: 'Slant3D draft response missed the public order id',
-              details: `Stripe event ${input.stripeEventId}, object ${input.stripeObjectId}`,
-            });
-            return c.json({ error: 'Order draft failed' }, 502);
-          }
         } catch (error) {
-          console.error('Error drafting Slant3D order:', error);
+          const stage =
+            error instanceof Error && 'stage' in error
+              ? (error as { stage: 'draft' | 'process' }).stage
+              : 'draft';
+          const status =
+            error instanceof Error && 'status' in error
+              ? (error as { status?: number }).status
+              : undefined;
+          const message =
+            error instanceof Error ? error.message : String(error);
           await sendAdminFailureAlert({
             db: c.var.db,
             env: c.env,
             source: 'stripe',
-            statusTransition: 'slant_draft_exception',
-            reason: 'Slant3D order draft threw after Stripe payment',
-            details: error instanceof Error ? error.message : String(error),
+            statusTransition: `slant_${stage}_failed`,
+            reason: `Slant3D order ${stage} failed after Stripe payment`,
+            details: `Stripe event ${input.stripeEventId}, object ${input.stripeObjectId}${status ? `, HTTP ${status}` : ''}: ${message}`,
           });
-          return c.json({ error: 'Order draft failed' }, 502);
-        }
-
-        try {
-          const processResponse = await fetch(
-            `${BASE_URL_V2}orders/${publicOrderId}`,
+          return c.json(
             {
-              method: 'POST',
-              headers: authHeaders,
-              body: JSON.stringify({
-                orderNumber,
-                metadata: {
-                  stripeEventId: input.stripeEventId,
-                  stripeObjectId: input.stripeObjectId,
-                  idempotencyKey: input.idempotencyKey,
-                },
-              }),
+              error:
+                stage === 'draft'
+                  ? 'Order draft failed'
+                  : 'Order process failed',
             },
+            502,
           );
-
-          if (!processResponse.ok) {
-            console.error(
-              'Slant3D order process failed:',
-              processResponse.status,
-            );
-            await sendAdminFailureAlert({
-              db: c.var.db,
-              env: c.env,
-              source: 'stripe',
-              statusTransition: 'slant_process_failed',
-              reason: 'Slant3D order process failed after Stripe payment',
-              details: `Stripe event ${input.stripeEventId}, object ${input.stripeObjectId}, Slant order ${publicOrderId}, HTTP ${processResponse.status}`,
-            });
-            return c.json({ error: 'Order process failed' }, 502);
-          }
-        } catch (error) {
-          console.error('Error processing Slant3D order:', error);
-          await sendAdminFailureAlert({
-            db: c.var.db,
-            env: c.env,
-            source: 'stripe',
-            statusTransition: 'slant_process_exception',
-            reason: 'Slant3D order process threw after Stripe payment',
-            details: error instanceof Error ? error.message : String(error),
-          });
-          return c.json({ error: 'Order process failed' }, 502);
         }
-
-        const localOrderId = await persistProcessedOrder({
-          c,
-          input,
-          profile,
-          items,
-          orderNumber,
-          publicOrderId,
-        });
 
         await sendOrderNotification({
           db: c.var.db,
           env: c.env,
           order: {
-            id: localOrderId,
-            orderNumber,
+            id: completed.localOrderId,
+            orderNumber: completed.orderNumber,
             customerEmail: profile.email || input.customerEmail || null,
             status: 'processing',
             slantStatus: 'PROCESSING',
@@ -764,14 +437,14 @@ const paymentsRouter = factory
           stripeObjectId: input.stripeObjectId,
           cartId: input.cartId,
           status: 'processed',
-          slantOrderId: publicOrderId,
+          slantOrderId: completed.publicOrderId,
         });
 
         await c.var.db.delete(cart).where(eq(cart.cartId, input.cartId));
 
         return c.json({
           success: true,
-          orderId: publicOrderId,
+          orderId: completed.publicOrderId,
         });
       } catch (err) {
         console.error('Webhook signature verification failed:', err);

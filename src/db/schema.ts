@@ -240,10 +240,12 @@ export const verification = sqliteTable('verification', {
   identifier: text('identifier').notNull(),
   value: text('value').notNull(),
   expiresAt: integer('expires_at', { mode: 'timestamp_ms' }).notNull(),
-  createdAt: integer('created_at', { mode: 'timestamp_ms' })
-    .default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`),
-  updatedAt: integer('updated_at', { mode: 'timestamp_ms' })
-    .default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`),
+  createdAt: integer('created_at', { mode: 'timestamp_ms' }).default(
+    sql`(cast(unixepoch('subsecond') * 1000 as integer))`,
+  ),
+  updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).default(
+    sql`(cast(unixepoch('subsecond') * 1000 as integer))`,
+  ),
 });
 
 export const passkey = sqliteTable('passkey', {
@@ -515,8 +517,19 @@ const addProductBaseSchema = z.object({
   categoryId: z.union([z.number().int(), z.array(z.number().int())]).optional(),
 });
 
-const requiresMarkupPercentage = (data: z.infer<typeof addProductBaseSchema>) =>
-  data.price !== undefined || data.markupPercentage !== undefined;
+const requiresMarkupPercentage = (data: {
+  price?: number;
+  markupPercentage?: number;
+}) => data.price !== undefined || data.markupPercentage !== undefined;
+
+const addProductV2BaseSchema = addProductBaseSchema.extend({
+  stl: z
+    .string()
+    .optional()
+    .describe(
+      'Deprecated compatibility field. Use publicFileServiceId as the durable Slant3D print file reference.',
+    ),
+});
 
 export const addProductSchema = addProductBaseSchema.refine(
   requiresMarkupPercentage,
@@ -526,7 +539,7 @@ export const addProductSchema = addProductBaseSchema.refine(
   },
 );
 
-export const addProductV2Schema = addProductBaseSchema
+export const addProductV2Schema = addProductV2BaseSchema
   .extend({
     publicFileServiceId: z
       .string()

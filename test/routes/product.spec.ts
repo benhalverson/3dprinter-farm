@@ -122,6 +122,92 @@ describe('Product Routes', () => {
     const data = (await res.json()) as { id: number; name: string }[];
     expect(Array.isArray(data)).toBe(true);
     expect(data[0]).toMatchObject({ id: 1 });
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+  });
+
+  test('GET /products hydrates STL URLs from Slant file IDs', async () => {
+    mockAll.mockResolvedValueOnce([
+      {
+        id: 1,
+        name: 'Hydrated Product',
+        imageGallery: null,
+        stl: 'file_123',
+        publicFileServiceId: 'file_123',
+      },
+    ]);
+    (
+      globalThis.fetch as unknown as ReturnType<typeof vi.fn>
+    ).mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        data: {
+          publicFileServiceId: 'file_123',
+          fileURL: 'https://slant3d.com/files/fresh-model.stl',
+        },
+      }),
+    } as Response);
+
+    const request = new Request('http://localhost/products', {
+      method: 'GET',
+    });
+
+    const res = await app.fetch(request, mockEnv());
+
+    expect(res.status).toBe(200);
+    const data = (await res.json()) as Array<{
+      stl: string;
+      publicFileServiceId: string;
+    }>;
+    expect(data[0]).toMatchObject({
+      stl: 'https://slant3d.com/files/fresh-model.stl',
+      publicFileServiceId: 'file_123',
+    });
+    expect(globalThis.fetch).toHaveBeenCalledWith(
+      'https://slant3dapi.com/v2/api/files/file_123',
+      expect.objectContaining({
+        method: 'GET',
+        headers: expect.objectContaining({
+          Authorization: 'Bearer fake-api-key-v2',
+        }),
+      }),
+    );
+  });
+
+  test('GET /products falls back to stored STL when Slant hydration fails', async () => {
+    const consoleError = vi
+      .spyOn(console, 'error')
+      .mockImplementation(() => undefined);
+    mockAll.mockResolvedValueOnce([
+      {
+        id: 1,
+        name: 'Legacy Product',
+        imageGallery: null,
+        stl: 'legacy-or-file-id',
+        publicFileServiceId: 'file_123',
+      },
+    ]);
+    (
+      globalThis.fetch as unknown as ReturnType<typeof vi.fn>
+    ).mockResolvedValueOnce({
+      ok: false,
+      status: 404,
+      text: async () => JSON.stringify({ error: 'File not found' }),
+    } as Response);
+
+    const request = new Request('http://localhost/products', {
+      method: 'GET',
+    });
+
+    const res = await app.fetch(request, mockEnv());
+
+    expect(res.status).toBe(200);
+    const data = (await res.json()) as Array<{ stl: string }>;
+    expect(data[0].stl).toBe('legacy-or-file-id');
+    expect(consoleError).toHaveBeenCalledWith(
+      'Failed to hydrate Slant3D file URL:',
+      expect.objectContaining({ publicFileServiceId: 'file_123' }),
+    );
+    consoleError.mockRestore();
   });
 
   test('GET /product/:id returns single product', async () => {
@@ -142,6 +228,42 @@ describe('Product Routes', () => {
     expect(res.status).toBe(200);
     const data = (await res.json()) as { id: number };
     expect(data).toMatchObject({ id: 1 });
+  });
+
+  test('GET /product/:id hydrates STL URL from Slant file ID', async () => {
+    mockWhere.mockReturnValueOnce({
+      all: vi.fn().mockResolvedValueOnce([
+        {
+          id: 1,
+          name: 'Hydrated Product',
+          imageGallery: null,
+          stl: 'file_123',
+          publicFileServiceId: 'file_123',
+        },
+      ]),
+    });
+    mockAll.mockResolvedValueOnce([]);
+    (
+      globalThis.fetch as unknown as ReturnType<typeof vi.fn>
+    ).mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        data: {
+          publicFileServiceId: 'file_123',
+          fileURL: 'https://slant3d.com/files/detail-model.stl',
+        },
+      }),
+    } as Response);
+
+    const request = new Request('http://localhost/product/1', {
+      method: 'GET',
+    });
+
+    const res = await app.fetch(request, mockEnv());
+
+    expect(res.status).toBe(200);
+    const data = (await res.json()) as { stl: string };
+    expect(data.stl).toBe('https://slant3d.com/files/detail-model.stl');
   });
 
   test('GET /product/:id returns 404 if not found', async () => {
@@ -174,6 +296,48 @@ describe('Product Routes', () => {
     expect(res.status).toBe(400);
     const data = (await res.json()) as { error: string };
     expect(data.error).toContain('at least 2 characters');
+  });
+
+  test('GET /products/search hydrates STL URLs from Slant file IDs', async () => {
+    mockWhere.mockResolvedValueOnce([{ count: 1 }]);
+    mockWhere.mockReturnValueOnce({
+      limit: () => ({
+        offset: () => ({
+          all: vi.fn().mockResolvedValueOnce([
+            {
+              id: 1,
+              name: 'Hydrated Product',
+              imageGallery: null,
+              stl: 'file_123',
+              publicFileServiceId: 'file_123',
+            },
+          ]),
+        }),
+      }),
+    });
+    (
+      globalThis.fetch as unknown as ReturnType<typeof vi.fn>
+    ).mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        data: {
+          publicFileServiceId: 'file_123',
+          fileURL: 'https://slant3d.com/files/search-model.stl',
+        },
+      }),
+    } as Response);
+
+    const request = new Request('http://localhost/products/search?q=hydrated', {
+      method: 'GET',
+    });
+
+    const res = await app.fetch(request, mockEnv());
+
+    expect(res.status).toBe(200);
+    const data = (await res.json()) as { products: Array<{ stl: string }> };
+    expect(data.products[0].stl).toBe(
+      'https://slant3d.com/files/search-model.stl',
+    );
   });
 
   test('GET /admin/catalog/readiness returns checkout diagnostics for admins', async () => {
@@ -643,7 +807,6 @@ describe('Product Routes', () => {
       body: JSON.stringify({
         name: 'V2 Product',
         description: 'desc',
-        stl: 'https://slant3d.com/files/test-file.stl',
         publicFileServiceId: 'file_123',
         markupPercentage: 15,
         image: 'url/to/image.jpg',
@@ -666,7 +829,7 @@ describe('Product Routes', () => {
     });
     expect(capturedInserts[0]).toMatchObject({
       price: 11.5,
-      stl: 'https://slant3d.com/files/test-file.stl',
+      stl: 'file_123',
       publicFileServiceId: 'file_123',
     });
 
@@ -679,6 +842,45 @@ describe('Product Routes', () => {
         filamentId: DEFAULT_PLA_BLACK_FILAMENT_ID,
         quantity: 1,
       },
+    });
+  });
+
+  test('POST /v2/add-product ignores deprecated STL URLs on insert', async () => {
+    mockSessionRole('admin');
+    mockV2AddProductDependencies();
+    mockInsert.mockResolvedValueOnce([
+      {
+        id: 8,
+        name: 'V2 Product',
+        price: 15,
+        skuNumber: 'SKU-V2',
+      },
+    ]);
+
+    const request = new Request('http://localhost/v2/add-product', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Cookie: fakeSignedCookie,
+      },
+      body: JSON.stringify({
+        name: 'V2 Product',
+        description: 'desc',
+        stl: 'https://slant3d.com/files/expiring-file-url.stl',
+        publicFileServiceId: 'file_123',
+        markupPercentage: 15,
+        image: 'url/to/image.jpg',
+        filamentType: 'PLA',
+        color: '#ffffff',
+      }),
+    });
+
+    const res = await app.fetch(request, mockEnv());
+
+    expect(res.status).toBe(201);
+    expect(capturedInserts[0]).toMatchObject({
+      stl: 'file_123',
+      publicFileServiceId: 'file_123',
     });
   });
 
