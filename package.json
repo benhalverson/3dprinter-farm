@@ -38,7 +38,7 @@
     "@hono/zod-openapi": "^0.19.7",
     "@hono/zod-validator": "^0.2.2",
     "@scalar/hono-api-reference": "^0.9.1",
-    "@simplewebauthn/server": "^13.1.1",
+    "@simplewebauthn/server": "^13.3.2",
     "better-auth": "^1.5.4",
     "cipher-kit": "3.0.0",
     "drizzle-orm": "^0.43.1",
