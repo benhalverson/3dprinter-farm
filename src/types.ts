@@ -21,7 +21,7 @@ import type { orderSchema } from './db/schema';
  *  - SLANT_API_V2      – Slant3D v2 API bearer token
  *  - SLANT_API_V2_BASE_URL – Optional override for the Slant3D v2 API origin
  *  - SLANT_PLATFORM_ID – Slant3D platform identifier
- *  - STRIPE_SECRET_KEY / STRIPE_WEBHOOK_SECRET – Stripe credentials
+ *  - SQUARE_*         – Square payment credentials and environment settings
  *  - SLANT_WEBHOOK_SECRET – Optional Slant3D platform webhook shared secret
  *  - DOMAIN            – Public base URL (e.g. https://rc-store.benhalverson.dev)
  *  - JWT_SECRET        – Secret for JWT signing
@@ -42,8 +42,12 @@ export type Bindings = {
   SLANT_API_V2_BASE_URL?: string;
   SLANT_PLATFORM_ID: string;
   SLANT_WEBHOOK_SECRET?: string;
-  STRIPE_SECRET_KEY: string;
-  STRIPE_WEBHOOK_SECRET: string;
+  SQUARE_ACCESS_TOKEN: string;
+  SQUARE_LOCATION_ID: string;
+  SQUARE_WEBHOOK_SIGNATURE_KEY: string;
+  SQUARE_WEBHOOK_URL: string;
+  SQUARE_ENVIRONMENT?: 'sandbox' | 'production';
+  SQUARE_API_VERSION?: string;
   DOMAIN: string;
   /** Primary D1 SQLite database */
   DB: D1Database;
@@ -230,11 +234,4 @@ export interface Slant3DOrderResponse {
 // Test response types
 export interface PaymentStatusResponse {
   status: string;
-}
-
-export interface StripeWebhookResponse {
-  success?: boolean;
-  orderId?: string;
-  error?: string;
-  received?: boolean;
 }

@@ -12,29 +12,6 @@ import {
 } from '../mocks/drizzle';
 import { mockEnv } from '../mocks/env';
 
-// Mock Stripe to prevent network calls
-vi.mock('stripe', () => {
-  return {
-    default: vi.fn().mockImplementation(() => ({
-      products: {
-        create: vi.fn().mockResolvedValue({
-          id: 'prod_test123',
-          name: 'Test Product',
-          description: 'Test Description',
-        }),
-      },
-      prices: {
-        create: vi.fn().mockResolvedValue({
-          id: 'price_test123',
-          product: 'prod_test123',
-          unit_amount: 1000,
-          currency: 'usd',
-        }),
-      },
-    })),
-  };
-});
-
 // This cookie value matches what your mockAuth is expecting
 const fakeSignedCookie = 'token=s.mocked.signed.cookie';
 
@@ -347,14 +324,12 @@ describe('Product Routes', () => {
         id: 1,
         skuNumber: 'READY-001',
         name: 'Ready Product',
-        stripePriceId: 'price_ready',
         publicFileServiceId: 'file_ready',
       },
       {
         id: 2,
         skuNumber: 'BROKEN-001',
         name: 'Broken Product',
-        stripePriceId: null,
         publicFileServiceId: null,
       },
     ]);
@@ -400,7 +375,7 @@ describe('Product Routes', () => {
     expect(data.products[1]).toMatchObject({
       productId: 2,
       checkoutReady: false,
-      reasons: ['missing_stripe_price_id', 'missing_public_file_service_id'],
+      reasons: ['missing_public_file_service_id'],
     });
   });
 
@@ -411,7 +386,6 @@ describe('Product Routes', () => {
         id: 1,
         skuNumber: 'READY-001',
         name: 'Ready Product',
-        stripePriceId: 'price_ready',
         publicFileServiceId: 'file_ready',
       },
     ]);

@@ -23,8 +23,8 @@ function makeOrder(overrides: Partial<OrderRecord> = {}): OrderRecord {
     status: 'pending',
     slantStatus: null,
     slantPublicOrderId: null,
-    stripeCheckoutSessionId: null,
-    stripePaymentIntentId: null,
+    paymentProviderOrderId: null,
+    paymentProviderPaymentId: null,
     customerEmail: 'customer@example.com',
     shipToName: 'John Doe',
     shipToStreet1: '123 Main St',
@@ -89,14 +89,14 @@ function matchesFilters(
     return false;
   }
   if (
-    filters.stripeCheckoutSessionId &&
-    order.stripeCheckoutSessionId !== filters.stripeCheckoutSessionId
+    filters.paymentProviderOrderId &&
+    order.paymentProviderOrderId !== filters.paymentProviderOrderId
   ) {
     return false;
   }
   if (
-    filters.stripePaymentIntentId &&
-    order.stripePaymentIntentId !== filters.stripePaymentIntentId
+    filters.paymentProviderPaymentId &&
+    order.paymentProviderPaymentId !== filters.paymentProviderPaymentId
   ) {
     return false;
   }
@@ -238,8 +238,8 @@ describe('AdminOrderOperations', () => {
           status: 'failed',
           slantStatus: 'error',
           slantPublicOrderId: 'slant_1',
-          stripeCheckoutSessionId: 'cs_1',
-          stripePaymentIntentId: 'pi_1',
+          paymentProviderOrderId: 'cs_1',
+          paymentProviderPaymentId: 'pi_1',
           customerEmail: 'customer@example.com',
           createdAt: '2024-06-01T00:00:00Z',
         }),
@@ -249,8 +249,8 @@ describe('AdminOrderOperations', () => {
           status: 'pending',
           slantStatus: null,
           slantPublicOrderId: 'slant_2',
-          stripeCheckoutSessionId: 'cs_2',
-          stripePaymentIntentId: 'pi_2',
+          paymentProviderOrderId: 'cs_2',
+          paymentProviderPaymentId: 'pi_2',
           customerEmail: 'other@example.com',
           createdAt: '2024-07-01T00:00:00Z',
         }),
@@ -263,8 +263,8 @@ describe('AdminOrderOperations', () => {
       email: 'customer@example.com',
       orderNumber: 'ORD-001',
       slantPublicOrderId: 'slant_1',
-      stripeCheckoutSessionId: 'cs_1',
-      stripePaymentIntentId: 'pi_1',
+      paymentProviderOrderId: 'cs_1',
+      paymentProviderPaymentId: 'pi_1',
       createdAfter: '2024-01-01',
       createdBefore: '2024-12-31',
       q: 'customer',

@@ -12,8 +12,8 @@ export type AdminOrderListFilters = Partial<{
   email: string;
   orderNumber: string;
   slantPublicOrderId: string;
-  stripeCheckoutSessionId: string;
-  stripePaymentIntentId: string;
+  paymentProviderOrderId: string;
+  paymentProviderPaymentId: string;
   createdAfter: string;
   createdBefore: string;
   q: string;
@@ -320,14 +320,17 @@ function buildListConditions(filters: AdminOrderListFilters) {
       eq(ordersTable.slantPublicOrderId, filters.slantPublicOrderId),
     );
   }
-  if (filters.stripeCheckoutSessionId) {
+  if (filters.paymentProviderOrderId) {
     conditions.push(
-      eq(ordersTable.stripeCheckoutSessionId, filters.stripeCheckoutSessionId),
+      eq(ordersTable.paymentProviderOrderId, filters.paymentProviderOrderId),
     );
   }
-  if (filters.stripePaymentIntentId) {
+  if (filters.paymentProviderPaymentId) {
     conditions.push(
-      eq(ordersTable.stripePaymentIntentId, filters.stripePaymentIntentId),
+      eq(
+        ordersTable.paymentProviderPaymentId,
+        filters.paymentProviderPaymentId,
+      ),
     );
   }
   if (filters.createdAfter) {

@@ -8,10 +8,10 @@ import adminOrders from './routes/adminOrders';
 import auth from './routes/auth';
 import email from './routes/email';
 import ordersRouter from './routes/orders';
-import paymentsRouter from './routes/payments';
 import printer from './routes/printer';
 import product from './routes/product';
 import shoppingCart from './routes/shoppingCart';
+import squarePayments from './routes/squarePayments';
 import userRouter from './routes/users';
 import { validateBindings } from './utils/validateBindings';
 
@@ -26,7 +26,7 @@ const app = factory
         'http://localhost:8787',
         'https://rc-store.benhalverson.dev',
         'https://rc-admin.pages.dev',
-				'https://api.benhalverson.dev',
+        'https://api.benhalverson.dev',
         'https://race-forge.com',
       ],
       credentials: true,
@@ -49,8 +49,8 @@ const app = factory
   .route('/', userRouter)
   .route('/', printer)
   .route('/', email)
-  .route('/', paymentsRouter)
   .route('/', shoppingCart)
+  .route('/', squarePayments)
   .route('/', ordersRouter)
   .route('/', adminOrders);
 

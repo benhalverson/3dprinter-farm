@@ -52,7 +52,7 @@ describe('order notifications', () => {
       order,
       type: 'order_confirmation',
       statusTransition: 'paid_to_processing',
-      source: 'stripe',
+      source: 'square',
     });
 
     expect(result).toEqual({ status: 'sent', providerMessageId: '123456' });
@@ -64,7 +64,7 @@ describe('order notifications', () => {
         status: 'sent',
         providerMessageId: '123456',
         statusTransition: 'paid_to_processing',
-        source: 'stripe',
+        source: 'square',
       }),
     ]);
   });
@@ -78,7 +78,7 @@ describe('order notifications', () => {
       order,
       type: 'order_confirmation',
       statusTransition: 'paid_to_processing',
-      source: 'stripe',
+      source: 'square',
     });
 
     expect(result).toEqual({ status: 'skipped', duplicate: true });
@@ -140,7 +140,7 @@ describe('order notifications', () => {
     const result = await sendAdminFailureAlert({
       db,
       env: mockEnv(),
-      source: 'stripe',
+      source: 'square',
       statusTransition: 'slant_draft_failed',
       reason: 'Slant draft failed',
       details: 'HTTP 500',

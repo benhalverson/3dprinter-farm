@@ -39,9 +39,6 @@ describe('API endpoints', () => {
     expect(spec.paths).toBeDefined();
     expect(Object.keys(spec.paths ?? {})).toEqual(
       expect.arrayContaining([
-        '/cart/{cartId}/checkout',
-        '/cart/{cartId}/payment-intent',
-        '/webhook/stripe',
         '/orders',
         '/orders/{id}',
         '/webhook/slant3d',

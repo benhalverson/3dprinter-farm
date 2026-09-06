@@ -3,7 +3,6 @@ import { count, eq, inArray, like, or } from 'drizzle-orm';
 import type { ContentfulStatusCode } from 'hono/utils/http-status';
 import { describeRoute } from 'hono-openapi';
 import { resolver } from 'hono-openapi/zod';
-import Stripe from 'stripe';
 import { ZodError, z } from 'zod';
 
 type OpenAPISchema = Record<string, unknown>;
@@ -253,7 +252,7 @@ const product = factory
         const totalItems = totalCountResult.count;
         const totalPages = Math.ceil(totalItems / limit);
 
-        // Get paginated results without Stripe fields
+        // Get paginated storefront-safe results.
         const rawProducts = await c.var.db
           .select({
             id: productsTable.id,
@@ -473,7 +472,7 @@ const product = factory
     requireCatalogMutationRole,
     describeRoute({
       description:
-        'List product checkout readiness diagnostics for admins. The response identifies missing Stripe prices, missing Slant3D file IDs, and default filament availability problems before customers reach checkout.',
+        'List product checkout readiness diagnostics for admins. The response identifies missing Slant3D file IDs and default filament availability problems before customers reach checkout.',
       tags: ['Products', 'Admin Catalog'],
       responses: {
         200: {
@@ -516,7 +515,6 @@ const product = factory
           id: productsTable.id,
           skuNumber: productsTable.skuNumber,
           name: productsTable.name,
-          stripePriceId: productsTable.stripePriceId,
           publicFileServiceId: productsTable.publicFileServiceId,
         })
         .from(productsTable)
@@ -561,9 +559,6 @@ const product = factory
     }),
     zValidator('json', addProductSchema),
     async c => {
-      const stripe = new Stripe(c.env.STRIPE_SECRET_KEY, {
-        telemetry: false,
-      });
       const user = c.get('jwtPayload') as
         | { id: string; email: string }
         | undefined;
@@ -605,16 +600,6 @@ const product = factory
 
       const skuNumber = generateSkuNumber(data.name);
 
-      const stripeProduct = await stripe.products.create({
-        name: data.name,
-        description: data.description,
-        images: [data.image],
-        shippable: true,
-        metadata: {
-          sku_number: skuNumber,
-        },
-      });
-
       const slicingResponse = await fetch(`${BASE_URL}slicer`, {
         method: 'POST',
         headers: {
@@ -643,16 +628,6 @@ const product = factory
         requestedMarkupPercentage,
       );
 
-      let stripePriceId = null;
-      if (markupPrice) {
-        const price = await stripe.prices.create({
-          product: stripeProduct.id,
-          unit_amount: Math.round(markupPrice * 100), // Stripe expects the amount in cents
-          currency: 'usd',
-        });
-        stripePriceId = price.id;
-      }
-
       console.log('data.imageGallery before insertion', imageGallery);
       // Use first category as primary if provided; otherwise leave null
       const primaryCategoryId =
@@ -664,8 +639,6 @@ const product = factory
         ...productFields,
         price: markupPrice,
         skuNumber: skuNumber,
-        stripeProductId: stripeProduct.id,
-        stripePriceId: stripePriceId,
         imageGallery: JSON.stringify(imageGallery || []),
         categoryId: primaryCategoryId,
       };
@@ -776,9 +749,6 @@ const product = factory
     zValidator('json', addProductV2Schema),
     async c => {
       try {
-        const stripe = new Stripe(c.env.STRIPE_SECRET_KEY, {
-          telemetry: false,
-        });
         const user = c.get('jwtPayload') as
           | { id: string; email: string }
           | undefined;
@@ -895,27 +865,6 @@ const product = factory
 
         console.log('Final markup price:', markupPrice);
 
-        // Create Stripe product and price after Slant3D succeeds
-        const stripeProduct = await stripe.products.create({
-          name: data.name,
-          description: data.description,
-          images: [data.image],
-          shippable: true,
-          metadata: {
-            sku_number: skuNumber,
-          },
-        });
-
-        let stripePriceId = null;
-        if (markupPrice && markupPrice > 0) {
-          const price = await stripe.prices.create({
-            product: stripeProduct.id,
-            unit_amount: Math.round(markupPrice * 100),
-            currency: 'usd',
-          });
-          stripePriceId = price.id;
-        }
-
         // Insert into database
         const primaryCategoryId =
           normalizedCategoryIds && normalizedCategoryIds.length > 0
@@ -926,8 +875,6 @@ const product = factory
           ...productFields,
           price: markupPrice,
           skuNumber: skuNumber,
-          stripeProductId: stripeProduct.id,
-          stripePriceId: stripePriceId,
           imageGallery: JSON.stringify(imageGallery || []),
           categoryId: primaryCategoryId,
           stl: publicFileServiceId,

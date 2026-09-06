@@ -1,7 +1,6 @@
 import { eq } from 'drizzle-orm';
 import { describeRoute } from 'hono-openapi';
 import { resolver } from 'hono-openapi/zod';
-import Stripe from 'stripe';
 import { z } from 'zod';
 import { createSchema } from 'zod-openapi';
 import { BASE_URL_V2 } from '../constants';
@@ -19,6 +18,7 @@ import {
   sendAdminFailureAlert,
   sendOrderNotification,
 } from '../modules/orderNotifications';
+import { refundSquarePayment } from '../modules/squareClient';
 import {
   authMiddleware,
   requireCatalogMutationRole,
@@ -46,8 +46,8 @@ const orderDetailSchema = z.object({
   status: z.string().nullable(),
   slantStatus: z.string().nullable(),
   slantPublicOrderId: z.string().nullable(),
-  stripeCheckoutSessionId: z.string().nullable(),
-  stripePaymentIntentId: z.string().nullable(),
+  paymentProviderOrderId: z.string().nullable(),
+  paymentProviderPaymentId: z.string().nullable(),
   customerEmail: z.string().nullable(),
   shipToName: z.string(),
   shipToStreet1: z.string(),
@@ -94,8 +94,8 @@ const cancelRefundResponseSchema = z.object({
   orderId: z.number(),
   status: z.string(),
   slantStatus: z.string().nullable(),
-  stripeRefundId: z.string().nullable(),
-  stripeRefundStatus: z.string().nullable(),
+  paymentRefundId: z.string().nullable(),
+  paymentRefundStatus: z.string().nullable(),
 });
 
 const reconcileResponseSchema = z.object({
@@ -234,8 +234,8 @@ function orderStartingState(order: typeof ordersTable.$inferSelect) {
     status: order.status,
     slantStatus: order.slantStatus,
     slantPublicOrderId: order.slantPublicOrderId,
-    stripeCheckoutSessionId: order.stripeCheckoutSessionId,
-    stripePaymentIntentId: order.stripePaymentIntentId,
+    paymentProviderOrderId: order.paymentProviderOrderId,
+    paymentProviderPaymentId: order.paymentProviderPaymentId,
     cartId: order.cartId,
     hasItemSnapshot: Boolean(order.itemSnapshot),
     hasCustomerSnapshot: Boolean(order.customerSnapshot),
@@ -431,7 +431,7 @@ const adminOrders = factory
     requireCatalogMutationRole,
     describeRoute({
       description:
-        'Cancel an eligible Slant3D order and refund the Stripe payment (admin only)',
+        'Cancel an eligible Slant3D order and refund the Square payment (admin only)',
       tags: ['Admin Orders'],
       requestBody: {
         content: {
@@ -468,7 +468,7 @@ const adminOrders = factory
         },
         502: {
           content: { 'application/json': { schema: resolver(errorSchema) } },
-          description: 'Slant3D or Stripe refund failed',
+          description: 'Slant3D or Square refund failed',
         },
       },
     }),
@@ -504,7 +504,7 @@ const adminOrders = factory
         .all();
       const successfulAttempt = attempts.find(
         attempt =>
-          attempt.stripeRefundId ||
+          attempt.paymentRefundId ||
           attempt.finalStatus === 'refunded' ||
           attempt.finalStatus === 'canceled_refunded',
       );
@@ -516,8 +516,8 @@ const adminOrders = factory
           orderId: order.id,
           status: order.status ?? 'canceled',
           slantStatus: order.slantStatus,
-          stripeRefundId: successfulAttempt.stripeRefundId,
-          stripeRefundStatus: successfulAttempt.stripeRefundStatus,
+          paymentRefundId: successfulAttempt.paymentRefundId,
+          paymentRefundStatus: successfulAttempt.paymentRefundStatus,
         });
       }
 
@@ -546,7 +546,11 @@ const adminOrders = factory
         );
       }
 
-      if (!order.stripePaymentIntentId) {
+      if (
+        order.paymentProvider !== 'square' ||
+        !order.paymentProviderPaymentId ||
+        !order.totalAmountCents
+      ) {
         await c.var.db.insert(orderCancellationAttemptsTable).values({
           orderId: order.id,
           actorId: actor.id,
@@ -554,14 +558,14 @@ const adminOrders = factory
           reason: parsed.data.reason ?? null,
           override,
           slantStatus: order.slantStatus,
-          finalStatus: 'missing_stripe_payment_intent',
-          errorMessage: 'Order is missing Stripe payment intent ID.',
+          finalStatus: 'missing_payment_id',
+          errorMessage: 'Order is missing Square payment information.',
           createdAt: now,
           updatedAt: now,
         });
 
         return c.json(
-          { error: 'Order is missing Stripe payment intent ID.' },
+          { error: 'Order is missing Square payment information.' },
           400,
         );
       }
@@ -601,33 +605,23 @@ const adminOrders = factory
           });
 
           return c.json(
-            { error: 'Slant3D cancellation failed; Stripe was not refunded.' },
+            { error: 'Slant3D cancellation failed; Square was not refunded.' },
             502,
           );
         }
       }
 
-      const stripe = new Stripe(c.env.STRIPE_SECRET_KEY, { telemetry: false });
-      let refund: Stripe.Refund;
+      let refund: { id: string; status: string };
 
       try {
-        refund = await stripe.refunds.create(
-          {
-            payment_intent: order.stripePaymentIntentId,
-            reason: 'requested_by_customer',
-            metadata: {
-              orderId: String(order.id),
-              orderNumber: order.orderNumber,
-              actorId: actor.id ?? '',
-            },
-          },
-          {
-            idempotencyKey: `order-${order.id}-cancel-refund`,
-          },
-        );
+        refund = await refundSquarePayment(c.env, {
+          paymentId: order.paymentProviderPaymentId,
+          amountCents: order.totalAmountCents,
+          idempotencyKey: crypto.randomUUID(),
+        });
       } catch (error) {
         const errorMessage =
-          error instanceof Error ? error.message : 'Stripe refund failed';
+          error instanceof Error ? error.message : 'Square refund failed';
         await c.var.db.insert(orderCancellationAttemptsTable).values({
           orderId: order.id,
           actorId: actor.id,
@@ -636,7 +630,7 @@ const adminOrders = factory
           override,
           slantStatus,
           slantResult,
-          finalStatus: 'stripe_refund_failed',
+          finalStatus: 'square_refund_failed',
           errorMessage,
           createdAt: now,
           updatedAt: now,
@@ -647,12 +641,12 @@ const adminOrders = factory
           env: c.env,
           order,
           source: 'admin',
-          statusTransition: 'cancel_refund_stripe_refund_failed',
-          reason: 'Stripe refund failed during admin cancel/refund',
+          statusTransition: 'cancel_refund_square_refund_failed',
+          reason: 'Square refund failed during admin cancel/refund',
           details: errorMessage,
         });
 
-        return c.json({ error: 'Stripe refund failed.' }, 502);
+        return c.json({ error: 'Square refund failed.' }, 502);
       }
 
       await c.var.db.insert(orderCancellationAttemptsTable).values({
@@ -663,9 +657,9 @@ const adminOrders = factory
         override,
         slantStatus,
         slantResult,
-        stripeRefundId: refund.id,
-        stripeRefundStatus: refund.status ?? null,
-        stripeResult: serializeUnknown(refund),
+        paymentRefundId: refund.id,
+        paymentRefundStatus: refund.status ?? null,
+        paymentRefundResult: serializeUnknown(refund),
         finalStatus: 'canceled_refunded',
         createdAt: now,
         updatedAt: now,
@@ -692,8 +686,8 @@ const adminOrders = factory
         metadata: JSON.stringify({
           reason: parsed.data.reason ?? null,
           override,
-          stripeRefundId: refund.id,
-          stripeRefundStatus: refund.status,
+          paymentRefundId: refund.id,
+          paymentRefundStatus: refund.status,
           slantStatus,
         }),
         createdAt: now,
@@ -720,8 +714,8 @@ const adminOrders = factory
         orderId: order.id,
         status: 'canceled',
         slantStatus: 'CANCELED',
-        stripeRefundId: refund.id,
-        stripeRefundStatus: refund.status ?? null,
+        paymentRefundId: refund.id,
+        paymentRefundStatus: refund.status ?? null,
       });
     },
   )
@@ -811,10 +805,8 @@ const adminOrders = factory
         actionsTaken.push('cleared_cart');
       }
 
-      const hasStripePayment = Boolean(
-        order.stripePaymentIntentId || order.stripeCheckoutSessionId,
-      );
-      if (hasStripePayment && !order.slantPublicOrderId) {
+      const hasPayment = Boolean(order.paymentProviderPaymentId);
+      if (hasPayment && !order.slantPublicOrderId) {
         detectedIssues.push('paid_without_slant_order_id');
         resultStatus = 'needs_admin_action';
         recommendedAction = 'Use admin retry fulfillment or cancel/refund.';

@@ -55,10 +55,10 @@ export type PaidOrderProfile = {
 export type PaidOrderInput = {
   cartId: string;
   userId: string;
-  stripeEventId: string;
-  stripeObjectId: string;
-  stripeCheckoutSessionId?: string;
-  stripePaymentIntentId?: string;
+  paymentProvider: 'square';
+  providerEventId: string;
+  providerOrderId?: string;
+  providerPaymentId: string;
   idempotencyKey: string;
   customerEmail?: string;
 };
@@ -152,6 +152,10 @@ export function createPaidOrderFulfillment(deps: {
 
   return {
     async fulfillPaidOrder({ fulfillment, profile, items }) {
+      const paymentProvider = fulfillment.paymentProvider;
+      const providerEventId = fulfillment.providerEventId;
+      const providerPaymentId = fulfillment.providerPaymentId;
+      const providerOrderId = fulfillment.providerOrderId;
       const orderNumber = nextOrderNumber();
       const fullName =
         `${profile.firstName} ${profile.lastName}`.trim() || profile.email;
@@ -202,8 +206,9 @@ export function createPaidOrderFulfillment(deps: {
         }),
         metadata: {
           cartId: fulfillment.cartId,
-          stripeEventId: fulfillment.stripeEventId,
-          stripeObjectId: fulfillment.stripeObjectId,
+          paymentProvider,
+          providerEventId,
+          providerPaymentId,
           idempotencyKey: fulfillment.idempotencyKey,
         },
       };
@@ -242,8 +247,9 @@ export function createPaidOrderFulfillment(deps: {
           body: JSON.stringify({
             orderNumber,
             metadata: {
-              stripeEventId: fulfillment.stripeEventId,
-              stripeObjectId: fulfillment.stripeObjectId,
+              paymentProvider,
+              providerEventId,
+              providerPaymentId,
               idempotencyKey: fulfillment.idempotencyKey,
             },
           }),
@@ -307,9 +313,11 @@ export function createPaidOrderFulfillment(deps: {
           status: 'processing',
           slantStatus: 'PROCESSING',
           slantPublicOrderId: publicOrderId,
-          stripeCheckoutSessionId: fulfillment.stripeCheckoutSessionId ?? null,
-          stripePaymentIntentId: fulfillment.stripePaymentIntentId ?? null,
-          stripeEventId: fulfillment.stripeEventId,
+          paymentProvider,
+          paymentProviderOrderId: providerOrderId ?? null,
+          paymentProviderPaymentId: providerPaymentId ?? null,
+          paymentProviderEventId: providerEventId,
+          paymentStatus: 'completed',
           customerEmail: profile.email || fulfillment.customerEmail || null,
           totalAmountCents: totalCents(items),
           currency: 'usd',
@@ -323,11 +331,11 @@ export function createPaidOrderFulfillment(deps: {
       if (!order?.id) throw new Error('Failed to persist processed order');
       await deps.db.insert(orderEventsTable).values({
         orderId: order.id,
-        type: 'stripe_fulfillment_processed',
-        detail: `Stripe payment processed into Slant3D order ${publicOrderId}`,
-        actor: 'stripe',
-        externalEventId: fulfillment.stripeEventId,
-        source: 'stripe',
+        type: 'payment_fulfillment_processed',
+        detail: `${paymentProvider} payment processed into Slant3D order ${publicOrderId}`,
+        actor: paymentProvider,
+        externalEventId: providerEventId,
+        source: paymentProvider,
         previousStatus: 'paid',
         nextStatus: 'PROCESSING',
         metadata: JSON.stringify({

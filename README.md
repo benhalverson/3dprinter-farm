@@ -8,7 +8,7 @@ A Cloudflare Workers-based API for managing 3D printer products, built with Hono
 - Search functionality with pagination
 - Authentication middleware
 - Image gallery support
-- Stripe integration for payments
+- Square Web Payments integration
 - STL file processing and pricing
 - Project notes sync pipeline for `benhalverson-blog`
 
@@ -57,7 +57,7 @@ If `benhalverson-blog` has branch protection or PR restrictions, make sure the t
 - **Database**: Cloudflare D1 (SQLite)
 - **ORM**: Drizzle ORM
 - **Authentication**: Better Auth with session cookies and passkeys/WebAuthn
-- **Payment Processing**: Stripe
+- **Payment Processing**: Square
 - **Validation**: Zod
 - **Testing**: Vitest
 
@@ -74,7 +74,7 @@ The API now uses Better Auth for session-based authentication.
 The API uses the following route protection rules:
 
 - **Public read routes**: product browsing and read-only catalog endpoints such as `GET /products`, `GET /products/search`, `GET /product/:id`, `GET /categories`, and public printer metadata endpoints.
-- **Authenticated user routes**: profile endpoints, saved upload endpoints, shipping/payment-intent helpers tied to a signed-in user, and product/category mutation routes such as `POST /add-product`, `POST /v2/add-product`, `PUT /update-product`, `DELETE /delete-product/:id`, and `POST /add-category`.
+- **Authenticated user routes**: profile endpoints, saved upload endpoints, shipping and Square payment helpers tied to a signed-in user, and product/category mutation routes such as `POST /add-product`, `POST /v2/add-product`, `PUT /update-product`, `DELETE /delete-product/:id`, and `POST /add-category`.
 - **Ownership checks**: authenticated upload lookup endpoints also enforce that a user can only access their own uploaded files.
 
 When adding new routes, apply `authMiddleware` directly on the protected route or protected route group before the handler declaration. Do not rely on later middleware registration order.

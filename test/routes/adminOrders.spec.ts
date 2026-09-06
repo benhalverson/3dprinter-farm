@@ -12,14 +12,10 @@ import {
 import { mockEnv } from '../mocks/env';
 import { mockGlobalFetch } from '../mocks/fetch';
 
-const mockStripeRefundCreate = vi.hoisted(() => vi.fn());
+const mockSquareRefund = vi.hoisted(() => vi.fn());
 
-vi.mock('stripe', () => ({
-  default: vi.fn().mockImplementation(() => ({
-    refunds: {
-      create: mockStripeRefundCreate,
-    },
-  })),
+vi.mock('../../src/modules/squareClient', () => ({
+  refundSquarePayment: mockSquareRefund,
 }));
 
 mockAuth();
@@ -110,8 +106,10 @@ function mockCancelableOrder(overrides: Record<string, unknown> = {}) {
     status: 'processing',
     slantStatus: 'PROCESSING',
     slantPublicOrderId: 'slant-order-123',
-    stripePaymentIntentId: 'pi_123',
-    stripeCheckoutSessionId: 'cs_123',
+    paymentProvider: 'square',
+    paymentProviderPaymentId: 'square-payment-123',
+    paymentProviderOrderId: 'square-order-123',
+    totalAmountCents: 1999,
     customerEmail: 'customer@example.com',
     createdAt: '2026-07-01T00:00:00.000Z',
     updatedAt: '2026-07-01T00:00:00.000Z',
@@ -151,7 +149,7 @@ describe('Admin Orders API', () => {
     mockAll.mockReset();
     mockInsert.mockReset();
     mockDelete.mockReset();
-    mockStripeRefundCreate.mockReset();
+    mockSquareRefund.mockReset();
     mockGlobalFetch();
     capturedInserts.length = 0;
   });
@@ -336,8 +334,8 @@ describe('Admin Orders API', () => {
         status: 'pending',
         slantStatus: null,
         slantPublicOrderId: null,
-        stripeCheckoutSessionId: 'cs_123',
-        stripePaymentIntentId: 'pi_123',
+        paymentProviderOrderId: 'cs_123',
+        paymentProviderPaymentId: 'pi_123',
         customerEmail: 'customer@example.com',
         shipToName: 'John Doe',
         shipToStreet1: '123 Main St',
@@ -387,7 +385,7 @@ describe('Admin Orders API', () => {
       const body = await res.json();
       expect(body.orderNumber).toBe('ORD-001');
       expect(body.events).toEqual(mockEvents);
-      expect(body.stripeCheckoutSessionId).toBe('cs_123');
+      expect(body.paymentProviderOrderId).toBe('cs_123');
     });
   });
 
@@ -578,7 +576,7 @@ describe('Admin Orders API', () => {
       expect(res.status).toBe(403);
     });
 
-    test('cancels Slant order before refunding Stripe', async () => {
+    test('cancels Slant order before refunding Square', async () => {
       mockAdminUser();
       mockWhere
         .mockReturnValueOnce({
@@ -588,7 +586,7 @@ describe('Admin Orders API', () => {
           all: vi.fn().mockResolvedValue([]),
         });
       mockSlantDeleteResponse(true, 200, JSON.stringify({ ok: true }));
-      mockStripeRefundCreate.mockResolvedValueOnce({
+      mockSquareRefund.mockResolvedValueOnce({
         id: 're_123',
         status: 'succeeded',
       });
@@ -611,17 +609,19 @@ describe('Admin Orders API', () => {
         orderId: 1,
         status: 'canceled',
         slantStatus: 'CANCELED',
-        stripeRefundId: 're_123',
-        stripeRefundStatus: 'succeeded',
+        paymentRefundId: 're_123',
+        paymentRefundStatus: 'succeeded',
       });
       expect(globalThis.fetch).toHaveBeenCalledWith(
         'https://slant3dapi.com/v2/api/orders/slant-order-123',
         expect.objectContaining({ method: 'DELETE' }),
       );
-      expect(mockStripeRefundCreate).toHaveBeenCalledWith(
-        expect.objectContaining({ payment_intent: 'pi_123' }),
+      expect(mockSquareRefund).toHaveBeenCalledWith(
+        env,
         expect.objectContaining({
-          idempotencyKey: 'order-1-cancel-refund',
+          paymentId: 'square-payment-123',
+          amountCents: 1999,
+          idempotencyKey: expect.any(String),
         }),
       );
       expect(capturedInserts).toEqual(
@@ -629,7 +629,7 @@ describe('Admin Orders API', () => {
           expect.objectContaining({
             orderId: 1,
             finalStatus: 'canceled_refunded',
-            stripeRefundId: 're_123',
+            paymentRefundId: 're_123',
           }),
           expect.objectContaining({
             orderId: 1,
@@ -656,8 +656,8 @@ describe('Admin Orders API', () => {
             {
               orderId: 1,
               finalStatus: 'canceled_refunded',
-              stripeRefundId: 're_existing',
-              stripeRefundStatus: 'succeeded',
+              paymentRefundId: 're_existing',
+              paymentRefundStatus: 'succeeded',
             },
           ]),
         });
@@ -678,10 +678,10 @@ describe('Admin Orders API', () => {
       expect(await res.json()).toMatchObject({
         success: true,
         duplicate: true,
-        stripeRefundId: 're_existing',
+        paymentRefundId: 're_existing',
       });
       expect(globalThis.fetch).not.toHaveBeenCalled();
-      expect(mockStripeRefundCreate).not.toHaveBeenCalled();
+      expect(mockSquareRefund).not.toHaveBeenCalled();
     });
 
     test('blocks shipped orders without override', async () => {
@@ -712,7 +712,7 @@ describe('Admin Orders API', () => {
       );
 
       expect(res.status).toBe(400);
-      expect(mockStripeRefundCreate).not.toHaveBeenCalled();
+      expect(mockSquareRefund).not.toHaveBeenCalled();
       expect(capturedInserts).toContainEqual(
         expect.objectContaining({
           orderId: 1,
@@ -721,7 +721,7 @@ describe('Admin Orders API', () => {
       );
     });
 
-    test('does not refund Stripe when Slant cancellation fails', async () => {
+    test('does not refund Square when Slant cancellation fails', async () => {
       mockAdminUser();
       mockWhere
         .mockReturnValueOnce({
@@ -746,9 +746,9 @@ describe('Admin Orders API', () => {
 
       expect(res.status).toBe(502);
       expect(await res.json()).toEqual({
-        error: 'Slant3D cancellation failed; Stripe was not refunded.',
+        error: 'Slant3D cancellation failed; Square was not refunded.',
       });
-      expect(mockStripeRefundCreate).not.toHaveBeenCalled();
+      expect(mockSquareRefund).not.toHaveBeenCalled();
       expect(capturedInserts).toContainEqual(
         expect.objectContaining({
           orderId: 1,
@@ -758,7 +758,7 @@ describe('Admin Orders API', () => {
       );
     });
 
-    test('persists Stripe refund failure after Slant cancellation succeeds', async () => {
+    test('persists Square refund failure after Slant cancellation succeeds', async () => {
       mockAdminUser();
       mockWhere
         .mockReturnValueOnce({
@@ -768,7 +768,7 @@ describe('Admin Orders API', () => {
           all: vi.fn().mockResolvedValue([]),
         });
       mockSlantDeleteResponse(true, 200, JSON.stringify({ ok: true }));
-      mockStripeRefundCreate.mockRejectedValueOnce(new Error('Stripe failed'));
+      mockSquareRefund.mockRejectedValueOnce(new Error('Square failed'));
 
       const res = await app.fetch(
         new Request('http://localhost/admin/orders/1/cancel-refund', {
@@ -783,12 +783,12 @@ describe('Admin Orders API', () => {
       );
 
       expect(res.status).toBe(502);
-      expect(await res.json()).toEqual({ error: 'Stripe refund failed.' });
+      expect(await res.json()).toEqual({ error: 'Square refund failed.' });
       expect(capturedInserts).toContainEqual(
         expect.objectContaining({
           orderId: 1,
-          finalStatus: 'stripe_refund_failed',
-          errorMessage: 'Stripe failed',
+          finalStatus: 'square_refund_failed',
+          errorMessage: 'Square failed',
         }),
       );
     });
@@ -808,7 +808,7 @@ describe('Admin Orders API', () => {
           all: vi.fn().mockResolvedValue([]),
         });
       mockSlantDeleteResponse(false, 409, 'Already shipped');
-      mockStripeRefundCreate.mockResolvedValueOnce({
+      mockSquareRefund.mockResolvedValueOnce({
         id: 're_override',
         status: 'succeeded',
       });
@@ -831,7 +831,7 @@ describe('Admin Orders API', () => {
       expect(res.status).toBe(200);
       expect(await res.json()).toMatchObject({
         success: true,
-        stripeRefundId: 're_override',
+        paymentRefundId: 're_override',
       });
       expect(capturedInserts).toContainEqual(
         expect.objectContaining({

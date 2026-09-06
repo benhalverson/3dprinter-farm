@@ -24,8 +24,12 @@ declare namespace Cloudflare {
 		SLANT_PLATFORM_ID: string;
 		ENCRYPTION_PASSPHRASE: string;
 		R2_PUBLIC_BASE_URL: string;
-		STRIPE_SECRET_KEY: string;
-		STRIPE_WEBHOOK_SECRET: string;
+		SQUARE_ACCESS_TOKEN: string;
+		SQUARE_LOCATION_ID: string;
+		SQUARE_WEBHOOK_SIGNATURE_KEY: string;
+		SQUARE_WEBHOOK_URL: string;
+		SQUARE_ENVIRONMENT: string;
+		SQUARE_API_VERSION: string;
 		PASSKEY_ORIGIN: string;
 	}
 }
