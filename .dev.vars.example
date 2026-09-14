@@ -10,3 +10,10 @@ SLANT_PLATFORM_ID=
 ENCRYPTION_PASSPHRASE=
 R2_PUBLIC_BASE_URL=uploads.benhalverson.dev
 
+
+# Explicit Square catalog publication (#177). Use matching sandbox or production credentials.
+# Leave unconfigured until provisioned; existing catalog saves do not require Square.
+SQUARE_ENVIRONMENT=sandbox
+SQUARE_ACCESS_TOKEN=
+SQUARE_MERCHANT_ID=
+SQUARE_LOCATION_ID=

@@ -3,7 +3,6 @@ import { count, eq, inArray, like, or } from 'drizzle-orm';
 import type { ContentfulStatusCode } from 'hono/utils/http-status';
 import { describeRoute } from 'hono-openapi';
 import { resolver } from 'hono-openapi/zod';
-import Stripe from 'stripe';
 import { ZodError, z } from 'zod';
 
 type OpenAPISchema = Record<string, unknown>;
@@ -28,6 +27,13 @@ import {
   type Slant3DEstimateData,
   Slant3DFileApiError,
 } from '../lib/slant3d-v2-files';
+import {
+  deleteCatalogItem,
+  isPublicationFailure,
+  priceToCents,
+  productPrices,
+  saveCatalogItem,
+} from '../modules/catalogPublication';
 import {
   catalogReadinessResponseSchema,
   evaluateCatalogReadiness,
@@ -151,6 +157,11 @@ const product = factory
                         },
                         publicFileServiceId: { type: 'string' },
                         price: { type: 'number' },
+                        inPersonPrice: {
+                          type: 'number',
+                          nullable: true,
+                          description: 'In-Person Price in USD',
+                        },
                         filamentType: { type: 'string' },
                         skuNumber: { type: 'string' },
                         color: { type: 'string' },
@@ -209,6 +220,7 @@ const product = factory
               stl: productsTable.stl,
               publicFileServiceId: productsTable.publicFileServiceId,
               price: productsTable.price,
+              inPersonPrice: productsTable.inPersonPrice,
               filamentType: productsTable.filamentType,
               skuNumber: productsTable.skuNumber,
               color: productsTable.color,
@@ -219,7 +231,7 @@ const product = factory
 
           // Parse imageGallery safely
           const parsedProducts = rawProducts.map(product => ({
-            ...product,
+            ...productPrices(product),
             imageGallery: parseImageGallery(product.imageGallery),
           }));
           const products = await hydrateProductStlUrls(c.env, parsedProducts);
@@ -264,6 +276,7 @@ const product = factory
             stl: productsTable.stl,
             publicFileServiceId: productsTable.publicFileServiceId,
             price: productsTable.price,
+            inPersonPrice: productsTable.inPersonPrice,
             filamentType: productsTable.filamentType,
             skuNumber: productsTable.skuNumber,
             categoryId: productsTable.categoryId,
@@ -276,7 +289,7 @@ const product = factory
 
         // Parse imageGallery safely
         const parsedProducts = rawProducts.map(product => ({
-          ...product,
+          ...productPrices(product),
           imageGallery: parseImageGallery(product.imageGallery),
         }));
         const products = await hydrateProductStlUrls(c.env, parsedProducts);
@@ -332,6 +345,11 @@ const product = factory
                         },
                         publicFileServiceId: { type: 'string' },
                         price: { type: 'number' },
+                        inPersonPrice: {
+                          type: 'number',
+                          nullable: true,
+                          description: 'In-Person Price in USD',
+                        },
                         filamentType: { type: 'string' },
                         skuNumber: { type: 'string' },
                         color: { type: 'string' },
@@ -431,6 +449,7 @@ const product = factory
             stl: productsTable.stl,
             publicFileServiceId: productsTable.publicFileServiceId,
             price: productsTable.price,
+            inPersonPrice: productsTable.inPersonPrice,
             filamentType: productsTable.filamentType,
             skuNumber: productsTable.skuNumber,
             color: productsTable.color,
@@ -443,7 +462,7 @@ const product = factory
 
         // Parse imageGallery safely
         const parsedProducts = rawProducts.map(product => ({
-          ...product,
+          ...productPrices(product),
           imageGallery: parseImageGallery(product.imageGallery),
         }));
         const products = await hydrateProductStlUrls(c.env, parsedProducts);
@@ -561,9 +580,6 @@ const product = factory
     }),
     zValidator('json', addProductSchema),
     async c => {
-      const stripe = new Stripe(c.env.STRIPE_SECRET_KEY, {
-        telemetry: false,
-      });
       const user = c.get('jwtPayload') as
         | { id: string; email: string }
         | undefined;
@@ -605,16 +621,6 @@ const product = factory
 
       const skuNumber = generateSkuNumber(data.name);
 
-      const stripeProduct = await stripe.products.create({
-        name: data.name,
-        description: data.description,
-        images: [data.image],
-        shippable: true,
-        metadata: {
-          sku_number: skuNumber,
-        },
-      });
-
       const slicingResponse = await fetch(`${BASE_URL}slicer`, {
         method: 'POST',
         headers: {
@@ -643,16 +649,6 @@ const product = factory
         requestedMarkupPercentage,
       );
 
-      let stripePriceId = null;
-      if (markupPrice) {
-        const price = await stripe.prices.create({
-          product: stripeProduct.id,
-          unit_amount: Math.round(markupPrice * 100), // Stripe expects the amount in cents
-          currency: 'usd',
-        });
-        stripePriceId = price.id;
-      }
-
       console.log('data.imageGallery before insertion', imageGallery);
       // Use first category as primary if provided; otherwise leave null
       const primaryCategoryId =
@@ -662,10 +658,10 @@ const product = factory
 
       const productDataToInsert = {
         ...productFields,
+        inPersonPrice: priceToCents(data.inPersonPrice),
         price: markupPrice,
         skuNumber: skuNumber,
-        stripeProductId: stripeProduct.id,
-        stripePriceId: stripePriceId,
+
         imageGallery: JSON.stringify(imageGallery || []),
         categoryId: primaryCategoryId,
       };
@@ -695,7 +691,7 @@ const product = factory
           );
         }
 
-        return c.json(response);
+        return c.json(response.map(productPrices));
       } catch (error) {
         console.error('Error adding product', error);
         return c.json({ error: 'Failed to add product' }, 500);
@@ -733,6 +729,11 @@ const product = factory
                       id: { type: 'number' },
                       name: { type: 'string' },
                       price: { type: 'number' },
+                      inPersonPrice: {
+                        type: 'number',
+                        nullable: true,
+                        description: 'In-Person Price in USD',
+                      },
                       skuNumber: { type: 'string' },
                       publicFileServiceId: { type: 'string' },
                     },
@@ -776,9 +777,6 @@ const product = factory
     zValidator('json', addProductV2Schema),
     async c => {
       try {
-        const stripe = new Stripe(c.env.STRIPE_SECRET_KEY, {
-          telemetry: false,
-        });
         const user = c.get('jwtPayload') as
           | { id: string; email: string }
           | undefined;
@@ -895,27 +893,6 @@ const product = factory
 
         console.log('Final markup price:', markupPrice);
 
-        // Create Stripe product and price after Slant3D succeeds
-        const stripeProduct = await stripe.products.create({
-          name: data.name,
-          description: data.description,
-          images: [data.image],
-          shippable: true,
-          metadata: {
-            sku_number: skuNumber,
-          },
-        });
-
-        let stripePriceId = null;
-        if (markupPrice && markupPrice > 0) {
-          const price = await stripe.prices.create({
-            product: stripeProduct.id,
-            unit_amount: Math.round(markupPrice * 100),
-            currency: 'usd',
-          });
-          stripePriceId = price.id;
-        }
-
         // Insert into database
         const primaryCategoryId =
           normalizedCategoryIds && normalizedCategoryIds.length > 0
@@ -924,10 +901,10 @@ const product = factory
 
         const productDataToInsert = {
           ...productFields,
+          inPersonPrice: priceToCents(data.inPersonPrice),
           price: markupPrice,
           skuNumber: skuNumber,
-          stripeProductId: stripeProduct.id,
-          stripePriceId: stripePriceId,
+
           imageGallery: JSON.stringify(imageGallery || []),
           categoryId: primaryCategoryId,
           stl: publicFileServiceId,
@@ -966,6 +943,10 @@ const product = factory
               id: created.id,
               name: created.name,
               price: created.price,
+              inPersonPrice:
+                (created.inPersonPrice ?? null) === null
+                  ? null
+                  : created.inPersonPrice / 100,
               skuNumber: created.skuNumber,
               publicFileServiceId,
             },
@@ -1024,7 +1005,7 @@ const product = factory
       const { categoryId: _categoryId, ...productWithoutCategoryId } =
         rawProduct;
       const product = {
-        ...productWithoutCategoryId,
+        ...productPrices(productWithoutCategoryId),
         imageGallery: parseImageGallery(rawProduct.imageGallery),
         categories: categories,
       };
@@ -1069,6 +1050,15 @@ const product = factory
                 price: {
                   type: 'number',
                   description: 'Product price (required)',
+                },
+                inPersonPrice: {
+                  type: 'number',
+                  nullable: true,
+                  minimum: 0.01,
+                  maximum: 99999999.99,
+                  multipleOf: 0.01,
+                  description:
+                    'USD; omit to preserve, null to clear after confirmed unpublication',
                 },
                 filamentType: {
                   type: 'string',
@@ -1219,6 +1209,7 @@ const product = factory
           name: string;
           description: string;
           price: number;
+          inPersonPrice?: number | null;
           filamentType: string;
           color: string;
           image: string;
@@ -1228,16 +1219,20 @@ const product = factory
           name: parsedData.name,
           description: parsedData.description,
           price: parsedData.price,
+          inPersonPrice: priceToCents(parsedData.inPersonPrice),
           filamentType: parsedData.filamentType,
           color: parsedData.color,
           image: parsedData.image,
           imageGallery: JSON.stringify(parsedData.imageGallery || []),
         };
 
-        // Only set categoryId if categories are provided and not empty
-        if (normalizedCategoryIds && normalizedCategoryIds.length > 0) {
+        if (normalizedCategoryIds?.length)
           updateData.categoryId = normalizedCategoryIds[0];
+        // Update the product
+        await saveCatalogItem(c.var.db, existingProduct, updateData);
 
+        // Update category associations when categories are provided.
+        if (normalizedCategoryIds && normalizedCategoryIds.length > 0) {
           // Delete existing category associations in join table
           await c.var.db
             .delete(productsToCategories)
@@ -1253,21 +1248,14 @@ const product = factory
           );
         }
 
-        // Update the product
-        const updateResult = await c.var.db
-          .update(productsTable)
-          .set(updateData)
-          .where(eq(productsTable.id, parsedData.id));
-
-        if (updateResult) {
-          return c.json({
-            success: true,
-            message: 'Product updated successfully',
-          });
-        } else {
-          return c.json({ error: 'Product update failed' }, 500);
-        }
+        return c.json({
+          success: true,
+          message: 'Product updated successfully',
+        });
       } catch (error) {
+        if (isPublicationFailure(error)) {
+          return c.json({ error: error.code }, error.status);
+        }
         if (error instanceof ZodError) {
           console.log('error', error);
           return c.json(
@@ -1309,19 +1297,15 @@ const product = factory
       try {
         const idParam = c.req.param('id');
         const parsedData = idSchema.parse({ id: Number(idParam) });
-        const deleteResult = await c.var.db
-          .delete(productsTable)
-          .where(eq(productsTable.id, parsedData.id));
-
-        if (deleteResult) {
-          return c.json({
-            success: true,
-            message: 'Product deleted successfully',
-          });
-        } else {
-          return c.json({ error: 'Product not found or delete failed' }, 404);
-        }
+        await deleteCatalogItem(c.var.db, parsedData.id);
+        return c.json({
+          success: true,
+          message: 'Product deleted successfully',
+        });
       } catch (error) {
+        if (isPublicationFailure(error)) {
+          return c.json({ error: error.code }, error.status);
+        }
         if (error instanceof ZodError) {
           console.log('error', error);
           return c.json(

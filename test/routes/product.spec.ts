@@ -620,9 +620,9 @@ describe('Product Routes', () => {
 
   test('PUT /update-product updates a product', async () => {
     mockSessionRole('admin');
-    mockUpdate.mockResolvedValueOnce({ success: true });
+    mockUpdate.mockResolvedValueOnce([{ id: 1 }]);
     mockWhere.mockReturnValueOnce({
-      get: vi.fn().mockResolvedValueOnce({ id: 1 }),
+      get: vi.fn().mockResolvedValueOnce({ id: 1, squareRevision: 0 }),
     });
 
     const request = new Request('http://localhost/update-product', {
@@ -695,7 +695,9 @@ describe('Product Routes', () => {
 
   test('DELETE /delete-product/:id deletes a product', async () => {
     mockSessionRole('admin');
-    mockDelete.mockResolvedValueOnce({ changes: 1 });
+    mockDelete.mockReturnValueOnce({
+      returning: vi.fn().mockResolvedValueOnce([{ id: 1 }]),
+    });
 
     const request = new Request('http://localhost/delete-product/1', {
       method: 'DELETE',

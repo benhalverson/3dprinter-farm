@@ -1,10 +1,11 @@
-import { relations, sql } from 'drizzle-orm';
+import { eq, relations, sql } from 'drizzle-orm';
 import {
   integer,
   primaryKey,
   real,
   sqliteTable,
   text,
+  uniqueIndex,
 } from 'drizzle-orm/sqlite-core';
 import { z } from 'zod';
 
@@ -50,12 +51,72 @@ export const productsTable = sqliteTable('products', {
   filamentType: text('filament_type').notNull().default('PLA'),
   skuNumber: text('sku_number').default(''),
   color: text('color').default('#000000'),
-  stripeProductId: text('stripe_product_id'),
+  inPersonPrice: integer('in_person_price_cents'),
+  squareRevision: integer('square_revision').notNull().default(0),
   stripePriceId: text('stripe_price_id'),
   publicFileServiceId: text('public_file_service_id'), // Slant3D file UUID for orders
   // Make optional to allow products without categories during transition
   categoryId: integer().references(() => categoryTable.categoryId),
 });
+
+// Publication operations and mappings are maintained together by catalogPublication.
+// Catalog mutations use conditional Drizzle writes to enforce publication guards.
+export const squareCatalogMappings = sqliteTable(
+  'square_catalog_mappings',
+  {
+    id: text('id').primaryKey(),
+    productId: integer('product_id')
+      .unique()
+      .references(() => productsTable.id, { onDelete: 'set null' }),
+    catalogId: integer('catalog_id').notNull(),
+    environment: text('environment', {
+      enum: ['sandbox', 'production'],
+    }).notNull(),
+    merchantId: text('merchant_id').notNull(),
+    locationId: text('location_id').notNull(),
+    itemId: text('item_id'),
+    variationId: text('variation_id'),
+    published: integer('published').notNull().default(0),
+    publishedSnapshot: text('published_snapshot'),
+    generation: integer('generation').notNull().default(0),
+    error: text('error'),
+  },
+  table => [
+    uniqueIndex('square_catalog_item').on(
+      table.environment,
+      table.merchantId,
+      table.itemId,
+    ),
+    uniqueIndex('square_catalog_variation').on(
+      table.environment,
+      table.merchantId,
+      table.variationId,
+    ),
+  ],
+);
+export const squareCatalogOperations = sqliteTable(
+  'square_catalog_operations',
+  {
+    id: text('id').primaryKey(),
+    mappingId: text('mapping_id')
+      .notNull()
+      .references(() => squareCatalogMappings.id),
+    kind: text('kind', { enum: ['publish', 'unpublish'] }).notNull(),
+    payload: text('payload').notNull(),
+    snapshot: text('snapshot').notNull(),
+    state: text('state', { enum: ['pending', 'succeeded', 'failed'] })
+      .notNull()
+      .default('pending'),
+    error: text('error'),
+    createdAt: text('created_at').notNull(),
+    generation: integer('generation').notNull(),
+  },
+  table => [
+    uniqueIndex('square_catalog_one_pending')
+      .on(table.mappingId)
+      .where(eq(table.state, 'pending').inlineParams()),
+  ],
+);
 
 export const productRelations = relations(productsTable, ({ many }) => ({
   categoriesLink: many(productsToCategories),
@@ -497,7 +558,23 @@ const markupPercentageSchema = z
   .number()
   .positive('Markup percentage must be greater than 0');
 
+export const inPersonPriceSchema = z
+  .number()
+  .finite()
+  .positive()
+  .max(99999999.99)
+  .refine(
+    value => /^\d+(\.\d{1,2})?$/.test(String(value)),
+    'In-Person Price must have at most two decimal places',
+  )
+  .nullable()
+  .optional()
+  .describe(
+    'In-Person Price in USD; null clears it after confirmed unpublication. Omission preserves it.',
+  );
+
 const addProductBaseSchema = z.object({
+  inPersonPrice: inPersonPriceSchema,
   name: z.string(),
   description: z.string(),
   stl: z.string(),
@@ -553,6 +630,7 @@ export const addProductV2Schema = addProductV2BaseSchema
   });
 
 export const updateProductSchema = z.object({
+  inPersonPrice: inPersonPriceSchema,
   id: z.number(),
   name: z.string(),
   description: z.string(),

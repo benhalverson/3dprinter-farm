@@ -45,3 +45,7 @@ PASSKEY_ORIGIN = "https://rc-store.benhalverson.dev"
 R2_PUBLIC_BASE_URL = "https://uploads.benhalverson.dev"
 R2_PHOTO_BASE_URL = "https://photos.benhalverson.dev"
 SLANT_API_V2_BASE_URL = "https://slant3dapi.com/v2/api/"
+
+# Square catalog publication requires explicitly configured SQUARE_ENVIRONMENT
+# (sandbox or production), SQUARE_MERCHANT_ID and SQUARE_LOCATION_ID for each deployment.
+# Store SQUARE_ACCESS_TOKEN as a Worker secret. No default seller/location is selected.
