@@ -469,6 +469,7 @@ describe('Product Routes', () => {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
+        inPersonPrice: 12.34,
         name: 'New Product',
         description: 'desc',
         stl: 'url/to.stl',
@@ -503,6 +504,7 @@ describe('Product Routes', () => {
         Cookie: fakeSignedCookie,
       },
       body: JSON.stringify({
+        inPersonPrice: 12.34,
         name: 'New Product',
         description: 'desc',
         stl: 'url/to.stl',
@@ -548,6 +550,7 @@ describe('Product Routes', () => {
         Cookie: fakeSignedCookie,
       },
       body: JSON.stringify({
+        inPersonPrice: 12.34,
         name: 'Bad Product',
         description: 'desc',
         stl: 'url/to.stl',
@@ -585,6 +588,7 @@ describe('Product Routes', () => {
         Cookie: fakeSignedCookie,
       },
       body: JSON.stringify({
+        inPersonPrice: 12.34,
         name: 'Categorized Product',
         description: 'desc',
         stl: 'url/to.stl',
@@ -632,6 +636,7 @@ describe('Product Routes', () => {
         Cookie: fakeSignedCookie,
       },
       body: JSON.stringify({
+        inPersonPrice: 12.34,
         id: 1,
         name: 'Updated Product',
         description: 'Updated desc',
@@ -676,6 +681,7 @@ describe('Product Routes', () => {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
+        inPersonPrice: 12.34,
         id: 1,
         name: 'Updated Product',
         description: 'Updated desc',
@@ -747,6 +753,7 @@ describe('Product Routes', () => {
         Cookie: fakeSignedCookie,
       },
       body: JSON.stringify({
+        inPersonPrice: 12.34,
         name: 'New Product',
         description: 'desc',
         stl: 'url/to.stl',
@@ -771,6 +778,7 @@ describe('Product Routes', () => {
         Cookie: fakeSignedCookie,
       },
       body: JSON.stringify({
+        inPersonPrice: 12.34,
         name: 'New Product',
         description: 'desc',
         stl: 'https://uploads.example.com/test-file.stl',
@@ -807,6 +815,7 @@ describe('Product Routes', () => {
         Cookie: fakeSignedCookie,
       },
       body: JSON.stringify({
+        inPersonPrice: 12.34,
         name: 'V2 Product',
         description: 'desc',
         publicFileServiceId: 'file_123',
@@ -866,6 +875,7 @@ describe('Product Routes', () => {
         Cookie: fakeSignedCookie,
       },
       body: JSON.stringify({
+        inPersonPrice: 12.34,
         name: 'V2 Product',
         description: 'desc',
         stl: 'https://slant3d.com/files/expiring-file-url.stl',
@@ -896,6 +906,7 @@ describe('Product Routes', () => {
         Cookie: fakeSignedCookie,
       },
       body: JSON.stringify({
+        inPersonPrice: 12.34,
         name: 'V2 Product',
         description: 'desc',
         stl: 'https://slant3d.com/files/test-file.stl',
@@ -934,6 +945,7 @@ describe('Product Routes', () => {
         Cookie: fakeSignedCookie,
       },
       body: JSON.stringify({
+        inPersonPrice: 12.34,
         name: 'V2 Product',
         description: 'desc',
         stl: 'https://slant3d.com/files/test-file.stl',
@@ -971,6 +983,7 @@ describe('Product Routes', () => {
         Cookie: fakeSignedCookie,
       },
       body: JSON.stringify({
+        inPersonPrice: 12.34,
         id: 1,
         name: 'Updated Product',
         description: 'Updated desc',

@@ -17,17 +17,16 @@ import {
 } from '../lib/square';
 import type { Bindings } from '../types';
 
-export function priceToCents(value: number | null | undefined) {
-  return value == null ? value : Math.round(value * 100);
+export function priceToCents(value: number) {
+  return Math.round(value * 100);
 }
 export function productPrices<
-  T extends { inPersonPrice?: number | null; squareRevision?: number },
+  T extends { inPersonPrice: number; squareRevision?: number },
 >(product: T) {
   const { squareRevision: _revision, ...fields } = product;
   return {
     ...fields,
-    inPersonPrice:
-      product.inPersonPrice == null ? null : product.inPersonPrice / 100,
+    inPersonPrice: product.inPersonPrice / 100,
   };
 }
 const publicationFailureSchema = z.object({
@@ -63,10 +62,10 @@ const publicationSnapshotSchema = z.object({
   sku: z.string().nullable(),
   material: z.string(),
   color: z.string().nullable(),
-  cents: z.number().int().safe().nullable(),
+  cents: z.number().int().safe(),
 });
 
-/** Included in the mutation itself, so publication cannot race a price clear or deletion. */
+/** Included in the deletion itself, so publication cannot race local deletion. */
 function safelyUnpublished(db: Database) {
   return notExists(
     db
@@ -106,12 +105,10 @@ export async function saveCatalogItem(
       and(
         eq(productsTable.id, current.id),
         eq(productsTable.squareRevision, current.squareRevision),
-        changes.inPersonPrice === null ? safelyUnpublished(db) : undefined,
       ),
     )
     .returning({ id: productsTable.id });
-  if (!saved.length)
-    throw publicationFailure('catalog_changed_or_unpublication_required', 409);
+  if (!saved.length) throw publicationFailure('catalog_changed_retry', 409);
 }
 
 export async function deleteCatalogItem(db: Database, id: number) {
@@ -261,8 +258,7 @@ export function catalogPublication(env: Bindings) {
     return {
       id,
       price: item.price,
-      inPersonPrice:
-        item.inPersonPrice == null ? null : item.inPersonPrice / 100,
+      inPersonPrice: item.inPersonPrice / 100,
       status: !mapping?.published
         ? 'unpublished'
         : mapping.publishedSnapshot === snapshot(item)

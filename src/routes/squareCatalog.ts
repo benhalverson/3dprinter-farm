@@ -17,12 +17,12 @@ const catalogIdSchema = z.object({
 });
 const publicationSchema = {
   type: 'object',
+  required: ['price', 'inPersonPrice'],
   properties: {
     id: { type: 'integer' },
     price: { type: 'number', description: 'Online Price in USD' },
     inPersonPrice: {
       type: 'number',
-      nullable: true,
       description: 'In-Person Price in USD',
     },
     status: {

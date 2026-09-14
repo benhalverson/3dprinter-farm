@@ -159,7 +159,6 @@ const product = factory
                         price: { type: 'number' },
                         inPersonPrice: {
                           type: 'number',
-                          nullable: true,
                           description: 'In-Person Price in USD',
                         },
                         filamentType: { type: 'string' },
@@ -347,7 +346,6 @@ const product = factory
                         price: { type: 'number' },
                         inPersonPrice: {
                           type: 'number',
-                          nullable: true,
                           description: 'In-Person Price in USD',
                         },
                         filamentType: { type: 'string' },
@@ -731,7 +729,6 @@ const product = factory
                       price: { type: 'number' },
                       inPersonPrice: {
                         type: 'number',
-                        nullable: true,
                         description: 'In-Person Price in USD',
                       },
                       skuNumber: { type: 'string' },
@@ -943,10 +940,7 @@ const product = factory
               id: created.id,
               name: created.name,
               price: created.price,
-              inPersonPrice:
-                (created.inPersonPrice ?? null) === null
-                  ? null
-                  : created.inPersonPrice / 100,
+              inPersonPrice: created.inPersonPrice / 100,
               skuNumber: created.skuNumber,
               publicFileServiceId,
             },
@@ -1026,6 +1020,7 @@ const product = factory
             schema: {
               type: 'object',
               required: [
+                'inPersonPrice',
                 'id',
                 'name',
                 'description',
@@ -1053,12 +1048,10 @@ const product = factory
                 },
                 inPersonPrice: {
                   type: 'number',
-                  nullable: true,
                   minimum: 0.01,
                   maximum: 99999999.99,
                   multipleOf: 0.01,
-                  description:
-                    'USD; omit to preserve, null to clear after confirmed unpublication',
+                  description: 'Required In-Person Price in USD',
                 },
                 filamentType: {
                   type: 'string',
@@ -1209,7 +1202,7 @@ const product = factory
           name: string;
           description: string;
           price: number;
-          inPersonPrice?: number | null;
+          inPersonPrice: number;
           filamentType: string;
           color: string;
           image: string;

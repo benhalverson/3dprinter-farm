@@ -51,7 +51,7 @@ export const productsTable = sqliteTable('products', {
   filamentType: text('filament_type').notNull().default('PLA'),
   skuNumber: text('sku_number').default(''),
   color: text('color').default('#000000'),
-  inPersonPrice: integer('in_person_price_cents'),
+  inPersonPrice: integer('in_person_price_cents').notNull(),
   squareRevision: integer('square_revision').notNull().default(0),
   stripePriceId: text('stripe_price_id'),
   publicFileServiceId: text('public_file_service_id'), // Slant3D file UUID for orders
@@ -567,11 +567,7 @@ export const inPersonPriceSchema = z
     value => /^\d+(\.\d{1,2})?$/.test(String(value)),
     'In-Person Price must have at most two decimal places',
   )
-  .nullable()
-  .optional()
-  .describe(
-    'In-Person Price in USD; null clears it after confirmed unpublication. Omission preserves it.',
-  );
+  .describe('Required In-Person Price in USD.');
 
 const addProductBaseSchema = z.object({
   inPersonPrice: inPersonPriceSchema,
