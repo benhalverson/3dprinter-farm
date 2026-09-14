@@ -423,3 +423,7 @@ Notes:
 - `POST /auth/signin` - Sign in and issue a session cookie
 - `GET|POST /auth/signout` - Clear the current session cookie
 - `GET /api/auth/get-session` - Return the active Better Auth session
+
+### Square catalog publication
+
+See [catalog prices, explicit publication, recovery and configuration](docs/square-catalog-publication.md) for the API-only #177 contracts. Catalog saves do not publish automatically; checkout replacement remains dependent work.

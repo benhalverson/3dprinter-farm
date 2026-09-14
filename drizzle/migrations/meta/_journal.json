@@ -78,6 +78,20 @@
       "when": 1783302600000,
       "tag": "0010_order_reconciliation_attempts",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "6",
+      "when": 1789353111989,
+      "tag": "0011_square_catalog",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "6",
+      "when": 1789355975547,
+      "tag": "0012_required_catalog_prices",
+      "breakpoints": true
     }
   ]
 }

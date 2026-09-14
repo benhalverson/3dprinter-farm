@@ -42,6 +42,10 @@ export type Bindings = {
   SLANT_API_V2_BASE_URL?: string;
   SLANT_PLATFORM_ID: string;
   SLANT_WEBHOOK_SECRET?: string;
+  SQUARE_ENVIRONMENT?: 'sandbox' | 'production';
+  SQUARE_ACCESS_TOKEN?: string;
+  SQUARE_MERCHANT_ID?: string;
+  SQUARE_LOCATION_ID?: string;
   STRIPE_SECRET_KEY: string;
   STRIPE_WEBHOOK_SECRET: string;
   DOMAIN: string;

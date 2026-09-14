@@ -12,6 +12,7 @@ import paymentsRouter from './routes/payments';
 import printer from './routes/printer';
 import product from './routes/product';
 import shoppingCart from './routes/shoppingCart';
+import squareCatalog from './routes/squareCatalog';
 import userRouter from './routes/users';
 import { validateBindings } from './utils/validateBindings';
 
@@ -26,7 +27,7 @@ const app = factory
         'http://localhost:8787',
         'https://rc-store.benhalverson.dev',
         'https://rc-admin.pages.dev',
-				'https://api.benhalverson.dev',
+        'https://api.benhalverson.dev',
         'https://race-forge.com',
       ],
       credentials: true,
@@ -46,6 +47,7 @@ const app = factory
   )
   .route('/auth', auth)
   .route('/', product)
+  .route('/', squareCatalog)
   .route('/', userRouter)
   .route('/', printer)
   .route('/', email)

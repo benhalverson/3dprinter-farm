@@ -469,6 +469,7 @@ describe('Product Routes', () => {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
+        inPersonPrice: 12.34,
         name: 'New Product',
         description: 'desc',
         stl: 'url/to.stl',
@@ -503,6 +504,7 @@ describe('Product Routes', () => {
         Cookie: fakeSignedCookie,
       },
       body: JSON.stringify({
+        inPersonPrice: 12.34,
         name: 'New Product',
         description: 'desc',
         stl: 'url/to.stl',
@@ -548,6 +550,7 @@ describe('Product Routes', () => {
         Cookie: fakeSignedCookie,
       },
       body: JSON.stringify({
+        inPersonPrice: 12.34,
         name: 'Bad Product',
         description: 'desc',
         stl: 'url/to.stl',
@@ -585,6 +588,7 @@ describe('Product Routes', () => {
         Cookie: fakeSignedCookie,
       },
       body: JSON.stringify({
+        inPersonPrice: 12.34,
         name: 'Categorized Product',
         description: 'desc',
         stl: 'url/to.stl',
@@ -620,9 +624,9 @@ describe('Product Routes', () => {
 
   test('PUT /update-product updates a product', async () => {
     mockSessionRole('admin');
-    mockUpdate.mockResolvedValueOnce({ success: true });
+    mockUpdate.mockResolvedValueOnce([{ id: 1 }]);
     mockWhere.mockReturnValueOnce({
-      get: vi.fn().mockResolvedValueOnce({ id: 1 }),
+      get: vi.fn().mockResolvedValueOnce({ id: 1, squareRevision: 0 }),
     });
 
     const request = new Request('http://localhost/update-product', {
@@ -632,6 +636,7 @@ describe('Product Routes', () => {
         Cookie: fakeSignedCookie,
       },
       body: JSON.stringify({
+        inPersonPrice: 12.34,
         id: 1,
         name: 'Updated Product',
         description: 'Updated desc',
@@ -676,6 +681,7 @@ describe('Product Routes', () => {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
+        inPersonPrice: 12.34,
         id: 1,
         name: 'Updated Product',
         description: 'Updated desc',
@@ -695,7 +701,9 @@ describe('Product Routes', () => {
 
   test('DELETE /delete-product/:id deletes a product', async () => {
     mockSessionRole('admin');
-    mockDelete.mockResolvedValueOnce({ changes: 1 });
+    mockDelete.mockReturnValueOnce({
+      returning: vi.fn().mockResolvedValueOnce([{ id: 1 }]),
+    });
 
     const request = new Request('http://localhost/delete-product/1', {
       method: 'DELETE',
@@ -745,6 +753,7 @@ describe('Product Routes', () => {
         Cookie: fakeSignedCookie,
       },
       body: JSON.stringify({
+        inPersonPrice: 12.34,
         name: 'New Product',
         description: 'desc',
         stl: 'url/to.stl',
@@ -769,6 +778,7 @@ describe('Product Routes', () => {
         Cookie: fakeSignedCookie,
       },
       body: JSON.stringify({
+        inPersonPrice: 12.34,
         name: 'New Product',
         description: 'desc',
         stl: 'https://uploads.example.com/test-file.stl',
@@ -805,6 +815,7 @@ describe('Product Routes', () => {
         Cookie: fakeSignedCookie,
       },
       body: JSON.stringify({
+        inPersonPrice: 12.34,
         name: 'V2 Product',
         description: 'desc',
         publicFileServiceId: 'file_123',
@@ -864,6 +875,7 @@ describe('Product Routes', () => {
         Cookie: fakeSignedCookie,
       },
       body: JSON.stringify({
+        inPersonPrice: 12.34,
         name: 'V2 Product',
         description: 'desc',
         stl: 'https://slant3d.com/files/expiring-file-url.stl',
@@ -894,6 +906,7 @@ describe('Product Routes', () => {
         Cookie: fakeSignedCookie,
       },
       body: JSON.stringify({
+        inPersonPrice: 12.34,
         name: 'V2 Product',
         description: 'desc',
         stl: 'https://slant3d.com/files/test-file.stl',
@@ -932,6 +945,7 @@ describe('Product Routes', () => {
         Cookie: fakeSignedCookie,
       },
       body: JSON.stringify({
+        inPersonPrice: 12.34,
         name: 'V2 Product',
         description: 'desc',
         stl: 'https://slant3d.com/files/test-file.stl',
@@ -969,6 +983,7 @@ describe('Product Routes', () => {
         Cookie: fakeSignedCookie,
       },
       body: JSON.stringify({
+        inPersonPrice: 12.34,
         id: 1,
         name: 'Updated Product',
         description: 'Updated desc',
