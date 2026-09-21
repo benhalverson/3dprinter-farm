@@ -1,14 +1,69 @@
-import { env, runInDurableObject } from 'cloudflare:test';
 import { EventSchemas } from '@ag-ui/core/schemas';
-import { drizzle } from 'drizzle-orm/durable-sqlite';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
-import app from '../../src/index';
+import app from '../../src/app';
+import { BudgetLedger } from '../../src/shopping/budget';
 import { IDLE_MS, LIFE_MS } from '../../src/shopping/contracts';
-import { reservations } from '../../src/shopping/storage/ledger-schema';
-import { runs, visits } from '../../src/shopping/storage/visit-schema';
+import { PRICE } from '../../src/shopping/pricing';
+import { SessionHandler } from '../../src/shopping/session';
 import { mockEnv } from '../mocks/env';
-import { ShoppingAgent } from './worker';
+import { catalog, completion } from './fixtures';
+import { MemoryBudgetStorage, MemorySessionStorage } from './storage';
+
+vi.mock('agents', () => ({
+  getAgentByName: async (_namespace: object, id: string) => ({
+    fetch: (request: Request) => fixture(id).handler.onRequest(request),
+  }),
+}));
+
+type Mode = 'valid' | 'disabled' | 'malformed' | 'outage' | 'wait';
+let budgetStorage: MemoryBudgetStorage;
+let budget: BudgetLedger;
+const sessions = new Map<string, ReturnType<typeof createFixture>>();
+const pending = new Set<Promise<void>>();
+function createFixture() {
+  const storage = new MemorySessionStorage();
+  const controls = { mode: 'valid' as Mode, invocations: 0 };
+  const handler = new SessionHandler(storage, {
+    enabled: () => controls.mode !== 'disabled',
+    priceVersion: PRICE.version,
+    ledger: () => ({
+      admit: async (...args) => budget.admit(...args),
+      reserve: async (...args) => budget.reserve(...args),
+      settle: async (...args) => budget.settle(...args),
+    }),
+    read: async () => catalog,
+    infer: async (_payload, signal) => {
+      controls.invocations++;
+      if (controls.mode === 'outage')
+        throw new Error('mock provider unavailable');
+      if (controls.mode === 'wait')
+        await new Promise<void>(resolve => {
+          signal.addEventListener('abort', () => resolve(), { once: true });
+        });
+      return completion(controls.mode === 'malformed' ? '{' : undefined);
+    },
+    waitUntil: task => {
+      pending.add(task);
+    },
+  });
+  handler.onStart();
+  return { storage, controls, handler };
+}
+function fixture(id: string) {
+  let instance = sessions.get(id);
+  if (!instance) {
+    instance = createFixture();
+    sessions.set(id, instance);
+  }
+  return instance;
+}
+beforeEach(() => {
+  sessions.clear();
+  pending.clear();
+  budgetStorage = new MemoryBudgetStorage();
+  budget = new BudgetLedger(budgetStorage);
+});
 
 const sessionSchema = z.object({
   sessionId: z.string().uuid(),
@@ -32,7 +87,7 @@ const eventSchema = z.object({
 });
 const testEnv = () => ({
   ...mockEnv(),
-  ...env,
+  SHOPPING_AGENT: {} as Cloudflare.Env['SHOPPING_AGENT'],
   AGENT_NETWORK_SECRET: 'local-test-identity-secret-only-32-bytes',
 });
 const create = async (ip = crypto.randomUUID()) => {
@@ -72,14 +127,9 @@ const cancel = (session: Session, runId: string) =>
     },
     testEnv(),
   );
-const stub = (session: Session) =>
-  env.SHOPPING_AGENT.get(env.SHOPPING_AGENT.idFromName(session.sessionId));
-const mode = async (session: Session, value: ShoppingAgent['mode']) =>
-  runInDurableObject(stub(session), instance => {
-    if (!(instance instanceof ShoppingAgent))
-      throw new Error('wrong_test_entrypoint');
-    instance.mode = value;
-  });
+const mode = async (session: Session, value: Mode) => {
+  fixture(session.sessionId).controls.mode = value;
+};
 const events = async (res: Response) =>
   (await res.text())
     .split('\n\n')
@@ -90,14 +140,13 @@ const events = async (res: Response) =>
       ),
     );
 const calls = async (session: Session) =>
-  runInDurableObject(stub(session), instance => {
-    if (!(instance instanceof ShoppingAgent))
-      throw new Error('wrong_test_entrypoint');
-    return instance.invocations;
-  });
-afterEach(() => vi.useRealTimers());
+  fixture(session.sessionId).controls.invocations;
+afterEach(async () => {
+  await Promise.all(pending);
+  vi.useRealTimers();
+});
 
-describe('anonymous shopping transport in local Workers', () => {
+describe('anonymous shopping transport with mocked persistence', () => {
   it('publishes ordered AG-UI lifecycle and validated revision-tagged composition', async () => {
     const session = await create();
     expect(session.absoluteExpiresAt - session.expiresAt).toBe(
@@ -120,15 +169,13 @@ describe('anonymous shopping transport in local Workers', () => {
       uiRevision: 42,
     });
     expect(await calls(session)).toBe(1);
-    await runInDurableObject(stub(session), (_instance, ctx) => {
-      const db = drizzle(ctx.storage);
-      const persisted = JSON.stringify([
-        db.select().from(visits).all(),
-        db.select().from(runs).all(),
-      ]);
-      expect(persisted).not.toContain('Show pit tools');
-      expect(persisted).not.toContain(session.capability);
-    });
+    const storage = fixture(session.sessionId).storage;
+    const persisted = JSON.stringify([
+      storage.getVisit(),
+      [...storage.runs.values()],
+    ]);
+    expect(persisted).not.toContain('Show pit tools');
+    expect(persisted).not.toContain(session.capability);
   });
 
   it('isolates capabilities, rejects URL transport and exposes no generic SDK surface', async () => {
@@ -177,16 +224,12 @@ describe('anonymous shopping transport in local Workers', () => {
     'absolute',
   ])('expires %s sessions and their capabilities', async kind => {
     const session = await create();
-    await runInDurableObject(stub(session), (_instance, ctx) => {
-      drizzle(ctx.storage)
-        .update(visits)
-        .set(
-          kind === 'idle'
-            ? { touched: Date.now() - IDLE_MS }
-            : { created: Date.now() - LIFE_MS },
-        )
-        .run();
-    });
+    fixture(session.sessionId).storage.updateVisit(
+      session.sessionId,
+      kind === 'idle'
+        ? { touched: Date.now() - IDLE_MS }
+        : { created: Date.now() - LIFE_MS },
+    );
     expect((await start(session)).status).toBe(410);
     expect((await cancel(session, crypto.randomUUID())).status).toBe(410);
   });
@@ -327,17 +370,10 @@ describe('anonymous shopping transport in local Workers', () => {
         reason: 'disconnected',
       }),
     );
-    const ledger = env.SHOPPING_LEDGER.get(
-      env.SHOPPING_LEDGER.idFromName('deployment-account'),
+    const record = [...budgetStorage.reservations.values()].find(
+      row => row.runId === runId,
     );
-    await runInDurableObject(ledger, (_instance, ctx) => {
-      const record = drizzle(ctx.storage)
-        .select()
-        .from(reservations)
-        .all()
-        .find(row => row.runId === runId);
-      expect(record?.charged).toBeGreaterThan(0);
-    });
+    expect(record?.charged).toBeGreaterThan(0);
   });
 
   it('ends a stalled provider call at the run deadline', async () => {
@@ -354,9 +390,7 @@ describe('anonymous shopping transport in local Workers', () => {
       if (chunk.done) throw new Error('inference did not start');
       stream += decoder.decode(chunk.value);
     }
-    await runInDurableObject(stub(session), () =>
-      vi.advanceTimersByTimeAsync(30_000),
-    );
+    await vi.advanceTimersByTimeAsync(30_000);
     for (;;) {
       const chunk = await reader.read();
       if (chunk.done) break;

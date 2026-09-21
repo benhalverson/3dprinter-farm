@@ -242,15 +242,20 @@ The repaired snapshot prevents regeneration of those existing commerce changes.
 Fresh local D1 migration currently stops before the shopping migration with
 `duplicate column name: user_id`: existing migrations 0002 and 0004 both add
 `cart.user_id` (0003 and 0004 also overlap on `filament_id`). This pre-existing
-history needs a separate repair; the shopping Durable Object tests apply only
-the selected shopping migration and pass. Historical SQL was not changed.
+history needs a separate repair. Historical SQL was not changed.
 
-Tests supply only local bindings and use a test-only Agent subclass; no Workers AI
-remote binding is loaded. The Vitest 3 pool uses workerd/Miniflare 4.20260609.0 for
-the SDK's named-object API. Its older snapshotter does not support current WAL
-metadata, so tests use unique object/visitor identities instead of storage snapshots.
-Mocks are still isolated per test file. The production entrypoint exports no test
-controls. Real model quality and latency are **not established** by these tests.
+Route tests import the Hono application separately from the production Worker
+entrypoint. Mocked Agent lookup forwards requests to the real session handler,
+with typed in-memory storage, catalog fixtures and mocked inference. Budget tests
+exercise the real budget rules against storage mocks. Migration imports and
+Drizzle initialization remain directly in the production Durable Objects, and budget
+operations retain synchronous SQLite transactions.
+
+Tests load no migration files and configure no shopping Durable Objects or remote
+AI bindings. The Vitest pool uses its matching Miniflare dependency and default
+storage isolation. These tests verify application behavior; they do not verify
+SQLite atomicity, durable restart recovery, migration execution, or real model
+quality and latency. The production Worker dry run checks bundling separately.
 
 ## Primary references
 

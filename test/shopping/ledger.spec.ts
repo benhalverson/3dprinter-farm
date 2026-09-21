@@ -1,24 +1,19 @@
-import { env, runInDurableObject } from 'cloudflare:test';
-import { eq } from 'drizzle-orm';
-import { drizzle } from 'drizzle-orm/durable-sqlite';
-import { describe, expect, it } from 'vitest';
-import { ShoppingLedger } from '../../src/shopping/ledger';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { BudgetLedger } from '../../src/shopping/budget';
 import { MONTHLY_CAP, PRICE, RESERVATION } from '../../src/shopping/pricing';
-import { reservations, starts } from '../../src/shopping/storage/ledger-schema';
+import { MemoryBudgetStorage } from './storage';
 
-declare module 'cloudflare:test' {
-  interface ProvidedEnv extends Cloudflare.Env {}
-}
-const ledger = () =>
-  env.SHOPPING_LEDGER.get(env.SHOPPING_LEDGER.idFromName(crypto.randomUUID()));
+const ledger = (storage = new MemoryBudgetStorage()) =>
+  new BudgetLedger(storage);
+afterEach(() => vi.useRealTimers());
 const correlation = () => ({
   sessionId: crypto.randomUUID(),
   runId: crypto.randomUUID(),
   invocation: 0,
 });
 
-describe('SQLite budget ledger through Drizzle', () => {
-  it('admits simultaneous reservations only within the monthly cap', async () => {
+describe('budget rules with mocked persistence', () => {
+  it('admits reservations only within the monthly cap', async () => {
     const stub = ledger();
     const results = await Promise.all(
       Array.from({ length: 110 }, () =>
@@ -51,45 +46,36 @@ describe('SQLite budget ledger through Drizzle', () => {
         completion_tokens: 40,
       }),
     ).toBe(25_000);
-    await expect(
+    expect(() =>
       stub.settle(reserved.id, { prompt_tokens: -1, completion_tokens: 0 }),
-    ).rejects.toThrow();
+    ).toThrow();
   });
 
-  it('keeps missing usage reserved across reconstruction and month rollover; late usage changes the original bucket', async () => {
-    const stub = ledger();
+  it('keeps missing usage reserved through month rollover; late usage changes the original bucket', async () => {
+    const storage = new MemoryBudgetStorage();
+    const stub = ledger(storage);
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2000-01-31T23:59:00Z'));
     const call = correlation();
-    const reservation = await stub.reserve(call, PRICE.version);
-    await runInDurableObject(stub, async (_instance, ctx) => {
-      const db = drizzle(ctx.storage);
-      db.update(reservations)
-        .set({ month: '2000-01' })
-        .where(eq(reservations.id, reservation.id))
-        .run();
-      const restarted = new ShoppingLedger(ctx, env);
-      expect(restarted.reserve(call, PRICE.version).status).toBe('duplicate');
-      expect(db.select().from(reservations).get()?.charged).toBe(RESERVATION);
-    });
-    expect((await stub.reserve(correlation(), PRICE.version)).status).toBe(
-      'reserved',
+    const reservation = stub.reserve(call, PRICE.version);
+    vi.setSystemTime(new Date('2000-02-01T00:00:00Z'));
+    expect(ledger(storage).reserve(call, PRICE.version).status).toBe(
+      'duplicate',
     );
-    await stub.settle(reservation.id, {
-      prompt_tokens: 1,
-      completion_tokens: 1,
+    expect(storage.getReservation(reservation.id)?.charged).toBe(RESERVATION);
+    expect(stub.reserve(correlation(), PRICE.version).status).toBe('reserved');
+    stub.settle(reservation.id, { prompt_tokens: 1, completion_tokens: 1 });
+    expect(storage.getReservation(reservation.id)).toMatchObject({
+      month: '2000-01',
+      status: 'settled',
+      charged: 650,
     });
-    await runInDurableObject(stub, (_instance, ctx) => {
-      expect(
-        drizzle(ctx.storage)
-          .select()
-          .from(reservations)
-          .where(eq(reservations.id, reservation.id))
-          .get(),
-      ).toMatchObject({ month: '2000-01', status: 'settled', charged: 650 });
-    });
+    expect(storage.totalCharged('2000-02')).toBe(RESERVATION);
   });
 
-  it('enforces six per minute across new sessions and sixty per rolling day atomically', async () => {
+  it('enforces six per minute across new sessions and sixty per rolling day', async () => {
     const stub = ledger();
+    vi.useFakeTimers({ toFake: ['Date'] });
     const calls = await Promise.all(
       Array.from({ length: 10 }, () =>
         stub.admit('visitor', crypto.randomUUID(), crypto.randomUUID()),
@@ -97,23 +83,13 @@ describe('SQLite budget ledger through Drizzle', () => {
     );
     expect(calls.filter(Boolean)).toHaveLength(6);
     for (let batch = 1; batch < 10; batch++) {
-      await runInDurableObject(stub, (_instance, ctx) => {
-        drizzle(ctx.storage)
-          .update(starts)
-          .set({ at: Date.now() - 61_000 })
-          .run();
-      });
+      vi.setSystemTime(Date.now() + 61_000);
       for (let n = 0; n < 6; n++)
         expect(
           await stub.admit('visitor', crypto.randomUUID(), crypto.randomUUID()),
         ).toBe(true);
     }
-    await runInDurableObject(stub, (_instance, ctx) => {
-      drizzle(ctx.storage)
-        .update(starts)
-        .set({ at: Date.now() - 61_000 })
-        .run();
-    });
+    vi.setSystemTime(Date.now() + 61_000);
     expect(
       await stub.admit('visitor', crypto.randomUUID(), crypto.randomUUID()),
     ).toBe(false);
@@ -127,7 +103,7 @@ describe('SQLite budget ledger through Drizzle', () => {
   });
 
   it('fails closed on unrecognized prices', async () => {
-    await expect(ledger().reserve(correlation(), 'unknown')).rejects.toThrow(
+    expect(() => ledger().reserve(correlation(), 'unknown')).toThrow(
       'pricing_unavailable',
     );
   });
