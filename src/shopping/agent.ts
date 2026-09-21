@@ -1,24 +1,54 @@
-import { Agent } from 'agents';
+import { Agent, type Schedule } from 'agents';
 import { eq } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/durable-sqlite';
 import { migrate } from 'drizzle-orm/durable-sqlite/migrator';
 import { catalogReader } from './catalog';
 import { PRICE } from './pricing';
+import { UsageReconciler } from './reconciliation';
 import { SessionHandler } from './session';
-import type { Run, Visit } from './storage/contracts';
+import type { PendingUsage, Run, Visit } from './storage/contracts';
 import migrations from './storage/migrations';
-import { runs, visits } from './storage/visit-schema';
+import { pendingUsage, runs, visits } from './storage/visit-schema';
 
 export type ShoppingEnv = Cloudflare.Env & { AGENT_NETWORK_SECRET?: string };
 
 /** Production lifecycle and Drizzle persistence for a named shopping visit. */
 export class ShoppingAgent extends Agent<ShoppingEnv> {
   private readonly handler: SessionHandler;
+  private readonly reconciliation: UsageReconciler;
 
   constructor(ctx: DurableObjectState, env: ShoppingEnv) {
     super(ctx, env);
     const db = drizzle(ctx.storage);
     ctx.blockConcurrencyWhile(() => migrate(db, migrations));
+    this.reconciliation = new UsageReconciler(
+      {
+        insertUsage(row) {
+          db.insert(pendingUsage).values(row).onConflictDoNothing().run();
+        },
+        getUsage(id) {
+          return db
+            .select()
+            .from(pendingUsage)
+            .where(eq(pendingUsage.id, id))
+            .get();
+        },
+        deleteUsage(id) {
+          db.delete(pendingUsage).where(eq(pendingUsage.id, id)).run();
+        },
+        listUsage() {
+          return db.select().from(pendingUsage).all();
+        },
+      },
+      {
+        schedule: payload => this.scheduleEvery(60, 'reconcileUsage', payload),
+        cancel: id => this.cancelSchedule(id),
+      },
+      (id, usage) =>
+        env.SHOPPING_LEDGER.get(
+          env.SHOPPING_LEDGER.idFromName('deployment-account'),
+        ).settle(id, usage),
+    );
     this.handler = new SessionHandler(
       {
         getVisit() {
@@ -51,10 +81,20 @@ export class ShoppingAgent extends Agent<ShoppingEnv> {
       {
         enabled: () => String(env.AGENT_ENABLED) === 'true',
         priceVersion: env.AGENT_PRICE_VERSION,
-        ledger: () =>
-          env.SHOPPING_LEDGER?.get(
+        ledger: () => {
+          const ledger = env.SHOPPING_LEDGER?.get(
             env.SHOPPING_LEDGER.idFromName('deployment-account'),
-          ),
+          );
+          return (
+            ledger && {
+              admit: (visitor, sessionId, runId) =>
+                ledger.admit(visitor, sessionId, runId),
+              reserve: (correlation, version) =>
+                ledger.reserve(correlation, version),
+              settle: (id, usage) => this.reconciliation.record(id, usage),
+            }
+          );
+        },
         read: query => catalogReader(env.DB)(query),
         infer: env.AI
           ? (payload, signal) => env.AI.run(PRICE.model, payload, { signal })
@@ -64,8 +104,20 @@ export class ShoppingAgent extends Agent<ShoppingEnv> {
     );
   }
 
-  onStart() {
+  async onStart() {
     this.handler.onStart();
+    await this.reconciliation.restore();
+  }
+
+  async reconcileUsage(payload: PendingUsage, task: Schedule<PendingUsage>) {
+    try {
+      await this.reconciliation.reconcile(payload, task.id);
+    } catch {
+      // The persisted interval retries without logging private provider errors.
+      console.log(
+        JSON.stringify({ event: 'shopping_reconciliation', status: 'retry' }),
+      );
+    }
   }
 
   onRequest(request: Request) {

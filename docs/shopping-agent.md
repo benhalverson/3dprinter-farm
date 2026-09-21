@@ -257,6 +257,49 @@ storage isolation. These tests verify application behavior; they do not verify
 SQLite atomicity, durable restart recovery, migration execution, or real model
 quality and latency. The production Worker dry run checks bundling separately.
 
+## Budget alerts and reconciliation
+
+Budget alerts use Cloudflare Email Service through the `BUDGET_EMAIL` Workers
+binding. Configure `AGENT_BUDGET_FROM` with an address on a domain onboarded to
+Cloudflare Email Sending and `AGENT_BUDGET_TO` with the owner's recipient address.
+There is no default address. Missing configuration leaves alerts pending for retry.
+Restrict the binding's allowed sender/recipient addresses once those addresses are
+selected. Local tests use a fake binding and never send email.
+
+The private ledger creates one durable logical alert for each UTC month and
+50%/75%/100% threshold. Its amount includes settled usage plus conservative
+reservations. The 100% alert also fires when the remaining amount cannot admit one
+maximum-size invocation, even if the numeric total is slightly below $20. Each
+reservation transaction can insert every crossed threshold. Settlement never
+deletes alerts or creates a new monthly budget bucket for old usage.
+
+Durable Object alarms claim pending alerts with a durable retry time and lease,
+then send outside the transaction. Retries back off from one minute to one hour.
+The sender and recipient are retained on the first configured attempt, so a
+configuration change cannot redirect retries. Cloudflare's returned message ID
+records acceptance, not inbox delivery. One database row represents each logical
+alert. The binding has no documented idempotency key: a lost acknowledgement or a
+crash after provider acceptance can cause a duplicate physical email on retry.
+`X-Lulu-Budget-Alert` and the text reference identify that same logical alert;
+they are correlation metadata, not provider deduplication guarantees.
+
+Validated token counts and the reservation ID are first persisted as an Agents SDK
+interval payload, then saved in the session's Drizzle outbox before attempting
+settlement. Each invocation has its own idempotent minute schedule, so a crash
+between scheduling and the outbox write still retains the usage. The task retries
+ledger outages without re-running inference. Repeated settlement is idempotent and uses
+the reservation's original month. Missing or invalid token counts retain the full
+reservation; they are never guessed or reclaimed just because time passed. Each
+task is cancelled only after its settlement succeeds, independently of other late
+results or visit expiry. Tests inject storage, scheduler and email boundaries;
+restart simulations do not establish real SQLite or SDK durability.
+
+Email failures do not change spending or admission. Cost, retry and fallback
+telemetry omit email addresses, credentials, prompts and order details. The $20
+admission cap applies only to this ledger's model calls and conservative prices;
+it is not a provider billing guarantee. Production sender onboarding, configured
+recipient and actual delivery remain operational acceptance requirements.
+
 ## Primary references
 
 - [Agents request handler](https://developers.cloudflare.com/agents/runtime/agents-api/)
@@ -265,3 +308,5 @@ quality and latency. The production Worker dry run checks bundling separately.
 - [SQLite Durable Object transactions](https://developers.cloudflare.com/durable-objects/api/sqlite-storage-api/)
 - [Drizzle Durable Object support](https://orm.drizzle.team/docs/sqlite/connect-cloudflare-do)
 - [Named Durable Object runtime support](https://developers.cloudflare.com/changelog/post/2026-03-15-durable-object-id-name/)
+- [Cloudflare email sending binding](https://developers.cloudflare.com/email-service/api/send-emails/workers-api/)
+- [Agents SDK persisted schedules](https://developers.cloudflare.com/agents/runtime/execution/schedule-tasks/)

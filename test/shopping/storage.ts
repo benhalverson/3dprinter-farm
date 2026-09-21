@@ -1,11 +1,16 @@
 import type {
+  AlertStorage,
+  BudgetAlert,
   BudgetStorage,
   Reservation,
   Run,
   SessionStorage,
   Start,
   Visit,
+  PendingUsage,
+  UsageStorage,
 } from '../../src/shopping/storage/contracts';
+import { claimAlert } from '../../src/shopping/budget-alerts';
 
 /** Storage operations only. These fixtures do not emulate SQLite or durability. */
 export class MemorySessionStorage implements SessionStorage {
@@ -42,7 +47,8 @@ export class MemorySessionStorage implements SessionStorage {
   }
 }
 
-export class MemoryBudgetStorage implements BudgetStorage {
+export class MemoryBudgetStorage implements BudgetStorage, AlertStorage {
+  readonly alerts = new Map<string, BudgetAlert>();
   readonly starts = new Map<string, Start>();
   readonly reservations = new Map<string, Reservation>();
   getStart(id: string) {
@@ -79,5 +85,43 @@ export class MemoryBudgetStorage implements BudgetStorage {
   updateReservation(id: string, changes: Partial<Reservation>) {
     const record = this.reservations.get(id);
     if (record) Object.assign(record, changes);
+  }
+  insertAlert(alert: BudgetAlert) {
+    if (!this.alerts.has(alert.id)) this.alerts.set(alert.id, { ...alert });
+  }
+  nextAttempt() {
+    const rows = [...this.alerts.values()].filter(row => !row.messageId);
+    return rows.length
+      ? Math.min(...rows.map(row => row.nextAttempt))
+      : undefined;
+  }
+  claim(now: number, sender: string | null, recipient: string | null) {
+    const row = [...this.alerts.values()]
+      .filter(row => !row.messageId && row.nextAttempt <= now)
+      .sort((a, b) => a.nextAttempt - b.nextAttempt)[0];
+    if (!row) return;
+    const claimed = claimAlert(row, now, sender, recipient);
+    this.alerts.set(row.id, claimed);
+    return { ...claimed };
+  }
+  accept(id: string, lease: string, messageId: string) {
+    const row = this.alerts.get(id);
+    if (row?.lease === lease) Object.assign(row, { messageId, lease: null });
+  }
+}
+
+export class MemoryUsageStorage implements UsageStorage {
+  readonly rows = new Map<string, PendingUsage>();
+  insertUsage(row: PendingUsage) {
+    if (!this.rows.has(row.id)) this.rows.set(row.id, { ...row });
+  }
+  getUsage(id: string) {
+    return this.rows.get(id);
+  }
+  deleteUsage(id: string) {
+    this.rows.delete(id);
+  }
+  listUsage() {
+    return [...this.rows.values()];
   }
 }

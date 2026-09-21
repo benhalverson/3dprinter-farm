@@ -41,8 +41,10 @@ export class BudgetLedger {
     if (this.storage.getReservation(id))
       return { status: 'duplicate' as const, id };
     const total = this.storage.totalCharged(month);
-    if (total + RESERVATION > MONTHLY_CAP)
+    if (total + RESERVATION > MONTHLY_CAP) {
+      this.queueAlerts(month, total, true);
       return { status: 'exhausted' as const, id };
+    }
     this.storage.insertReservation({
       id,
       month,
@@ -59,7 +61,31 @@ export class BudgetLedger {
       inputTokens: null,
       outputTokens: null,
     });
+    this.queueAlerts(month, total + RESERVATION, false);
     return { status: 'reserved' as const, id };
+  }
+
+  private queueAlerts(month: string, charged: number, exhausted: boolean) {
+    for (const threshold of [50, 75, 100]) {
+      if (
+        charged < (MONTHLY_CAP * threshold) / 100 &&
+        !(threshold === 100 && exhausted)
+      )
+        continue;
+      this.storage.insertAlert({
+        id: `lulu-inference-${month}-${threshold}`,
+        month,
+        threshold,
+        charged,
+        exhausted,
+        attempts: 0,
+        nextAttempt: Date.now(),
+        lease: null,
+        sender: null,
+        recipient: null,
+        messageId: null,
+      });
+    }
   }
 
   settle(id: string, usage: Usage) {

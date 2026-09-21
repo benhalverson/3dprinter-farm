@@ -1,10 +1,29 @@
-import type { reservations, starts } from './ledger-schema';
-import type { runs, visits } from './visit-schema';
+import type { budgetAlerts, reservations, starts } from './ledger-schema';
+import type { pendingUsage, runs, visits } from './visit-schema';
 
 export type Visit = typeof visits.$inferSelect;
 export type Run = typeof runs.$inferSelect;
 export type Reservation = typeof reservations.$inferSelect;
 export type Start = typeof starts.$inferSelect;
+export type BudgetAlert = typeof budgetAlerts.$inferSelect;
+export type PendingUsage = typeof pendingUsage.$inferSelect;
+
+export interface UsageStorage {
+  insertUsage(usage: PendingUsage): void;
+  getUsage(id: string): PendingUsage | undefined;
+  deleteUsage(id: string): void;
+  listUsage(): PendingUsage[];
+}
+
+export interface AlertStorage {
+  nextAttempt(): number | undefined;
+  claim(
+    now: number,
+    sender: string | null,
+    recipient: string | null,
+  ): BudgetAlert | undefined;
+  accept(id: string, lease: string, messageId: string): void;
+}
 
 export interface SessionStorage {
   getVisit(): Visit | undefined;
@@ -25,4 +44,5 @@ export interface BudgetStorage {
   totalCharged(month: string): number;
   insertReservation(reservation: Reservation): void;
   updateReservation(id: string, changes: Partial<Reservation>): void;
+  insertAlert(alert: BudgetAlert): void;
 }

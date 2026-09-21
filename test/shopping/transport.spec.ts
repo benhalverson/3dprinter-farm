@@ -5,10 +5,16 @@ import app from '../../src/app';
 import { BudgetLedger } from '../../src/shopping/budget';
 import { IDLE_MS, LIFE_MS } from '../../src/shopping/contracts';
 import { PRICE } from '../../src/shopping/pricing';
+import { UsageReconciler } from '../../src/shopping/reconciliation';
+import type { PendingUsage } from '../../src/shopping/storage/contracts';
 import { SessionHandler } from '../../src/shopping/session';
 import { mockEnv } from '../mocks/env';
 import { catalog, completion } from './fixtures';
-import { MemoryBudgetStorage, MemorySessionStorage } from './storage';
+import {
+  MemoryBudgetStorage,
+  MemorySessionStorage,
+  MemoryUsageStorage,
+} from './storage';
 
 vi.mock('agents', () => ({
   getAgentByName: async (_namespace: object, id: string) => ({
@@ -23,14 +29,35 @@ const sessions = new Map<string, ReturnType<typeof createFixture>>();
 const pending = new Set<Promise<void>>();
 function createFixture() {
   const storage = new MemorySessionStorage();
-  const controls = { mode: 'valid' as Mode, invocations: 0 };
+  const controls = {
+    mode: 'valid' as Mode,
+    invocations: 0,
+    settlementFailure: false,
+  };
+  const usage = new MemoryUsageStorage();
+  const tasks = new Map<string, PendingUsage>();
+  const reconciliation = new UsageReconciler(
+    usage,
+    {
+      schedule: async payload => {
+        const id = JSON.stringify(payload);
+        tasks.set(id, payload);
+        return { id };
+      },
+      cancel: async id => tasks.delete(id),
+    },
+    async (id, counts) => {
+      if (controls.settlementFailure) throw new Error('mock accounting outage');
+      return budget.settle(id, counts);
+    },
+  );
   const handler = new SessionHandler(storage, {
     enabled: () => controls.mode !== 'disabled',
     priceVersion: PRICE.version,
     ledger: () => ({
       admit: async (...args) => budget.admit(...args),
       reserve: async (...args) => budget.reserve(...args),
-      settle: async (...args) => budget.settle(...args),
+      settle: (...args) => reconciliation.record(...args),
     }),
     read: async () => catalog,
     infer: async (_payload, signal) => {
@@ -48,7 +75,7 @@ function createFixture() {
     },
   });
   handler.onStart();
-  return { storage, controls, handler };
+  return { storage, controls, handler, reconciliation, usage, tasks };
 }
 function fixture(id: string) {
   let instance = sessions.get(id);
@@ -374,6 +401,30 @@ describe('anonymous shopping transport with mocked persistence', () => {
       row => row.runId === runId,
     );
     expect(record?.charged).toBeGreaterThan(0);
+  });
+
+  it('reconciles accounting outages without repeating inference or blocking direct shopping', async () => {
+    const session = await create();
+    const f = fixture(session.sessionId);
+    f.controls.settlementFailure = true;
+    const runId = crypto.randomUUID();
+    const output = await events(await start(session, runId));
+    expect(
+      output.find(event => event.name === 'lulu.fallback.v1')?.value?.reason,
+    ).toBe('accounting_unavailable');
+    expect((await app.request('/health', {}, testEnv())).status).toBe(200);
+    expect(f.usage.rows.size).toBe(1);
+    expect(f.tasks.size).toBe(1);
+    f.controls.settlementFailure = false;
+    const [id, payload] = [...f.tasks][0];
+    await f.reconciliation.reconcile(payload, id);
+    expect(f.usage.rows.size).toBe(0);
+    expect(f.tasks.size).toBe(0);
+    await start(session, runId);
+    expect(f.controls.invocations).toBe(1);
+    expect(
+      [...budgetStorage.reservations.values()].find(row => row.runId === runId),
+    ).toMatchObject({ status: 'settled', charged: 65_000 });
   });
 
   it('ends a stalled provider call at the run deadline', async () => {

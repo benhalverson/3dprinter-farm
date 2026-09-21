@@ -636,5 +636,9 @@ export const uploadedFilesTable = sqliteTable('uploaded_files', {
     .notNull()
     .default(sql`(unixepoch())`),
 });
-export { reservations, starts } from '../shopping/storage/ledger-schema';
-export { runs, visits } from '../shopping/storage/visit-schema';
+export {
+  budgetAlerts,
+  reservations,
+  starts,
+} from '../shopping/storage/ledger-schema';
+export { pendingUsage, runs, visits } from '../shopping/storage/visit-schema';

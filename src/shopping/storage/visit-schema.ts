@@ -13,3 +13,9 @@ export const runs = sqliteTable('runs', {
   status: text().notNull(),
   reason: text(),
 });
+
+export const pendingUsage = sqliteTable('shopping_pending_usage', {
+  id: text().primaryKey(),
+  inputTokens: integer('input_tokens').notNull(),
+  outputTokens: integer('output_tokens').notNull(),
+});
