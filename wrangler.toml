@@ -65,5 +65,5 @@ new_sqlite_classes = ["ShoppingAgent", "ShoppingLedger"]
 
 [[rules]]
 type = "Text"
-globs = ["**/shopping-*/*.sql"]
+globs = ["**/drizzle/migrations/*.sql"]
 fallthrough = true

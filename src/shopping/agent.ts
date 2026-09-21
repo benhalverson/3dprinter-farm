@@ -5,7 +5,6 @@ import { eq } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/durable-sqlite';
 import { migrate } from 'drizzle-orm/durable-sqlite/migrator';
 import { z } from 'zod';
-import migrations from '../../drizzle/shopping-visit/migrations';
 import { type CatalogQuery, catalogReader } from './catalog';
 import {
   boundedBody,
@@ -20,6 +19,7 @@ import {
 } from './contracts';
 import { type InferenceRequest, runInference } from './inference';
 import { PRICE } from './pricing';
+import migrations from './storage/migrations';
 import { runs, visits } from './storage/visit-schema';
 
 export type ShoppingEnv = Cloudflare.Env & { AGENT_NETWORK_SECRET?: string };

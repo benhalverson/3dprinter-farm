@@ -2,7 +2,6 @@ import { DurableObject } from 'cloudflare:workers';
 import { and, count, eq, gt, lte, sum } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/durable-sqlite';
 import { migrate } from 'drizzle-orm/durable-sqlite/migrator';
-import migrations from '../../drizzle/shopping-ledger/migrations';
 import {
   MONTHLY_CAP,
   PRICE,
@@ -11,6 +10,7 @@ import {
   usageCost,
 } from './pricing';
 import { reservations, starts } from './storage/ledger-schema';
+import migrations from './storage/migrations';
 
 export type Correlation = {
   sessionId: string;

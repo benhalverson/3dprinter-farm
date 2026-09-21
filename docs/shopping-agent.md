@@ -183,8 +183,13 @@ customer order, payment, cart mutation or alert email exists in this slice.
 The private `ShoppingLedger` instance named `deployment-account` coordinates this
 deployment's UTC monthly buckets. All reads/writes use Drizzle; admission and
 settlement use synchronous SQLite storage transactions with no external I/O.
-Drizzle Kit generates migrations from the TypeScript schemas in
-`src/shopping/storage`; these migrate Durable Object storage, not commerce D1.
+The shopping schemas in `src/shopping/storage` are exported by `src/db/schema.ts`.
+Drizzle generates their migrations into the existing `drizzle/migrations` history.
+The TypeScript loader in `src/shopping/storage/migrations.ts` selects only the
+shopping migrations from that history for Drizzle's Durable Object migrator.
+Each Durable Object applies that shared shopping schema to its private database;
+session and budget records remain isolated by object. The standard D1 migration
+path also creates these tables, but the agent does not store shopping state in D1.
 
 Version `glm-5.3-flash-2026-09-21` records 150 nanodollars/input token and 500
 nanodollars/output token. Admission reserves the documented 1,310,720-token context
@@ -222,9 +227,23 @@ pnpm cf-typegen
 pnpm exec wrangler deploy --dry-run
 ```
 
-Schema changes use the two `drizzle.shopping-*.config.ts` configurations with
-`pnpm exec drizzle-kit generate --config <config>`. Do not handwrite storage queries
-or migration files. The normal `cf-typegen` command remains `wrangler types`.
+For any schema change, use only `pnpm run db:generate` and
+`pnpm run db:migrate:local`. Keep shopping schema changes in their own generated
+migration, then add that import to `src/shopping/storage/migrations.ts` so each
+Durable Object applies it on startup. There are no separate shopping migration
+configs, directories under `drizzle`, or JavaScript loaders. Do not handwrite
+storage queries or SQL migrations. The normal `cf-typegen` command remains
+`wrangler types`.
+
+Snapshot `0010_snapshot.json` fills the pre-existing metadata gap after snapshot
+`0006`: migrations 0007–0010 were already present in the journal and SQL history.
+The repaired snapshot prevents regeneration of those existing commerce changes.
+
+Fresh local D1 migration currently stops before the shopping migration with
+`duplicate column name: user_id`: existing migrations 0002 and 0004 both add
+`cart.user_id` (0003 and 0004 also overlap on `filament_id`). This pre-existing
+history needs a separate repair; the shopping Durable Object tests apply only
+the selected shopping migration and pass. Historical SQL was not changed.
 
 Tests supply only local bindings and use a test-only Agent subclass; no Workers AI
 remote binding is loaded. The Vitest 3 pool uses workerd/Miniflare 4.20260609.0 for
