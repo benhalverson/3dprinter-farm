@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { DEFAULT_PLA_BLACK_FILAMENT_ID } from '../../src/db/schema';
-import app from '../../src/index';
+import app from '../../src/app';
 import { mockBetterAuth } from '../mocks/auth';
 import {
   capturedInserts,

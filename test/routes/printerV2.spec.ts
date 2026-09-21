@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
-import app from '../../src/index';
+import app from '../../src/app';
 import type { Bindings, FilamentV2Response } from '../../src/types';
 import { mockEnv } from '../mocks/env';
 
@@ -494,7 +494,7 @@ describe('Printer V2 Routes', () => {
 // Uncomment and adapt when running in proper Cloudflare Workers test environment
 
 import { describe, expect, test, beforeEach, vi } from 'vitest';
-import app from '../../src/index';
+import app from '../../src/app';
 import { mockEnv } from '../mocks/env';
 import type { FilamentV2Response } from '../../src/types';
 

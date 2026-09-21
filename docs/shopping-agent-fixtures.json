@@ -1,0 +1,116 @@
+{
+  "success": {
+    "type": "CUSTOM",
+    "name": "lulu.a2ui.v1",
+    "value": {
+      "runId": "cbbe9c31-c30d-46e4-acbe-c6a05e50be9c",
+      "uiRevision": 12,
+      "catalogId": "https://luluspeedworks.com/catalog/scaffold/v1",
+      "messages": [
+        {
+          "version": "v0.9.1",
+          "updateComponents": {
+            "surfaceId": "storefront",
+            "components": [
+              {
+                "id": "products",
+                "component": "ProductRail",
+                "controls": [],
+                "entries": [
+                  "agent-one",
+                  "agent-two"
+                ],
+                "status": "Catalog facts are shown below. Compatibility and store policies are not verified.",
+                "paging": "",
+                "previousDisabled": true,
+                "nextDisabled": true,
+                "retryVisible": false,
+                "previous": {
+                  "event": {
+                    "name": "previous"
+                  }
+                },
+                "next": {
+                  "event": {
+                    "name": "next"
+                  }
+                },
+                "retry": {
+                  "event": {
+                    "name": "retry"
+                  }
+                }
+              },
+              {
+                "id": "agent-one",
+                "component": "ProductEntry",
+                "name": "Pit tray",
+                "description": "Organize small parts.",
+                "price": "$12.50",
+                "image": "https://photos.example/tray.jpg",
+                "href": "/products/1"
+              },
+              {
+                "id": "agent-two",
+                "component": "ProductEntry",
+                "name": "Fan mount",
+                "description": "A printed mount.",
+                "price": "$7.00",
+                "image": "",
+                "href": "/products/2"
+              },
+              {
+                "id": "focus",
+                "component": "ProductFocus",
+                "title": "Catalog guidance",
+                "description": "Catalog facts are shown below. Compatibility and store policies are not verified.",
+                "selectedTitle": "Pit tray",
+                "selectedDescription": "Organize small parts.",
+                "active": true,
+                "ready": true,
+                "price": "$12.50",
+                "sku": "TRAY",
+                "compatibility": "Compatibility is not supplied by this catalog. Verify fit before purchasing.",
+                "images": [
+                  "agent-photo"
+                ],
+                "retryVisible": false,
+                "retry": {
+                  "event": {
+                    "name": "retry-product"
+                  }
+                }
+              },
+              {
+                "id": "agent-photo",
+                "component": "DetailImage",
+                "src": "https://photos.example/tray.jpg",
+                "name": "Pit tray"
+              }
+            ]
+          }
+        }
+      ],
+      "limitations": [
+        "Catalog facts are shown below. Compatibility and store policies are not verified.",
+        "Compatibility is not supplied by this catalog. Verify fit before purchasing.",
+        "Shipping, returns and other store policies are not supplied by this catalog."
+      ]
+    }
+  },
+  "fallback": {
+    "type": "CUSTOM",
+    "name": "lulu.fallback.v1",
+    "value": {
+      "runId": "cbbe9c31-c30d-46e4-acbe-c6a05e50be9c",
+      "uiRevision": 12,
+      "reason": "budget_exhausted"
+    }
+  },
+  "duplicate": {
+    "runId": "cbbe9c31-c30d-46e4-acbe-c6a05e50be9c",
+    "uiRevision": 12,
+    "status": "completed",
+    "reason": null
+  }
+}

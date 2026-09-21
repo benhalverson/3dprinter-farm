@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
-import app from '../../src/index';
+import app from '../../src/app';
 import type { PaymentStatusResponse } from '../../src/types';
 import { mockAuth } from '../mocks/auth';
 import {
