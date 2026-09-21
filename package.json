@@ -4,6 +4,7 @@
   "private": true,
   "scripts": {
     "db:generate": "drizzle-kit generate",
+    "db:generate:do": "drizzle-kit generate --config=drizzle-do.config.ts",
     "db:migrate:local": "drizzle-kit migrate",
     "db:push:local": "drizzle-kit push",
     "db:migrate:remote": "wrangler d1 migrations apply ecommerce --remote",

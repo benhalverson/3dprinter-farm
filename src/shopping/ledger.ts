@@ -2,13 +2,13 @@ import { DurableObject } from 'cloudflare:workers';
 import { and, count, eq, gt, isNull, lte, min, sum } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/durable-sqlite';
 import { migrate } from 'drizzle-orm/durable-sqlite/migrator';
+import migrations from '../../drizzle/durable-objects/migrations';
 import { BudgetLedger, type Correlation } from './budget';
 import { claimAlert, flushBudgetAlerts } from './budget-alerts';
 import type { BudgetEmailEnv } from './budget-email';
 import type { Usage } from './pricing';
 import type { AlertStorage, Reservation, Start } from './storage/contracts';
 import { budgetAlerts, reservations, starts } from './storage/ledger-schema';
-import migrations from './storage/migrations';
 
 export type { Correlation, Reservation } from './budget';
 

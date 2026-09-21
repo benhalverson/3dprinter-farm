@@ -183,13 +183,14 @@ customer order, payment, cart mutation or alert email exists in this slice.
 The private `ShoppingLedger` instance named `deployment-account` coordinates this
 deployment's UTC monthly buckets. All reads/writes use Drizzle; admission and
 settlement use synchronous SQLite storage transactions with no external I/O.
-The shopping schemas in `src/shopping/storage` are exported by `src/db/schema.ts`.
-Drizzle generates their migrations into the existing `drizzle/migrations` history.
-The TypeScript loader in `src/shopping/storage/migrations.ts` selects only the
-shopping migrations from that history for Drizzle's Durable Object migrator.
+The shopping schemas in `src/shopping/storage` use `drizzle-do.config.ts` with
+Drizzle Kit's `durable-sqlite` driver. Kit generates the SQL, journal, snapshots,
+and `migrations.js` bundle in `drizzle/durable-objects`. Both objects import that
+bundle directly and call Drizzle's native migrator inside `blockConcurrencyWhile`.
 Each Durable Object applies that shared shopping schema to its private database;
-session and budget records remain isolated by object. The standard D1 migration
-path also creates these tables, but the agent does not store shopping state in D1.
+session and budget records remain isolated by object. D1 schema generation no
+longer imports the shopping schemas. Its historical migrations remain unchanged;
+the agent does not store shopping state in D1.
 
 Version `glm-5.3-flash-2026-09-21` records 150 nanodollars/input token and 500
 nanodollars/output token. Admission reserves the documented 1,310,720-token context
@@ -227,13 +228,16 @@ pnpm cf-typegen
 pnpm exec wrangler deploy --dry-run
 ```
 
-For any schema change, use only `pnpm run db:generate` and
-`pnpm run db:migrate:local`. Keep shopping schema changes in their own generated
-migration, then add that import to `src/shopping/storage/migrations.ts` so each
-Durable Object applies it on startup. There are no separate shopping migration
-configs, directories under `drizzle`, or JavaScript loaders. Do not handwrite
-storage queries or SQL migrations. The normal `cf-typegen` command remains
-`wrangler types`.
+For shopping schema changes, run `pnpm run db:generate:do` and commit all generated
+files in `drizzle/durable-objects`. Kit updates the bundle automatically; each
+Durable Object applies it on startup. Do not edit the generated SQL or bundle,
+filter migrations, or add a custom migration wrapper. D1 schema changes continue
+to use `pnpm run db:generate` and `pnpm run db:migrate:local`. The normal
+`cf-typegen` command remains `wrangler types`.
+
+The DO migration history starts fresh and does not preserve or translate the old
+shared journal. Existing DO databases are not compatible with this fresh initial
+migration. This change neither deploys nor resets any running database.
 
 Snapshot `0010_snapshot.json` fills the pre-existing metadata gap after snapshot
 `0006`: migrations 0007–0010 were already present in the journal and SQL history.

@@ -1,8 +1,8 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "d3a643c9-8f72-4cf2-b310-8b68a1855324",
-  "prevId": "68903a4b-d019-41ea-bb73-71361b417be8",
+  "id": "42cc0361-749a-458e-b70f-c2f0f91c299d",
+  "prevId": "d3a643c9-8f72-4cf2-b310-8b68a1855324",
   "tables": {
     "account": {
       "name": "account",
@@ -203,6 +203,19 @@
         }
       },
       "foreignKeys": {
+        "cart_access_version_shopping_carts_access_version_fk": {
+          "name": "cart_access_version_shopping_carts_access_version_fk",
+          "tableFrom": "cart",
+          "tableTo": "shopping_carts",
+          "columnsFrom": [
+            "access_version"
+          ],
+          "columnsTo": [
+            "access_version"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "cascade"
+        },
         "cart_user_id_users_id_fk": {
           "name": "cart_user_id_users_id_fk",
           "tableFrom": "cart",

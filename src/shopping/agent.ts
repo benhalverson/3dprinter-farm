@@ -2,12 +2,12 @@ import { Agent, type Schedule } from 'agents';
 import { eq } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/durable-sqlite';
 import { migrate } from 'drizzle-orm/durable-sqlite/migrator';
+import migrations from '../../drizzle/durable-objects/migrations';
 import { catalogReader } from './catalog';
 import { PRICE } from './pricing';
 import { UsageReconciler } from './reconciliation';
 import { SessionHandler } from './session';
 import type { PendingUsage, Run, Visit } from './storage/contracts';
-import migrations from './storage/migrations';
 import { pendingUsage, runs, visits } from './storage/visit-schema';
 
 export type ShoppingEnv = Cloudflare.Env & { AGENT_NETWORK_SECRET?: string };
