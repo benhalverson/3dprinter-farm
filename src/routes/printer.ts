@@ -289,6 +289,10 @@ const printer = factory
         );
       }
 
+      filteredData = filteredData.filter(
+        filament => filament.provider.toLowerCase() === 'slant 3d',
+      );
+
       if (providerQuery) {
         filteredData = filteredData.filter(filament =>
           filament.provider.toLowerCase().includes(providerQuery.toLowerCase()),
