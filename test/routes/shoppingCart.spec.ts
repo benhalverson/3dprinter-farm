@@ -66,6 +66,7 @@ vi.mock('../../src/utils/profileCrypto', () => ({
       city: userRow.city || '',
       state: userRow.state || '',
       zipCode: userRow.zipCode || '',
+      country: userRow.country || '',
       phone: userRow.phone || '',
     })),
 }));
@@ -467,6 +468,54 @@ describe('Shopping Cart Routes', () => {
   });
 
   describe('GET /cart/shipping (authenticated)', () => {
+    test('publishes the shipping-cost contract and required cart query', async () => {
+      const response = await app.fetch(new Request('http://localhost/open-api'), env);
+      const document = await response.json();
+      const operation = document.paths['/cart/shipping'].get;
+      expect(operation.parameters).toContainEqual(expect.objectContaining({
+        name: 'cartId', in: 'query', required: true,
+      }));
+      const schema = operation.responses['200'].content['application/json'].schema;
+      expect(schema.required).toContain('shippingCost');
+      expect(schema.properties.shippingCost).toMatchObject({ type: 'number', minimum: 0 });
+      expect(schema.properties.address).toBeUndefined();
+      for (const status of ['400', '401', '403', '404', '500', '502'])
+        expect(operation.responses[status]).toBeDefined();
+    });
+
+    test('rejects an incomplete profile before contacting Slant3D', async () => {
+      mockWhere.mockResolvedValueOnce([{
+        id: mockUserId, email: 'test@example.com', firstName: 'Test', lastName: 'User',
+        shippingAddress: '', city: 'Portland', state: 'OR', zipCode: '97201', country: 'US',
+      }]);
+      const response = await app.fetch(new Request(
+        `http://localhost/cart/shipping?cartId=${mockCartId}`,
+        { headers: { Cookie: 'token=s.mocked.signed.cookie' } },
+      ), env);
+      expect(response.status).toBe(400);
+      expect(await response.json()).toEqual({ error: 'Complete your shipping profile before estimating shipping' });
+      expect(global.fetch).not.toHaveBeenCalled();
+    });
+
+    test.each([-1, null, 'not-a-price', 0])('validates the upstream shipping amount %s', async shippingCost => {
+      mockWhere.mockResolvedValueOnce([{
+        id: mockUserId, email: 'test@example.com', firstName: 'Test', lastName: 'User',
+        shippingAddress: '123 Main Street', city: 'Portland', state: 'OR', zipCode: '97201', country: 'US',
+      }]).mockResolvedValueOnce([{
+        id: 1, skuNumber: 'TEST-SKU-001', quantity: 1, color: 'black',
+        filamentType: 'PLA', productName: 'Test Product', publicFileServiceId: 'public-file-123',
+      }]);
+      vi.mocked(global.fetch).mockResolvedValueOnce(Response.json({ shippingCost }));
+      const response = await app.fetch(new Request(
+        `http://localhost/cart/shipping?cartId=${mockCartId}`,
+        { headers: { Cookie: 'token=s.mocked.signed.cookie' } },
+      ), env);
+      expect(response.status).toBe(shippingCost === 0 ? 200 : 502);
+      expect(response.headers.get('Cache-Control')).toBe('no-store');
+      if (shippingCost === 0) expect(await response.json()).toEqual({ shippingCost: 0 });
+      else expect(await response.json()).toEqual({ error: 'Upstream draft order estimate response has invalid shipping cost' });
+    });
+
     test('returns shipping estimate successfully', async () => {
       const mockDraftOrderResponse = {
         data: {
