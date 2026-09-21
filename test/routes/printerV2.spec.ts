@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import app from '../../src/index';
-import type { Bindings } from '../../src/types';
+import type { Bindings, FilamentV2Response } from '../../src/types';
 import { mockEnv } from '../mocks/env';
 
 describe('Printer V2 Routes', () => {
@@ -459,8 +459,32 @@ describe('Printer V2 Routes', () => {
   });
 
   describe('GET /v2/colors', () => {
-    test('should be implemented', () => {
-      expect(true).toBe(true);
+    test.each([true, false])('only returns Slant 3D colors (cache hit: %s)', async cached => {
+      const upstream: FilamentV2Response = {
+        success: true,
+        message: 'Filaments retrieved successfully',
+        data: ['Slant 3D', 'Esun', 'Elegoo'].map((provider, index) => ({
+          publicId: `filament-${index}`,
+          name: `${provider} BLACK`,
+          provider,
+          profile: 'PLA',
+          color: 'black',
+          hexValue: '#000000',
+          public: true,
+          available: true,
+        })),
+        count: 3,
+        lastUpdated: '2026-09-21T05:54:16.385Z',
+      };
+      env.COLOR_CACHE.get = vi.fn().mockResolvedValue(cached ? JSON.stringify(upstream) : null);
+      env.COLOR_CACHE.put = vi.fn().mockResolvedValue(undefined);
+      const fetchMock = vi.fn().mockResolvedValue(Response.json(upstream));
+      global.fetch = fetchMock;
+
+      const response = await app.fetch(new Request('http://localhost/v2/colors'), env);
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ ...upstream, data: [upstream.data[0]], count: 1 });
+      expect(fetchMock).toHaveBeenCalledTimes(cached ? 0 : 1);
     });
   });
 });
