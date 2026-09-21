@@ -2,8 +2,8 @@
  * Test script for Slant3D V2 presigned upload workflow
  * This script demonstrates the complete file upload and estimate process
  *
- * Usage: node test-presigned-upload.js <path-to-stl-file>
- * Example: node test-presigned-upload.js ./test-cube.stl
+ * Usage: node test-presigned-upload.ts <path-to-stl-file> (Node 22.18+)
+ * Example: node test-presigned-upload.ts ./test-cube.stl
  */
 
 import fs from 'node:fs';
@@ -23,7 +23,7 @@ const colors = {
   blue: '\x1b[34m',
 };
 
-function log(color, message) {
+function log(color: keyof typeof colors, message: string) {
   console.log(`${colors[color]}${message}${colors.reset}`);
 }
 
@@ -43,8 +43,8 @@ async function main() {
     if (!fs.existsSync(STL_FILE)) {
       log('red', `Error: STL file not found: ${STL_FILE}`);
       console.log('');
-      console.log('Usage: node test-presigned-upload.js <path-to-stl-file>');
-      console.log('Example: node test-presigned-upload.js ./models/dragon.stl');
+      console.log('Usage: node test-presigned-upload.ts <path-to-stl-file>');
+      console.log('Example: node test-presigned-upload.ts ./models/dragon.stl');
       console.log('');
       console.log('You can download a sample STL file:');
       console.log(
@@ -224,7 +224,7 @@ async function main() {
 });`);
     console.log('');
   } catch (error) {
-    log('red', `\nError: ${error.message}`);
+    log('red', `\nError: ${error instanceof Error ? error.message : error}`);
     console.error(error);
     process.exit(1);
   }

@@ -19,7 +19,7 @@
   },
   "devDependencies": {
     "@biomejs/biome": "2.3.8",
-    "@cloudflare/vitest-pool-workers": "^0.8.22",
+    "@cloudflare/vitest-pool-workers": "0.12.21",
     "@cloudflare/workers-types": "^4.20260702.1",
     "@libsql/client": "^0.14.0",
     "@simplewebauthn/types": "^12.0.0",
@@ -34,6 +34,9 @@
     "wrangler": "^4.13.2"
   },
   "dependencies": {
+    "agents": "0.24.0",
+    "@ag-ui/core": "1.0.0",
+    "@ag-ui/encoder": "1.0.0",
     "@better-auth/passkey": "^1.5.4",
     "@hono/zod-openapi": "^0.19.7",
     "@hono/zod-validator": "^0.2.2",
