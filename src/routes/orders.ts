@@ -252,6 +252,14 @@ function sortAndPaginateCustomerOrders(
 
 const ordersRouter = factory
   .createApp()
+  .use('/orders', async (c, next) => {
+    c.header('Cache-Control', 'no-store');
+    await next();
+  })
+  .use('/orders/*', async (c, next) => {
+    c.header('Cache-Control', 'no-store');
+    await next();
+  })
   .get(
     '/orders',
     authMiddleware,
