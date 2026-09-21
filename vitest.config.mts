@@ -14,7 +14,6 @@ export default defineWorkersConfig({
         // Explicit local bindings prevent Workers AI from reaching remote resources.
         main: './test/shopping/worker.ts',
         miniflare: {
-          modulesRules: [{ type: 'Text', include: ['**/*.sql'] }],
           compatibilityDate: '2024-10-05',
           compatibilityFlags: ['nodejs_compat'],
           durableObjects: {
