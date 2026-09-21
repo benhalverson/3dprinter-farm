@@ -223,7 +223,12 @@ const printer = factory
     const cachedResponse = await c.env.COLOR_CACHE.get(cacheKey);
     if (cachedResponse) {
       console.log(`Cache hit for key: ${cacheKey}`);
-      return c.json(JSON.parse(cachedResponse));
+      // Entries cached before the Slant-only policy can contain other providers.
+      const result: FilamentV2Response = JSON.parse(cachedResponse);
+      const data = result.data.filter(
+        filament => filament.provider.toLowerCase() === 'slant 3d',
+      );
+      return c.json({ ...result, data, count: data.length });
     }
 
     // Validate query parameters
