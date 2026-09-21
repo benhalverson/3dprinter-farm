@@ -44,6 +44,16 @@ const cartIdParamSchema = z.object({
   cartId: z.string().uuid(),
 });
 
+const shippingEstimateSchema = z.object({
+  shippingCost: z.number().finite().nonnegative().describe(
+    'Shipping estimate in the upstream Slant3D monetary units, without conversion. Not a payable quote or a payment authorization.',
+  ),
+});
+
+const shippingErrorSchema = z.object({
+  error: z.string(),
+});
+
 // Schema for creating a Stripe Checkout session
 const createCheckoutSchema = z.object({
   successUrl: z.string().url(),
@@ -155,31 +165,45 @@ const shoppingCart = factory
     authMiddleware,
     cartAccessMiddleware,
     describeRoute({
-      description: 'Get the shipping address for the logged-in user',
+      description:
+        'Estimate shipping for an authenticated, owned cart using the saved profile. Retrieve or update the address through /profile first. Maps shippingAddress to line1, zipCode to zip, and firstName/lastName to recipient name. Creates a Slant3D draft estimate; does not charge or bind an amount to payment. The response contains shippingCost, not an address.',
       tags: ['Shopping Cart'],
+      security: [{ cookieAuth: [] }],
+      parameters: [{
+        name: 'cartId',
+        in: 'query',
+        required: true,
+        schema: { type: 'string', format: 'uuid' },
+        description: 'Cart claimed by the authenticated customer.',
+      }],
       responses: {
         200: {
           content: {
             'application/json': {
-              schema: openApiSchema(
-                z.object({
-                  address: z
-                    .object({
-                      firstName: z.string(),
-                      lastName: z.string(),
-                      shippingAddress: z.string(),
-                      city: z.string(),
-                      state: z.string(),
-                      zipCode: z.string(),
-                      country: z.string(),
-                      phone: z.string(),
-                    })
-                    .nullable(),
-                }),
-              ),
+              schema: openApiSchema(shippingEstimateSchema),
             },
           },
-          description: 'Shipping address retrieved successfully',
+          description: 'Shipping estimated successfully. Private response; Cache-Control: no-store.',
+        },
+        400: {
+          description: 'Invalid cartId, incomplete shipping profile or missing printable file.',
+          content: { 'application/json': { schema: openApiSchema(shippingErrorSchema) } },
+        },
+        401: {
+          description: 'Sign in and claim the cart before estimating shipping.',
+          content: { 'application/json': { schema: openApiSchema(shippingErrorSchema) } },
+        },
+        403: {
+          description: 'Cart lines belong to another account.',
+          content: { 'application/json': { schema: openApiSchema(shippingErrorSchema) } },
+        },
+        404: {
+          description: 'Profile or cart missing, cart inaccessible, or cart empty.',
+          content: { 'application/json': { schema: openApiSchema(shippingErrorSchema) } },
+        },
+        502: {
+          description: 'Slant3D rejected the estimate or returned an invalid shipping cost.',
+          content: { 'application/json': { schema: openApiSchema(shippingErrorSchema) } },
         },
         500: {
           content: {
@@ -224,6 +248,11 @@ const shoppingCart = factory
           country,
         } = await decryptStoredShippingProfile(userRow, passphrase);
         const decryptMs = performance.now() - decryptStart;
+
+        if (![email, firstName, lastName, shippingAddress, city, state, zipCode, country]
+          .every(value => typeof value === 'string' && value.trim().length > 0)) {
+          return c.json({ error: 'Complete your shipping profile before estimating shipping' }, 400);
+        }
 
         // Pull cart contents and join products to enrich data.
         const cartQueryStart = performance.now();
@@ -477,7 +506,8 @@ const shoppingCart = factory
         const data = (await response.json()) as DraftOrderResponse;
         const shippingCost = extractShippingCost(data);
 
-        if (shippingCost === undefined) {
+        const estimate = shippingEstimateSchema.safeParse({ shippingCost });
+        if (!estimate.success) {
           console.error(
             'cart/shipping upstream response missing shipping cost',
             {
@@ -490,13 +520,13 @@ const shoppingCart = factory
           return c.json(
             {
               error:
-                'Upstream draft order estimate response missing shipping cost',
+                'Upstream draft order estimate response has invalid shipping cost',
             },
             502,
           );
         }
 
-        return c.json({ shippingCost });
+        return c.json(estimate.data);
       } catch (err) {
         console.log('Error fetching shipping estimate:', err);
         return c.json(
