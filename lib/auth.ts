@@ -182,6 +182,7 @@ export function createAuth(database: Bindings['DB'], env?: Bindings) {
       'https://rc-admin.pages.dev',
 			'https://api.benhalverson.dev',
       'https://race-forge.com',
+      'https://luluspeedworks.com',
     ],
     advanced: {
       defaultCookieAttributes: getCookieAttributes(baseURL),

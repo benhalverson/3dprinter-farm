@@ -85,6 +85,20 @@
       "when": 1789980318391,
       "tag": "0011_thick_madame_web",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "6",
+      "when": 1789984941810,
+      "tag": "0012_cart_ownership",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "6",
+      "when": 1789984956307,
+      "tag": "0013_cart_access_constraint",
+      "breakpoints": true
     }
   ]
 }
