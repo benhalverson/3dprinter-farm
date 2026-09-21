@@ -5,22 +5,50 @@ import {
   real,
   sqliteTable,
   text,
+  uniqueIndex,
 } from 'drizzle-orm/sqlite-core';
 import { z } from 'zod';
 
 export const DEFAULT_PLA_BLACK_FILAMENT_ID =
   '76fe1f79-3f1e-43e4-b8f4-61159de5b93c';
 
-export const cart = sqliteTable('cart', {
-  id: integer('id').primaryKey(),
-  cartId: text('cart_id').notNull(),
-  userId: text('user_id').references(() => users.id, { onDelete: 'set null' }),
-  skuNumber: text('sku_number').notNull(),
-  quantity: integer('quantity').default(1).notNull(),
-  color: text('color').default('#000000'),
-  filamentType: text('filament_type').notNull(),
-  filamentId: text('filament_id').default(DEFAULT_PLA_BLACK_FILAMENT_ID),
+export const shoppingCarts = sqliteTable('shopping_carts', {
+  id: text('id').primaryKey(),
+  userId: text('user_id').references(() => users.id, { onDelete: 'cascade' }),
+  guestTokenHash: text('guest_token_hash'),
+  accessVersion: text('access_version').notNull().unique(),
 });
+
+export const cart = sqliteTable(
+  'cart',
+  {
+    id: integer('id').primaryKey(),
+    cartId: text('cart_id').notNull(),
+    // Null only for legacy carts, which cannot be accessed through the new API.
+    accessVersion: text('access_version').references(
+      () => shoppingCarts.accessVersion,
+      {
+        onUpdate: 'cascade',
+        onDelete: 'cascade',
+      },
+    ),
+    userId: text('user_id').references(() => users.id, {
+      onDelete: 'set null',
+    }),
+    skuNumber: text('sku_number').notNull(),
+    quantity: integer('quantity').default(1).notNull(),
+    color: text('color').default('#000000'),
+    filamentType: text('filament_type').notNull(),
+    filamentId: text('filament_id').default(DEFAULT_PLA_BLACK_FILAMENT_ID),
+  },
+  table => [
+    uniqueIndex('cart_configuration_unique').on(
+      table.accessVersion,
+      table.skuNumber,
+      table.filamentId,
+    ),
+  ],
+);
 
 export const leads = sqliteTable('leads', {
   id: integer('id').primaryKey(),

@@ -1,6 +1,10 @@
 import { zValidator } from '@hono/zod-validator';
 import { and, eq } from 'drizzle-orm';
 import { describeRoute } from 'hono-openapi';
+import { HTTPException } from 'hono/http-exception';
+import { cartLines, claimCart, createCart } from '../modules/cartOwnership';
+import { cartAccessMiddleware } from '../utils/cartAccessMiddleware';
+import { validateCartConfiguration } from '../modules/cartConfiguration';
 import Stripe from 'stripe';
 import { z } from 'zod';
 import { createSchema } from 'zod-openapi';
@@ -25,15 +29,15 @@ import { decryptStoredShippingProfile } from '../utils/profileCrypto';
 
 // Schema for update cart item
 const updateCartItemSchema = z.object({
-  cartId: z.string(),
-  itemId: z.number(),
-  quantity: z.number().min(0),
+  cartId: z.string().uuid(),
+  itemId: z.number().int().positive(),
+  quantity: z.number().int().min(0).max(69),
 });
 
 // Schema for remove cart item
 const removeCartItemSchema = z.object({
-  cartId: z.string(),
-  itemId: z.number(),
+  cartId: z.string().uuid(),
+  itemId: z.number().int().positive(),
 });
 
 const cartIdParamSchema = z.object({
@@ -124,9 +128,32 @@ function hasStripePriceId<T extends { stripePriceId?: string | null }>(
 
 const shoppingCart = factory
   .createApp()
+  .use('/cart/*', optionalAuthMiddleware, async (c, next) => {
+    c.header('Cache-Control', 'no-store');
+    await next();
+  })
+  .post(
+    '/cart/:cartId/claim',
+    authMiddleware,
+    zValidator('param', cartIdParamSchema),
+    async c => {
+      try {
+        await claimCart(c.var.db, c.req.valid('param').cartId, {
+          userId: c.var.userId,
+          guestToken: c.req.header('X-Cart-Token'),
+        });
+        return c.json({ message: 'Cart claimed' });
+      } catch (error) {
+        if (error instanceof HTTPException)
+          return c.json({ error: error.message }, error.status);
+        throw error;
+      }
+    },
+  )
   .get(
     '/cart/shipping',
     authMiddleware,
+    cartAccessMiddleware,
     describeRoute({
       description: 'Get the shipping address for the logged-in user',
       tags: ['Shopping Cart'],
@@ -214,7 +241,7 @@ const shoppingCart = factory
           })
           .from(cart)
           .leftJoin(productsTable, eq(cart.skuNumber, productsTable.skuNumber))
-          .where(eq(cart.cartId, cartId))) as CartShippingItem[];
+          .where(cartLines(c.var.cartAccess))) as CartShippingItem[];
         const cartQueryMs = performance.now() - cartQueryStart;
 
         console.log('cartItems:', cartItems);
@@ -495,6 +522,7 @@ const shoppingCart = factory
               schema: openApiSchema(
                 z.object({
                   cartId: z.string().uuid(),
+                  guestToken: z.string().uuid().optional(),
                   message: z.string(),
                 }),
               ),
@@ -506,10 +534,11 @@ const shoppingCart = factory
     }),
     async c => {
       try {
-        const cartId = crypto.randomUUID();
+        const { cartId, guestToken } = await createCart(c.var.db, c.var.userId);
         return c.json(
           {
             cartId,
+            guestToken,
             message: 'Cart created successfully',
           },
           201,
@@ -521,6 +550,7 @@ const shoppingCart = factory
   )
   .get(
     '/cart/:cartId',
+    cartAccessMiddleware,
     describeRoute({
       description: 'Get shopping cart items',
       tags: ['Shopping Cart'],
@@ -584,7 +614,7 @@ const shoppingCart = factory
           })
           .from(cart)
           .leftJoin(productsTable, eq(cart.skuNumber, productsTable.skuNumber))
-          .where(eq(cart.cartId, cartId));
+          .where(cartLines(c.var.cartAccess));
 
         const total = items.reduce(
           (sum, item) => sum + item.quantity * (item.price || 0),
@@ -642,8 +672,8 @@ const shoppingCart = factory
         },
       },
     }),
-    optionalAuthMiddleware,
     zValidator('json', addCartItemSchema),
+    cartAccessMiddleware,
     async c => {
       const { cartId, skuNumber, quantity, color, filamentType, filamentId } =
         c.req.valid('json');
@@ -656,16 +686,15 @@ const shoppingCart = factory
         filamentId,
       });
 
-      // Bind the cart item to the authenticated user when a session is present.
-      const userId: string | null = getCallerUserId(c) ?? null;
+      // Guest lines remain unowned until the entire cart is claimed.
+      const userId = c.var.cartAccess.userId;
 
       try {
+        await validateCartConfiguration(c.var.db, c.env, c.req.valid('json'));
         const existing = await c.var.db.query.cart.findFirst({
           where: and(
-            eq(cart.cartId, cartId),
+            cartLines(c.var.cartAccess),
             eq(cart.skuNumber, skuNumber),
-            eq(cart.color, color),
-            eq(cart.filamentType, filamentType),
             eq(cart.filamentId, filamentId),
           ),
         });
@@ -680,16 +709,31 @@ const shoppingCart = factory
           ) {
             return c.json({ error: 'Forbidden' }, 403);
           }
-          await c.var.db
+          if (existing.quantity + quantity > 69)
+            return c.json({ error: 'Maximum quantity is 69' }, 400);
+          const updated = await c.var.db
             .update(cart)
             .set({
               quantity: existing.quantity + quantity,
               filamentId,
             })
-            .where(eq(cart.id, existing.id));
+            .where(
+              and(
+                eq(cart.id, existing.id),
+                eq(cart.quantity, existing.quantity),
+                cartLines(c.var.cartAccess),
+              ),
+            )
+            .returning({ id: cart.id });
+          if (updated.length === 0)
+            return c.json(
+              { error: 'Cart changed; reload before retrying' },
+              409,
+            );
         } else {
           await c.var.db.insert(cart).values({
             cartId,
+            accessVersion: c.var.cartAccess.accessVersion,
             userId,
             skuNumber: skuNumber,
             quantity,
@@ -701,6 +745,10 @@ const shoppingCart = factory
 
         return c.json({ message: 'Item added to cart successfully' });
       } catch (error) {
+        if (error instanceof HTTPException)
+          return c.json({ error: error.message }, error.status);
+        if (error instanceof Error && /constraint/i.test(error.message))
+          return c.json({ error: 'Cart changed; reload before retrying' }, 409);
         console.error('POST /cart/add failed:', error);
         return c.json({ error: 'Failed to add item to cart' }, 500);
       }
@@ -738,15 +786,15 @@ const shoppingCart = factory
         },
       },
     }),
-    optionalAuthMiddleware,
     zValidator('json', updateCartItemSchema),
+    cartAccessMiddleware,
     async c => {
       const { cartId, itemId, quantity } = c.req.valid('json');
 
       try {
         // First, let's see what items exist in this cart
         const existingItems = await c.var.db.query.cart.findMany({
-          where: eq(cart.cartId, cartId),
+          where: cartLines(c.var.cartAccess),
         });
 
         // Enforce ownership: if any item in the cart has an owner, require the caller to match.
@@ -764,13 +812,13 @@ const shoppingCart = factory
         if (quantity === 0) {
           const _deleteResult = await c.var.db
             .delete(cart)
-            .where(and(eq(cart.id, itemId), eq(cart.cartId, cartId)));
+            .where(and(eq(cart.id, itemId), cartLines(c.var.cartAccess)));
           return c.json({ message: 'Cart item removed successfully' });
         } else {
           const updateResult = await c.var.db
             .update(cart)
             .set({ quantity })
-            .where(and(eq(cart.id, itemId), eq(cart.cartId, cartId)));
+            .where(and(eq(cart.id, itemId), cartLines(c.var.cartAccess)));
 
           const updateChanges =
             'changes' in updateResult
@@ -784,7 +832,6 @@ const shoppingCart = factory
                 debug: {
                   itemId,
                   cartId,
-                  existingItems,
                 },
               },
               404,
@@ -831,8 +878,8 @@ const shoppingCart = factory
         },
       },
     }),
-    optionalAuthMiddleware,
     zValidator('json', removeCartItemSchema),
+    cartAccessMiddleware,
     async c => {
       const { cartId, itemId } = c.req.valid('json');
 
@@ -842,7 +889,7 @@ const shoppingCart = factory
         const [existingItem] = await c.var.db
           .select({ userId: cart.userId })
           .from(cart)
-          .where(and(eq(cart.id, itemId), eq(cart.cartId, cartId)));
+          .where(and(eq(cart.id, itemId), cartLines(c.var.cartAccess)));
 
         if (existingItem?.userId != null) {
           const callerId = getCallerUserId(c);
@@ -856,7 +903,7 @@ const shoppingCart = factory
 
         await c.var.db
           .delete(cart)
-          .where(and(eq(cart.id, itemId), eq(cart.cartId, cartId)));
+          .where(and(eq(cart.id, itemId), cartLines(c.var.cartAccess)));
 
         return c.json({ message: 'Item removed from cart successfully' });
       } catch (_error) {
@@ -911,6 +958,7 @@ const shoppingCart = factory
       },
     }),
     zValidator('param', cartIdParamSchema),
+    cartAccessMiddleware,
     async c => {
       const cartId = c.req.param('cartId');
 
@@ -923,7 +971,7 @@ const shoppingCart = factory
           })
           .from(cart)
           .leftJoin(productsTable, eq(cart.skuNumber, productsTable.skuNumber))
-          .where(eq(cart.cartId, cartId));
+          .where(cartLines(c.var.cartAccess));
 
         // Filter items that have Stripe price IDs
         const stripeItems = items.filter(hasStripePriceId).map(item => ({
@@ -1026,6 +1074,7 @@ const shoppingCart = factory
     authMiddleware,
     zValidator('param', cartIdParamSchema),
     zValidator('json', createCheckoutSchema),
+    cartAccessMiddleware,
     async c => {
       const cartId = c.req.param('cartId');
       const {
@@ -1061,7 +1110,7 @@ const shoppingCart = factory
           })
           .from(cart)
           .leftJoin(productsTable, eq(cart.skuNumber, productsTable.skuNumber))
-          .where(eq(cart.cartId, cartId));
+          .where(cartLines(c.var.cartAccess));
 
         if (items.length === 0) {
           return c.json({ error: 'Cart is empty' }, 404);
@@ -1209,6 +1258,7 @@ const shoppingCart = factory
     }),
     authMiddleware,
     zValidator('param', cartIdParamSchema),
+    cartAccessMiddleware,
     async c => {
       const cartId = c.req.param('cartId');
       let body: z.infer<typeof paymentIntentRequestSchema> = {};
@@ -1258,7 +1308,7 @@ const shoppingCart = factory
           })
           .from(cart)
           .leftJoin(productsTable, eq(cart.skuNumber, productsTable.skuNumber))
-          .where(eq(cart.cartId, cartId));
+          .where(cartLines(c.var.cartAccess));
 
         if (items.length === 0) {
           return c.json({ error: 'Cart is empty' }, 404);
