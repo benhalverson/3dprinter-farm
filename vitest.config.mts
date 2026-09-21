@@ -2,18 +2,6 @@ import { defineWorkersConfig } from '@cloudflare/vitest-pool-workers/config';
 import { configDefaults } from 'vitest/config';
 
 export default defineWorkersConfig({
-  plugins: [
-    {
-      name: 'drizzle-migrations',
-      transform(source, id) {
-        if (id.endsWith('.sql'))
-          return {
-            code: `export default ${JSON.stringify(source)}`,
-            map: null,
-          };
-      },
-    },
-  ],
   test: {
     exclude: [...configDefaults.exclude, 'test/project-notes/**'],
     isolate: true,
@@ -26,6 +14,7 @@ export default defineWorkersConfig({
         // Explicit local bindings prevent Workers AI from reaching remote resources.
         main: './test/shopping/worker.ts',
         miniflare: {
+          modulesRules: [{ type: 'Text', include: ['**/*.sql'] }],
           compatibilityDate: '2024-10-05',
           compatibilityFlags: ['nodejs_compat'],
           durableObjects: {
