@@ -27,7 +27,7 @@ const app = factory
         'https://rc-store.benhalverson.dev',
         'https://rc-admin.pages.dev',
 				'https://api.benhalverson.dev',
-        'https://race-forge.com',
+        'https://luluspeedworks.com',
       ],
       credentials: true,
       allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
