@@ -39,9 +39,31 @@ id = "81516966d6ad4902bf63e82b284c0617"
 preview_id = "c7d43c86ba9c4f5c9419970c12bb2fca"
 
 [vars]
+AGENT_ENABLED = "false"
+AGENT_PRICE_VERSION = "glm-5.3-flash-2026-09-21"
 DOMAIN = "https://rc-store.benhalverson.dev"
 RP_ID = "rc-store.benhalverson.dev"
 PASSKEY_ORIGIN = "https://rc-store.benhalverson.dev"
 R2_PUBLIC_BASE_URL = "https://uploads.benhalverson.dev"
 R2_PHOTO_BASE_URL = "https://photos.benhalverson.dev"
 SLANT_API_V2_BASE_URL = "https://slant3dapi.com/v2/api/"
+
+[ai]
+binding = "AI"
+
+[[durable_objects.bindings]]
+name = "SHOPPING_AGENT"
+class_name = "ShoppingAgent"
+
+[[durable_objects.bindings]]
+name = "SHOPPING_LEDGER"
+class_name = "ShoppingLedger"
+
+[[migrations]]
+tag = "shopping-agent-v1"
+new_sqlite_classes = ["ShoppingAgent", "ShoppingLedger"]
+
+[[rules]]
+type = "Text"
+globs = ["**/shopping-*/*.sql"]
+fallthrough = true

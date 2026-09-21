@@ -11,13 +11,19 @@ import ordersRouter from './routes/orders';
 import paymentsRouter from './routes/payments';
 import printer from './routes/printer';
 import product from './routes/product';
+import shoppingAgent from './routes/shoppingAgent';
 import shoppingCart from './routes/shoppingCart';
 import userRouter from './routes/users';
 import { validateBindings } from './utils/validateBindings';
 
+export { ShoppingAgent } from './shopping/agent';
+export { ShoppingLedger } from './shopping/ledger';
+
 const app = factory
   .createApp()
-  .use(logger())
+  .use((c, next) =>
+    c.req.path.startsWith('/agent/') ? next() : logger()(c, next),
+  )
   .use(
     cors({
       origin: [
@@ -45,6 +51,7 @@ const app = factory
     createAuth(c.env.DB, c.env).handler(c.req.raw),
   )
   .route('/auth', auth)
+  .route('/agent', shoppingAgent)
   .route('/', product)
   .route('/', userRouter)
   .route('/', printer)
@@ -60,6 +67,7 @@ app.get(
     documentation: {
       components: {
         securitySchemes: {
+          agentCapability: { type: 'http', scheme: 'bearer' },
           cookieAuth: {
             type: 'apiKey',
             in: 'cookie',
