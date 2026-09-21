@@ -124,6 +124,19 @@ describe('Customer Orders API', () => {
     const res = await app.fetch(new Request('http://localhost/orders'), env);
 
     expect(res.status).toBe(401);
+    expect(res.headers.get('Cache-Control')).toBe('no-store');
+  });
+
+  test('prevents caching missing or unauthorized order details', async () => {
+    for (const order of [undefined, makeOrder({ userId: 'another-user' })]) {
+      mockWhere.mockReturnValueOnce({ get: vi.fn().mockResolvedValue(order) });
+      const res = await app.fetch(new Request('http://localhost/orders/42', {
+        headers: { Cookie: 'better-auth.session_token=mock-session-token' },
+      }), env);
+      expect(res.status).toBe(order ? 403 : 404);
+      expect(res.headers.get('Cache-Control')).toBe('no-store');
+      expect(await res.json()).not.toHaveProperty('items');
+    }
   });
 
   test('lists the authenticated customer orders with pagination and safe fields', async () => {
@@ -148,6 +161,7 @@ describe('Customer Orders API', () => {
     );
 
     expect(res.status).toBe(200);
+    expect(res.headers.get('Cache-Control')).toBe('no-store');
     const body = (await res.json()) as {
       orders: Array<{
         orderNumber: string;
