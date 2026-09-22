@@ -32,3 +32,5 @@ CREATE TABLE `shopping_runs` (
 	`reason` text,
 	PRIMARY KEY(`session_id`, `id`)
 );
+--> statement-breakpoint
+DROP TABLE `runs`;

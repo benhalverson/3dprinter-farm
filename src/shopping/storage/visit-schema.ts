@@ -12,15 +12,6 @@ export const visits = sqliteTable('visit', {
   touched: integer().notNull(),
   visitor: text().notNull(),
 });
-// Migration 0011 created this unscoped D1 table. Preserve it without guessing
-// ownership for old records; new sessions use the explicitly scoped table below.
-export const legacyRuns = sqliteTable('runs', {
-  id: text().primaryKey(),
-  revision: integer().notNull(),
-  status: text().notNull(),
-  reason: text(),
-});
-
 export const runs = sqliteTable(
   'shopping_runs',
   {

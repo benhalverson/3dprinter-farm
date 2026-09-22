@@ -247,9 +247,7 @@ The repaired snapshot prevents regeneration of those existing commerce changes.
 Fresh local D1 migration currently stops with `duplicate column name: user_id`:
 existing migrations 0002 and 0004 both add `cart.user_id` (0003 and 0004 also
 overlap on `filament_id`). That history needs a separate repair. Historical SQL
-is unchanged; migration 0014 adds alerts, revisions, pending usage and scoped
-`shopping_runs`. The unscoped `runs` table from migration 0011 is retained as a
-legacy schema without guessing record ownership or copying its rows.
+is unchanged; migration 0014 defines the shopping schema changes.
 
 Route tests import the Hono application separately from the production Worker
 entrypoint and exercise the session handler with typed storage mocks. They cover
