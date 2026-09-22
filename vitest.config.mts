@@ -3,11 +3,7 @@ import { configDefaults } from 'vitest/config';
 
 export default defineWorkersConfig({
   test: {
-    exclude: [
-      ...configDefaults.exclude,
-      'test/project-notes/**',
-      'test/integration/**',
-    ],
+    exclude: [...configDefaults.exclude, 'test/project-notes/**'],
     isolate: true,
     setupFiles: ['./test/setup.ts'],
     poolOptions: {
