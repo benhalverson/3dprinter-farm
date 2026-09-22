@@ -12,9 +12,8 @@
     "deploy": "wrangler deploy",
     "dev": "wrangler dev",
     "start": "wrangler dev",
-    "test": "vitest run && pnpm test:integration",
-    "test:ci": "pnpm test",
-    "test:integration": "drizzle-kit generate --config drizzle.integration.config.ts && vitest run --config vitest.integration.config.mts",
+    "test": "vitest",
+    "test:ci": "vitest run",
     "test:project-notes": "node --test --disable-warning=ExperimentalWarning --experimental-default-type=module --experimental-strip-types test/project-notes/*.spec.ts",
     "cf-typegen": "wrangler types"
   },
@@ -36,6 +35,7 @@
     "wrangler": "^4.13.2"
   },
   "dependencies": {
+    "agents": "0.24.0",
     "@ag-ui/core": "1.0.0",
     "@ag-ui/encoder": "1.0.0",
     "@better-auth/passkey": "^1.5.4",
@@ -43,7 +43,6 @@
     "@hono/zod-validator": "^0.2.2",
     "@scalar/hono-api-reference": "^0.9.1",
     "@simplewebauthn/server": "^13.1.1",
-    "agents": "0.24.0",
     "better-auth": "^1.5.4",
     "cipher-kit": "3.0.0",
     "drizzle-orm": "^0.43.1",

@@ -22,7 +22,12 @@ Application request logs exclude password-reset routes, including token-bearing 
 
 ## Verification
 
-`pnpm test:ci` runs the existing Worker tests plus the real Better Auth integration suite. The latter uses isolated Miniflare D1 and KV bindings, mocks only sending, and initializes the database using a Drizzle-generated baseline and Drizzle's D1 migrator. `pnpm test:integration` runs it separately.
+`pnpm test` and `pnpm test:ci` retain their existing behavior and run the Worker suite. The separate Better Auth integration suite uses isolated Miniflare D1 and KV bindings, mocks only sending, and initializes the database using a Drizzle-generated baseline and Drizzle's D1 migrator. Run it explicitly with:
+
+```sh
+pnpm exec drizzle-kit generate --config drizzle.integration.config.ts
+pnpm exec vitest run --config vitest.integration.config.mts
+```
 
 The production migration history currently cannot initialize an empty database: `0000` already creates `cart.user_id`, while `0002` adds it again. Integration setup therefore generates migrations from the current production schema into ignored `.wrangler/auth-test-migrations`. This validates the current auth schema and behavior, not replayability of production migration history. No production migration files are modified.
 
