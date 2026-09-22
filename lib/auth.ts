@@ -1,9 +1,9 @@
 import { passkey } from '@better-auth/passkey';
 import { betterAuth } from 'better-auth';
 import { drizzleAdapter } from 'better-auth/adapters/drizzle';
+import { createAuthMiddleware } from 'better-auth/api';
 import { openAPI, organization } from 'better-auth/plugins';
 import { drizzle } from 'drizzle-orm/d1';
-import { html } from 'hono/html';
 import * as schema from '../src/db/schema';
 import type { Bindings } from '../src/types';
 import {
@@ -106,7 +106,6 @@ async function verifyWorkerPassword({
 export function createAuth(
   database: Bindings['DB'],
   env?: AuthBindings,
-  executionCtx?: Pick<ExecutionContext, 'waitUntil'>,
 ) {
   const db = drizzle(database, { schema });
   const baseURL = env?.AUTH_BASE_URL || 'http://localhost:8787';
@@ -128,6 +127,16 @@ export function createAuth(
     }),
     secret: getAuthSecret(env),
     baseURL,
+    hooks: {
+      before: createAuthMiddleware(async ctx => {
+        if (ctx.path !== '/request-password-reset') return;
+        // Better Auth 1.6 catches errors in its default await helper. Override
+        // this request's helper so reset delivery failures reach the handler.
+        ctx.context.runInBackgroundOrAwait = async promise => {
+          await promise;
+        };
+      }),
+    },
     emailAndPassword: {
       enabled: true,
       resetPasswordTokenExpiresIn: 3600,
@@ -136,18 +145,15 @@ export function createAuth(
         try {
           if (!env?.AUTH_EMAIL) throw new Error('Missing email binding');
           await env.AUTH_EMAIL.send({
-            from: {
-              email: 'noreply@luluspeedworks.com',
-              name: 'Lulu Speedworks',
-            },
+            from: 'Lulu Speedworks <noreply@luluspeedworks.com>',
             to: user.email,
             subject: 'Reset your Lulu Speedworks password',
             text: `Reset your password: ${url}\n\nThis link expires in one hour. If you did not request a password reset, ignore this email.`,
-            html: html`<p>Reset your Lulu Speedworks password:</p><p><a href="${url}">Reset password</a></p><p>This link expires in one hour. If you did not request a password reset, ignore this email.</p>`.toString(),
           });
         } catch {
           // Provider errors may contain the message body, including the reset token.
           console.error('auth.password_reset.email_delivery_failed');
+          throw new Error('Password reset email delivery failed');
         }
       },
       password: {
@@ -226,14 +232,6 @@ export function createAuth(
       // Keep redirect validation enabled in integration tests as well as production.
       disableOriginCheck: false,
       defaultCookieAttributes: getCookieAttributes(baseURL),
-      ...(executionCtx
-        ? {
-            backgroundTasks: {
-              handler: (promise: Promise<unknown>) =>
-                executionCtx.waitUntil(promise),
-            },
-          }
-        : {}),
     },
     // Better Auth errors can include request data (e.g. rejected callback URLs).
     logger: {

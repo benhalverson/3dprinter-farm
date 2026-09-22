@@ -4,7 +4,7 @@ The backend uses Better Auth's existing Drizzle verification records. No product
 
 ## API contract
 
-- `POST /api/auth/request-password-reset`: JSON `{ "email": "customer@example.com", "redirectTo": "https://luluspeedworks.com/reset-password" }`. `redirectTo` is optional, but browser clients should supply it. Registered and unknown addresses receive the same `200` body: `{ "status": true, "message": "If this email exists in our system, check your email for the reset link" }`. Provider failures do not change that response.
+- `POST /api/auth/request-password-reset`: JSON `{ "email": "customer@example.com", "redirectTo": "https://luluspeedworks.com/reset-password" }`. `redirectTo` is optional, but browser clients should supply it. Successful sends and unknown addresses receive the same `200` body: `{ "status": true, "message": "If this email exists in our system, check your email for the reset link" }`. For registered addresses, the request awaits delivery; provider failures propagate through Better Auth as an error response instead of returning success.
 - The email links to `GET https://api.benhalverson.dev/api/auth/reset-password/:token?callbackURL=...`. A valid token redirects to `https://luluspeedworks.com/reset-password?token=...`. An expired or invalid token redirects to `https://luluspeedworks.com/reset-password?error=INVALID_TOKEN`. Opening a valid link does not consume the token.
 - `POST /api/auth/reset-password`: JSON `{ "token": "...", "newPassword": "..." }`. Success returns `{ "status": true }`. Invalid, expired, or previously consumed tokens and invalid passwords return `400`.
 
@@ -14,26 +14,28 @@ The existing KV limiter allows five reset requests and ten password submissions 
 
 ## Email and logging
 
-`AUTH_EMAIL` uses Cloudflare's structured sending API with text and HTML bodies, restricted to `Lulu Speedworks <noreply@luluspeedworks.com>`. Better Auth schedules delivery through the Worker execution context's `waitUntil`. Delivery exceptions produce only `auth.password_reset.email_delivery_failed`; provider exception details and reset credentials are never logged. Better Auth's logger emits only severity categories because its default messages can contain callback URLs.
+`AUTH_EMAIL` matches Chassisnotes' structured `binding.send()` call with a plain-text body and `from: 'Lulu Speedworks <noreply@luluspeedworks.com>'`. No HTML is generated. The binding has no sender or destination restrictions. Better Auth awaits sending before responding, without background-task configuration. Delivery exceptions log only `auth.password_reset.email_delivery_failed` and throw a sanitized error through Better Auth; provider exception details and reset credentials are never logged. Better Auth's logger emits only severity categories because its default messages can contain callback URLs.
 
 Application request logs exclude password-reset routes, including token-bearing callback paths and query tokens. Cloudflare invocation logs are disabled because they include request URLs; other application logs remain enabled. Any separately configured proxy, Logpush, or tracing sinks should also exclude these URLs before rollout.
+
+Better Auth 1.6.16 catches errors in its default `runInBackgroundOrAwait` helper even without background tasks configured. A before hook replaces that helper only in the password-reset request's context with a direct await, allowing sanitized delivery failures to become HTTP `500` responses. Other auth endpoints keep their default behavior.
 
 `AUTH_BASE_URL=https://api.benhalverson.dev` is the canonical API origin. Existing `DOMAIN`, `RP_ID`, and `PASSKEY_ORIGIN` settings retain their storefront/passkey purposes. Copy the `AUTH_BASE_URL=http://localhost:8787` override from `.dev.vars.example` into local configuration. `AUTH_EMAIL` has `remote=false`, so ordinary local development uses local email simulation and does not deliver real email. Do not enable remote bindings for automated tests.
 
 ## Verification
 
-`pnpm test` and `pnpm test:ci` retain their existing behavior and run the Worker suite. Drizzle and Vitest configuration and package dependencies are unchanged. The existing suite mocks Better Auth and Drizzle; it does not provide end-to-end password-reset validation.
+`pnpm test` and `pnpm test:ci` retain their existing behavior and run the Worker suite. Drizzle and Vitest configuration and package dependencies are unchanged. `test/authEmail.spec.ts` exercises the real auth configuration with mocked Better Auth and Drizzle, verifying the exact plain-text payload, awaited delivery, rejected failures, and sanitized logging. `test/authEmailHandler.spec.ts` uses the real Better Auth handler with mocked persistence and email delivery to verify awaited responses, HTTP `500` on send failure, and generic success for unknown addresses. These tests do not establish end-to-end persistence or inbox delivery.
 
 Run `pnpm test:project-notes` under Node 22 (the CI version; its existing script uses a flag removed in Node 24), `pnpm exec tsc --noEmit`, and `pnpm exec wrangler deploy --dry-run` before release.
 
 ## Rollout steps
 
-1. Onboard `luluspeedworks.com` for Cloudflare Email Sending and verify all required DNS records. At implementation time, `wrangler email sending list` showed only `chassisnotes.com` enabled. Confirm Lulu's status before attempting live delivery.
-2. Deploy the backend with the restricted `AUTH_EMAIL` binding and canonical `AUTH_BASE_URL`, preserving the current passkey settings and auth secret. No production migration is needed for this feature.
-3. With an explicitly chosen controlled inbox and registered test account, request a reset. Confirm actual inbox receipt separately from provider acceptance; inspect sender, text/HTML link, and expiry wording. Never paste the full link or token into logs or issue comments.
+1. Confirm `luluspeedworks.com` is onboarded for Cloudflare Email Sending and verify all required DNS records. On September 21, 2026, `wrangler email sending list` reported both `chassisnotes.com` and `luluspeedworks.com` enabled; this does not establish inbox delivery.
+2. Deploy the backend with the unrestricted `AUTH_EMAIL` binding and canonical `AUTH_BASE_URL`, preserving the current passkey settings and auth secret. No production migration is needed for this feature.
+3. With an explicitly chosen controlled inbox and registered test account, request a reset. Confirm actual inbox receipt separately from provider acceptance; inspect sender, plain-text link, and expiry wording. Never paste the full link or token into logs or issue comments.
 4. Complete a reset and verify old-password rejection, new-password sign-in, session revocation, expired-link handling, and token-reuse rejection.
 5. Deliver the storefront reset screen before advertising customer-facing recovery. Backend completion alone does not make the full customer journey available.
 
-Domain onboarding, deployment, and real inbox delivery testing are pending rollout actions, not claims established by the automated suite or dry run.
+Deployment and real inbox delivery testing remain separate rollout actions, not claims established by the automated suite or dry run.
 
 References: [Better Auth options](https://better-auth.com/docs/reference/options), [Cloudflare Workers email API](https://developers.cloudflare.com/email-service/api/send-emails/workers-api/).
