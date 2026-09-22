@@ -26,6 +26,7 @@ import {
   optionalAuthMiddleware,
 } from '../utils/authMiddleware';
 import { decryptStoredShippingProfile } from '../utils/profileCrypto';
+import { serializeCartCreateError } from '../utils/cartCreateError';
 
 // Schema for update cart item
 const updateCartItemSchema = z.object({
@@ -533,6 +534,7 @@ const shoppingCart = factory
       },
     }),
     async c => {
+      const requestStart = performance.now();
       try {
         const { cartId, guestToken } = await createCart(c.var.db, c.var.userId);
         return c.json(
@@ -543,7 +545,16 @@ const shoppingCart = factory
           },
           201,
         );
-      } catch (_error) {
+      } catch (error) {
+        console.error({
+          event: 'cart.create.failed',
+          route: 'POST /cart/create',
+          origin: c.req.header('Origin') ?? null,
+          rayId: c.req.header('CF-Ray') ?? null,
+          elapsedMs: performance.now() - requestStart,
+          authenticated: Boolean(c.var.userId),
+          error: serializeCartCreateError(error),
+        });
         return c.json({ error: 'Failed to create cart' }, 500);
       }
     },
