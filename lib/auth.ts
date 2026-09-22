@@ -143,9 +143,7 @@ export function createAuth(
             to: user.email,
             subject: 'Reset your Lulu Speedworks password',
             text: `Reset your password: ${url}\n\nThis link expires in one hour. If you did not request a password reset, ignore this email.`,
-            html: String(
-              html`<p>Reset your Lulu Speedworks password:</p><p><a href="${url}">Reset password</a></p><p>This link expires in one hour. If you did not request a password reset, ignore this email.</p>`,
-            ),
+            html: html`<p>Reset your Lulu Speedworks password:</p><p><a href="${url}">Reset password</a></p><p>This link expires in one hour. If you did not request a password reset, ignore this email.</p>`.toString(),
           });
         } catch {
           // Provider errors may contain the message body, including the reset token.
