@@ -1,5 +1,6 @@
 import { relations, sql } from 'drizzle-orm';
 import {
+  index,
   integer,
   primaryKey,
   real,
@@ -8,6 +9,27 @@ import {
   uniqueIndex,
 } from 'drizzle-orm/sqlite-core';
 import { z } from 'zod';
+import type {
+  ProductDraftState,
+  ProductDraftTarget,
+} from '../modules/productDraftContracts';
+
+// No product foreign key: the conversation survives deletion of its target.
+export const productDrafts = sqliteTable(
+  'product_drafts',
+  {
+    id: text('id').primaryKey(),
+    ownerId: text('owner_id').notNull(),
+    target: text('target', { mode: 'json' }).$type<ProductDraftTarget>().notNull(),
+    state: text('state', { mode: 'json' }).$type<ProductDraftState>().notNull(),
+    revision: integer('revision').notNull(),
+    createdAt: integer('created_at').notNull(),
+    updatedAt: integer('updated_at').notNull(),
+  },
+  table => [
+    index('product_drafts_owner_updated').on(table.ownerId, table.updatedAt),
+  ],
+);
 
 export const DEFAULT_PLA_BLACK_FILAMENT_ID =
   '76fe1f79-3f1e-43e4-b8f4-61159de5b93c';

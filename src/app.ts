@@ -10,6 +10,7 @@ import ordersRouter from './routes/orders';
 import paymentsRouter from './routes/payments';
 import printer from './routes/printer';
 import product from './routes/product';
+import productDrafts from './routes/productDrafts';
 import shoppingAgent from './routes/shoppingAgent';
 import shoppingCart from './routes/shoppingCart';
 import userRouter from './routes/users';
@@ -45,6 +46,7 @@ const app = factory
   .route('/api/auth', authApi)
   .route('/auth', auth)
   .route('/agent', shoppingAgent)
+  .route('/admin/product-drafts', productDrafts)
   .route('/', product)
   .route('/', userRouter)
   .route('/', printer)
