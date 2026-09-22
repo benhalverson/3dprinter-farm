@@ -254,15 +254,9 @@ entrypoint and exercise the session handler with typed storage mocks. They cover
 authentication, duplicate runs, cancellation races, storage failures, restart
 interruption and usage reconciliation without repeated inference.
 
-`pnpm test:ci` also runs `vitest.d1.config.mts` against a disposable local D1
-binding. Drizzle Kit generates a temporary baseline from the canonical schema and
-Drizzle's native D1 migrator applies it, avoiding the historical commerce migration
-collision without rewriting history. These tests execute real D1 batches for
-concurrent reservations near the cap, concurrent admissions and settlement,
-atomic alert rollback, competing email leases, D1 failures, session isolation and
-usage recovery. The temporary database is disposed after the suite. SDK scheduling
-and email delivery remain controlled test boundaries; no remote AI or email calls
-are made. The production Worker dry run verifies bundling separately.
+`pnpm test:ci` runs the existing Workers test suite. Storage, SDK scheduling and
+email delivery use controlled test boundaries; no remote AI or email calls are
+made. The production Worker dry run verifies bundling separately.
 
 ## Budget alerts and reconciliation
 
@@ -299,9 +293,7 @@ D1 accounting outages without re-running inference. Repeated settlement is idemp
 the reservation's original month. Missing or invalid token counts retain the full
 reservation; they are never guessed or reclaimed just because time passed. Each
 task is cancelled only after its settlement succeeds, independently of other late
-results or visit expiry. Tests inject storage, scheduler and email boundaries;
-local D1 tests establish database behavior, while SDK lifecycle durability remains
-a runtime acceptance boundary.
+results or visit expiry. Tests inject storage, scheduler and email boundaries.
 
 Email failures do not change spending or admission. Cost, retry and fallback
 telemetry omit email addresses, credentials, prompts and order details. The $20

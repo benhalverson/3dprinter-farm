@@ -13,7 +13,7 @@
     "dev": "wrangler dev",
     "start": "wrangler dev",
     "test": "vitest",
-    "test:ci": "vitest run && vitest run --config vitest.d1.config.mts",
+    "test:ci": "vitest run",
     "test:project-notes": "node --test --disable-warning=ExperimentalWarning --experimental-default-type=module --experimental-strip-types test/project-notes/*.spec.ts",
     "cf-typegen": "wrangler types"
   },
