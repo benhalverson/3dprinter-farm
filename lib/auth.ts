@@ -3,6 +3,7 @@ import { betterAuth } from 'better-auth';
 import { drizzleAdapter } from 'better-auth/adapters/drizzle';
 import { openAPI, organization } from 'better-auth/plugins';
 import { drizzle } from 'drizzle-orm/d1';
+import { html } from 'hono/html';
 import * as schema from '../src/db/schema';
 import type { Bindings } from '../src/types';
 import {
@@ -10,7 +11,17 @@ import {
   verifyPassword as verifyLegacyPassword,
 } from '../src/utils/crypto';
 
-function getAuthSecret(env?: Bindings) {
+export type AuthBindings = Pick<
+  Bindings,
+  | 'AUTH_BASE_URL'
+  | 'AUTH_EMAIL'
+  | 'BETTER_AUTH_SECRET'
+  | 'RP_ID'
+  | 'RP_NAME'
+  | 'PASSKEY_ORIGIN'
+>;
+
+function getAuthSecret(env?: AuthBindings) {
   const secret = env?.BETTER_AUTH_SECRET?.trim();
 
   if (!secret) {
@@ -34,10 +45,12 @@ function getCookieAttributes(baseURL: string) {
 }
 
 function isLocalHost(hostname: string) {
-  return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1';
+  return (
+    hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1'
+  );
 }
 
-function getPasskeyRpId(baseURL: string, env?: Bindings) {
+function getPasskeyRpId(baseURL: string, env?: AuthBindings) {
   const configuredRpId = env?.RP_ID?.trim();
 
   if (configuredRpId) {
@@ -59,7 +72,8 @@ function validatePasskeyOrigin(rpID: string, passkeyOrigin?: string) {
   }
 
   const originHost = new URL(passkeyOrigin).hostname;
-  const isValidRpRelation = originHost === rpID || originHost.endsWith(`.${rpID}`);
+  const isValidRpRelation =
+    originHost === rpID || originHost.endsWith(`.${rpID}`);
 
   if (!isValidRpRelation) {
     throw new Error(
@@ -89,9 +103,13 @@ async function verifyWorkerPassword({
   return verifyLegacyPassword(password, salt, derivedHash);
 }
 
-export function createAuth(database: Bindings['DB'], env?: Bindings) {
+export function createAuth(
+  database: Bindings['DB'],
+  env?: AuthBindings,
+  executionCtx?: Pick<ExecutionContext, 'waitUntil'>,
+) {
   const db = drizzle(database, { schema });
-  const baseURL = env?.DOMAIN || 'http://localhost:8787';
+  const baseURL = env?.AUTH_BASE_URL || 'http://localhost:8787';
   const passkeyOrigin = env?.PASSKEY_ORIGIN?.trim();
   const rpID = getPasskeyRpId(baseURL, env);
 
@@ -112,6 +130,26 @@ export function createAuth(database: Bindings['DB'], env?: Bindings) {
     baseURL,
     emailAndPassword: {
       enabled: true,
+      resetPasswordTokenExpiresIn: 3600,
+      revokeSessionsOnPasswordReset: true,
+      sendResetPassword: async ({ user, url }) => {
+        try {
+          if (!env?.AUTH_EMAIL) throw new Error('Missing email binding');
+          await env.AUTH_EMAIL.send({
+            from: {
+              email: 'noreply@luluspeedworks.com',
+              name: 'Lulu Speedworks',
+            },
+            to: user.email,
+            subject: 'Reset your Lulu Speedworks password',
+            text: `Reset your password: ${url}\n\nThis link expires in one hour. If you did not request a password reset, ignore this email.`,
+            html: html`<p>Reset your Lulu Speedworks password:</p><p><a href="${url}">Reset password</a></p><p>This link expires in one hour. If you did not request a password reset, ignore this email.</p>`.toString(),
+          });
+        } catch {
+          // Provider errors may contain the message body, including the reset token.
+          console.error('auth.password_reset.email_delivery_failed');
+        }
+      },
       password: {
         hash: hashWorkerPassword,
         verify: verifyWorkerPassword,
@@ -180,12 +218,28 @@ export function createAuth(database: Bindings['DB'], env?: Bindings) {
       'http://localhost:8787',
       'https://rc-store.benhalverson.dev',
       'https://rc-admin.pages.dev',
-			'https://api.benhalverson.dev',
+      'https://api.benhalverson.dev',
       'https://race-forge.com',
       'https://luluspeedworks.com',
     ],
     advanced: {
+      // Keep redirect validation enabled in integration tests as well as production.
+      disableOriginCheck: false,
       defaultCookieAttributes: getCookieAttributes(baseURL),
+      ...(executionCtx
+        ? {
+            backgroundTasks: {
+              handler: (promise: Promise<unknown>) =>
+                executionCtx.waitUntil(promise),
+            },
+          }
+        : {}),
+    },
+    // Better Auth errors can include request data (e.g. rejected callback URLs).
+    logger: {
+      log: level => {
+        console.error(`auth.${level}`);
+      },
     },
     plugins: [
       openAPI(),

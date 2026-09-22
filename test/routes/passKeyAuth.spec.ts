@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
+import { createExecutionContext } from 'cloudflare:test';
 import app from '../../src/app';
 import { mockAuth, mockBetterAuth } from '../mocks/auth';
 import { mockDrizzle } from '../mocks/drizzle';
@@ -21,6 +22,7 @@ describe('Better Auth Passkey Routes', () => {
         },
       }),
       mockEnv() as unknown as Env,
+      createExecutionContext(),
     );
 
     expect(res.status).toBe(200);
@@ -37,6 +39,7 @@ describe('Better Auth Passkey Routes', () => {
         body: JSON.stringify({ response: {} }),
       }),
       mockEnv() as unknown as Env,
+      createExecutionContext(),
     );
 
     expect(res.status).toBe(200);
@@ -53,6 +56,7 @@ describe('Better Auth Passkey Routes', () => {
         body: JSON.stringify({ response: { id: 'credential-id' } }),
       }),
       mockEnv() as unknown as Env,
+      createExecutionContext(),
     );
 
     expect(res.status).toBe(200);

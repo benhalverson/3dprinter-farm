@@ -6,6 +6,15 @@ compatibility_flags = ["nodejs_compat"]
 [observability]
 enabled = true
 
+# Invocation logs include full request URLs, including password-reset tokens.
+[observability.logs]
+invocation_logs = false
+
+[[send_email]]
+name = "AUTH_EMAIL"
+allowed_sender_addresses = ["noreply@luluspeedworks.com"]
+remote = false
+
 [[kv_namespaces]]
 binding = "COLOR_CACHE"
 id = "546aedc37b4843489e0f8c4a1f3799f5"
@@ -42,6 +51,7 @@ preview_id = "c7d43c86ba9c4f5c9419970c12bb2fca"
 AGENT_ENABLED = "false"
 AGENT_PRICE_VERSION = "glm-5.3-flash-2026-09-21"
 DOMAIN = "https://rc-store.benhalverson.dev"
+AUTH_BASE_URL = "https://api.benhalverson.dev"
 RP_ID = "rc-store.benhalverson.dev"
 PASSKEY_ORIGIN = "https://rc-store.benhalverson.dev"
 R2_PUBLIC_BASE_URL = "https://uploads.benhalverson.dev"
