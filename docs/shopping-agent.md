@@ -180,16 +180,21 @@ first, then catalog results from the end, deterministically. Tool results are
 bounded to 4 KiB each. No provider retry, repair call, mutation tool, web browsing,
 customer order, payment, cart mutation or alert email exists in this slice.
 
-The private `ShoppingLedger` instance named `deployment-account` coordinates this
-deployment's UTC monthly buckets. All reads/writes use Drizzle; admission and
-settlement use synchronous SQLite storage transactions with no external I/O.
-The shopping schemas in `src/shopping/storage` are exported by `src/db/schema.ts`.
-Drizzle generates their migrations into the existing `drizzle/migrations` history.
-The TypeScript loader in `src/shopping/storage/migrations.ts` selects only the
-shopping migrations from that history for Drizzle's Durable Object migrator.
-Each Durable Object applies that shared shopping schema to its private database;
-session and budget records remain isolated by object. The standard D1 migration
-path also creates these tables, but the agent does not store shopping state in D1.
+ShoppingAgent remains a named Durable Object for Agents SDK execution, streaming,
+cancellation and invocation schedules. All application records live in the existing
+D1 binding `env.DB`: visits, session-scoped runs and pending usage, admissions,
+reservations, budget alerts and accounting revisions. Runs and pending usage use
+session/record composite primary keys; every session query includes its session ID.
+The SDK retains its own internal storage for execution and schedules.
+
+D1 accounting reads the append-only revision before reading accounting data, then
+inserts the next unique revision in the same Drizzle batch as admission, reservation,
+settlement and threshold-alert mutations. A conflicting revision rolls back the
+whole batch and retries the decision up to five times. Other D1 failures and exhausted
+retries fail closed without invoking inference. Queries use D1's primary database.
+Short session request setup is serialized across asynchronous D1 operations;
+inference and streaming run outside that queue. Persisted run identities and
+cancellation tombstones prevent repeated inference, including after restart.
 
 Version `glm-5.3-flash-2026-09-21` records 150 nanodollars/input token and 500
 nanodollars/output token. Admission reserves the documented 1,310,720-token context
@@ -203,9 +208,9 @@ persist identity, session/run/invocation, month, model, price version/rates, max
 reported usage and settlement status. Valid usage settles once and releases excess.
 Missing/invalid usage and uncertain provider failures retain the maximum reservation.
 Session expiry never releases it. Late settlement applies to the originating month.
-Reconciliation, record retention policy and email alerts remain #193.
+Usage reconciliation and budget email retries are described below; retention policy remains separate.
 
-The same ledger atomically admits six starts per rolling minute and 60 per rolling
+The same accounting module atomically admits six starts per rolling minute and 60 per rolling
 day for the visit's HMAC network identity. A new session cannot reset that allowance.
 Raw IPs and capabilities are not stored or logged. Structured logs include only
 run correlation, latency, invocation count, usage and fallback/validation reason.
@@ -227,41 +232,82 @@ pnpm cf-typegen
 pnpm exec wrangler deploy --dry-run
 ```
 
-For any schema change, use only `pnpm run db:generate` and
-`pnpm run db:migrate:local`. Keep shopping schema changes in their own generated
-migration, then add that import to `src/shopping/storage/migrations.ts` so each
-Durable Object applies it on startup. There are no separate shopping migration
-configs, directories under `drizzle`, or JavaScript loaders. Do not handwrite
-storage queries or SQL migrations. The normal `cf-typegen` command remains
-`wrangler types`.
+Shopping schemas are exported from `src/db/schema.ts`. Run `pnpm run db:generate`
+and commit the generated D1 migration, snapshot and journal. Apply migrations using
+Drizzle tooling (`pnpm run db:migrate:local` for a local SQLite database).
+There is no application DO migration config, bundle, startup migrator or SQL
+bundling rule. Historical Wrangler class migrations remain unchanged; the ledger
+class, export and binding are removed without a destructive deletion migration.
+This change does not deploy, reset running databases or transfer existing DO data.
 
 Snapshot `0010_snapshot.json` fills the pre-existing metadata gap after snapshot
 `0006`: migrations 0007–0010 were already present in the journal and SQL history.
 The repaired snapshot prevents regeneration of those existing commerce changes.
 
-Fresh local D1 migration currently stops before the shopping migration with
-`duplicate column name: user_id`: existing migrations 0002 and 0004 both add
-`cart.user_id` (0003 and 0004 also overlap on `filament_id`). This pre-existing
-history needs a separate repair. Historical SQL was not changed.
+Fresh local D1 migration currently stops with `duplicate column name: user_id`:
+existing migrations 0002 and 0004 both add `cart.user_id` (0003 and 0004 also
+overlap on `filament_id`). That history needs a separate repair. Historical SQL
+is unchanged; migration 0014 defines the shopping schema changes.
 
 Route tests import the Hono application separately from the production Worker
-entrypoint. Mocked Agent lookup forwards requests to the real session handler,
-with typed in-memory storage, catalog fixtures and mocked inference. Budget tests
-exercise the real budget rules against storage mocks. Migration imports and
-Drizzle initialization remain directly in the production Durable Objects, and budget
-operations retain synchronous SQLite transactions.
+entrypoint and exercise the session handler with typed storage mocks. They cover
+authentication, duplicate runs, cancellation races, storage failures, restart
+interruption and usage reconciliation without repeated inference.
 
-Tests load no migration files and configure no shopping Durable Objects or remote
-AI bindings. The Vitest pool uses its matching Miniflare dependency and default
-storage isolation. These tests verify application behavior; they do not verify
-SQLite atomicity, durable restart recovery, migration execution, or real model
-quality and latency. The production Worker dry run checks bundling separately.
+`pnpm test:ci` runs the existing Workers test suite. Storage, SDK scheduling and
+email delivery use controlled test boundaries; no remote AI or email calls are
+made. The production Worker dry run verifies bundling separately.
+
+## Budget alerts and reconciliation
+
+Budget alerts use Cloudflare Email Service through the `BUDGET_EMAIL` Workers
+binding. Configure `AGENT_BUDGET_FROM` with an address on a domain onboarded to
+Cloudflare Email Sending and `AGENT_BUDGET_TO` with the owner's recipient address.
+There is no default address. Missing configuration leaves alerts pending for retry.
+Restrict the binding's allowed sender/recipient addresses once those addresses are
+selected. Local tests use a fake binding and never send email.
+
+D1 accounting creates one durable logical alert for each UTC month and
+50%/75%/100% threshold. Its amount includes settled usage plus conservative
+reservations. The 100% alert also fires when the remaining amount cannot admit one
+maximum-size invocation, even if the numeric total is slightly below $20. Each
+reservation transaction can insert every crossed threshold. Settlement never
+deletes alerts or creates a new monthly budget bucket for old usage.
+
+A Worker cron runs every minute and conditionally claims pending D1 alerts using
+their attempt count and retry timestamp. It sends outside the database update and
+acknowledges acceptance only while holding the matching lease. Retries back off from one minute to one hour.
+The sender and recipient are retained on the first configured attempt, so a
+configuration change cannot redirect retries. Cloudflare's returned message ID
+records acceptance, not inbox delivery. One database row represents each logical
+alert. The binding has no documented idempotency key: a lost acknowledgement or a
+crash after provider acceptance can cause a duplicate physical email on retry.
+`X-Lulu-Budget-Alert` and the text reference identify that same logical alert;
+they are correlation metadata, not provider deduplication guarantees.
+
+Validated token counts and the reservation ID are first persisted as an Agents SDK
+interval payload, then saved in the session-scoped D1 outbox before attempting
+settlement. Each invocation has its own idempotent minute schedule, so a crash
+between scheduling and the outbox write still retains the usage. The task retries
+D1 accounting outages without re-running inference. Repeated settlement is idempotent and uses
+the reservation's original month. Missing or invalid token counts retain the full
+reservation; they are never guessed or reclaimed just because time passed. Each
+task is cancelled only after its settlement succeeds, independently of other late
+results or visit expiry. Tests inject storage, scheduler and email boundaries.
+
+Email failures do not change spending or admission. Cost, retry and fallback
+telemetry omit email addresses, credentials, prompts and order details. The $20
+admission cap applies only to this accounting module's model calls and conservative prices;
+it is not a provider billing guarantee. Production sender onboarding, configured
+recipient and actual delivery remain operational acceptance requirements.
 
 ## Primary references
 
 - [Agents request handler](https://developers.cloudflare.com/agents/runtime/agents-api/)
 - [Model parameters, context and prices](https://developers.cloudflare.com/workers-ai/models/glm-5.3-flash/)
 - [AG-UI events and custom events](https://docs.ag-ui.com/concepts/events)
-- [SQLite Durable Object transactions](https://developers.cloudflare.com/durable-objects/api/sqlite-storage-api/)
-- [Drizzle Durable Object support](https://orm.drizzle.team/docs/sqlite/connect-cloudflare-do)
+- [D1 atomic batches](https://developers.cloudflare.com/d1/worker-api/d1-database/)
+- [Drizzle batch API](https://orm.drizzle.team/docs/batch-api)
 - [Named Durable Object runtime support](https://developers.cloudflare.com/changelog/post/2026-03-15-durable-object-id-name/)
+- [Cloudflare email sending binding](https://developers.cloudflare.com/email-service/api/send-emails/workers-api/)
+- [Agents SDK persisted schedules](https://developers.cloudflare.com/agents/runtime/execution/schedule-tasks/)

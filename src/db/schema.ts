@@ -9,6 +9,9 @@ import {
 } from 'drizzle-orm/sqlite-core';
 import { z } from 'zod';
 
+export * from '../shopping/storage/ledger-schema';
+export * from '../shopping/storage/visit-schema';
+
 export const DEFAULT_PLA_BLACK_FILAMENT_ID =
   '76fe1f79-3f1e-43e4-b8f4-61159de5b93c';
 
@@ -664,5 +667,3 @@ export const uploadedFilesTable = sqliteTable('uploaded_files', {
     .notNull()
     .default(sql`(unixepoch())`),
 });
-export { reservations, starts } from '../shopping/storage/ledger-schema';
-export { runs, visits } from '../shopping/storage/visit-schema';

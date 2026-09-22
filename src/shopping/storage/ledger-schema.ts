@@ -1,5 +1,13 @@
 import { index, integer, sqliteTable, text } from 'drizzle-orm/sqlite-core';
 
+// Append-only: a conflicting next revision rolls back the entire accounting batch.
+export const accountingRevisions = sqliteTable(
+  'shopping_accounting_revisions',
+  {
+    revision: integer().primaryKey(),
+  },
+);
+
 export const reservations = sqliteTable(
   'reservations',
   {
@@ -29,3 +37,17 @@ export const starts = sqliteTable(
   },
   table => [index('visitor_starts').on(table.visitor, table.at)],
 );
+
+export const budgetAlerts = sqliteTable('shopping_budget_alerts', {
+  id: text().primaryKey(),
+  month: text().notNull(),
+  threshold: integer().notNull(),
+  charged: integer().notNull(),
+  exhausted: integer({ mode: 'boolean' }).notNull(),
+  attempts: integer().notNull().default(0),
+  nextAttempt: integer('next_attempt').notNull(),
+  lease: text(),
+  sender: text(),
+  recipient: text(),
+  messageId: text('message_id'),
+});

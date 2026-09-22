@@ -51,19 +51,16 @@ SLANT_API_V2_BASE_URL = "https://slant3dapi.com/v2/api/"
 [ai]
 binding = "AI"
 
+[[send_email]]
+name = "BUDGET_EMAIL"
+
 [[durable_objects.bindings]]
 name = "SHOPPING_AGENT"
 class_name = "ShoppingAgent"
-
-[[durable_objects.bindings]]
-name = "SHOPPING_LEDGER"
-class_name = "ShoppingLedger"
 
 [[migrations]]
 tag = "shopping-agent-v1"
 new_sqlite_classes = ["ShoppingAgent", "ShoppingLedger"]
 
-[[rules]]
-type = "Text"
-globs = ["**/drizzle/migrations/*.sql"]
-fallthrough = true
+[triggers]
+crons = ["* * * * *"]

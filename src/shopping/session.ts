@@ -35,7 +35,7 @@ export type SessionDependencies = {
 };
 type LiveRun = {
   id: string;
-  stop: (reason: Fallback, disconnected?: boolean) => void;
+  stop: (reason: Fallback, disconnected?: boolean) => Promise<void>;
 };
 
 /** Only coordination metadata is durable. No prompts, history, model text or UI batches. */
@@ -46,10 +46,22 @@ export class SessionHandler {
   ) {}
   private live?: LiveRun;
   onStart() {
-    this.storage.interruptRuns();
+    return this.storage.interruptRuns();
   }
 
-  async onRequest(request: Request): Promise<Response> {
+  private requests: Promise<unknown> = Promise.resolve();
+
+  onRequest(request: Request): Promise<Response> {
+    const response = this.requests
+      .then(() => this.handleRequest(request))
+      .catch(() =>
+        Response.json({ error: 'accounting_unavailable' }, { status: 503 }),
+      );
+    this.requests = response.catch(() => undefined);
+    return response;
+  }
+
+  private async handleRequest(request: Request): Promise<Response> {
     const path = new URL(request.url).pathname;
     if (request.method !== 'POST' || request.headers.has('upgrade'))
       return new Response(null, { status: 404 });
@@ -61,9 +73,16 @@ export class SessionHandler {
           visitor: z.string().length(64),
         })
         .parse(await request.json());
-      if (this.session()) return new Response(null, { status: 409 });
+      if (await this.session()) return new Response(null, { status: 409 });
       const now = Date.now();
-      this.storage.insertVisit({ ...init, created: now, touched: now });
+      if (
+        !(await this.storage.insertVisit({
+          ...init,
+          created: now,
+          touched: now,
+        }))
+      )
+        return new Response(null, { status: 409 });
       return Response.json({
         expiresAt: now + IDLE_MS,
         absoluteExpiresAt: now + LIFE_MS,
@@ -72,7 +91,7 @@ export class SessionHandler {
     const supplied =
       request.headers.get('authorization')?.replace(/^Bearer /, '') ?? '';
     const hash = await digest(supplied);
-    const session = this.session();
+    const session = await this.session();
     if (
       !session ||
       !crypto.subtle.timingSafeEqual(
@@ -85,24 +104,25 @@ export class SessionHandler {
       Date.now() >=
       Math.min(session.touched + IDLE_MS, session.created + LIFE_MS)
     ) {
-      this.live?.stop('cancelled');
+      await this.live?.stop('cancelled');
       return Response.json({ error: 'session_expired' }, { status: 410 });
     }
-    this.storage.updateVisit(session.id, { touched: Date.now() });
+    await this.storage.updateVisit(session.id, { touched: Date.now() });
     const cancel = /^\/runs\/([0-9a-f-]+)\/cancel$/i.exec(path);
     if (cancel && z.string().uuid().safeParse(cancel[1]).success) {
-      if (this.live?.id === cancel[1]) this.live.stop('cancelled');
+      if (this.live?.id === cancel[1]) await this.live.stop('cancelled');
       // Persist a tombstone even for a cancellation which overtakes its run request.
-      this.storage.insertRun(
-        {
-          id: cancel[1],
-          revision: 0,
-          status: 'fallback',
-          reason: 'cancelled',
-        },
-        true,
-      );
-      const known = this.run(cancel[1]);
+      await this.storage.insertRun({
+        id: cancel[1],
+        revision: 0,
+        status: 'fallback',
+        reason: 'cancelled',
+      });
+      await this.storage.updateRun(cancel[1], {
+        status: 'fallback',
+        reason: 'cancelled',
+      });
+      const known = await this.run(cancel[1]);
       return Response.json({
         runId: known?.id,
         uiRevision: known?.revision,
@@ -123,7 +143,7 @@ export class SessionHandler {
         { status: error instanceof RangeError ? 413 : 400 },
       );
     }
-    const known = this.run(input.runId);
+    const known = await this.run(input.runId);
     if (known)
       return Response.json({
         runId: known.id,
@@ -137,13 +157,23 @@ export class SessionHandler {
       Math.min(session.created + LIFE_MS, session.touched + IDLE_MS)
     )
       return Response.json({ error: 'session_expired' }, { status: 410 });
-    this.live?.stop('superseded');
-    this.storage.insertRun({
+    await this.live?.stop('superseded');
+    const inserted = await this.storage.insertRun({
       id: input.runId,
       revision: input.uiRevision,
       status: 'running',
       reason: null,
     });
+
+    if (!inserted) {
+      const existing = await this.run(input.runId);
+      return Response.json({
+        runId: existing?.id,
+        uiRevision: existing?.revision,
+        status: existing?.status,
+        reason: existing?.reason,
+      });
+    }
 
     const encoder = new EventEncoder();
     const utf8 = new TextEncoder();
@@ -153,40 +183,61 @@ export class SessionHandler {
     const started = Date.now();
     let controller: ReadableStreamDefaultController<Uint8Array>;
     let timer: ReturnType<typeof setTimeout>;
-    const send = (event: Event) => {
-      if (!closed) controller.enqueue(utf8.encode(encoder.encodeSSE(event)));
+    const send = (event: Event, terminal = false) => {
+      if (!closed || terminal)
+        controller.enqueue(utf8.encode(encoder.encodeSSE(event)));
     };
-    const custom = (name: string, value: object) =>
-      send({
-        type: EventType.CUSTOM,
-        name,
-        value: { runId: input.runId, uiRevision: input.uiRevision, ...value },
-      });
-    const finish = (reason?: Fallback, disconnected = false) => {
+    const custom = (name: string, value: object, terminal = false) =>
+      send(
+        {
+          type: EventType.CUSTOM,
+          name,
+          value: { runId: input.runId, uiRevision: input.uiRevision, ...value },
+        },
+        terminal,
+      );
+    let completion: Promise<void> | undefined;
+    let streamDisconnected = false;
+    const finish = (reason?: Fallback, disconnected = false): Promise<void> => {
+      streamDisconnected ||= disconnected;
+      if (completion) return completion;
+      completion = finishRun(reason);
+      return completion;
+    };
+    const finishRun = async (reason?: Fallback) => {
       if (closed) return;
-      this.storage.updateRun(input.runId, {
-        status: reason ? 'fallback' : 'completed',
-        reason: reason ?? null,
-      });
-      if (!disconnected) {
-        if (reason) custom('lulu.fallback.v1', { reason });
-        send({
-          type: EventType.RUN_FINISHED,
-          threadId: session.id,
-          runId: input.runId,
-          result: {
-            uiRevision: input.uiRevision,
-            status: reason ? 'fallback' : 'completed',
-            reason,
-          },
-        });
-      }
       closed = true;
+      abort.abort();
       clearTimeout(timer);
+      try {
+        await this.storage.updateRun(input.runId, {
+          status: reason ? 'fallback' : 'completed',
+          reason: reason ?? null,
+        });
+      } catch {
+        // The durable running row still prevents a duplicate invocation and is
+        // interrupted on restart. Close this stream even while D1 is unavailable.
+        reason = 'accounting_unavailable';
+      }
+      if (!streamDisconnected) {
+        if (reason) custom('lulu.fallback.v1', { reason }, true);
+        send(
+          {
+            type: EventType.RUN_FINISHED,
+            threadId: session.id,
+            runId: input.runId,
+            result: {
+              uiRevision: input.uiRevision,
+              status: reason ? 'fallback' : 'completed',
+              reason,
+            },
+          },
+          true,
+        );
+      }
       request.signal.removeEventListener('abort', disconnectedHandler);
       if (this.live?.id === input.runId) this.live = undefined;
-      abort.abort();
-      if (!disconnected) controller.close();
+      if (!streamDisconnected) controller.close();
       console.log(
         JSON.stringify({
           event: 'shopping_run',
@@ -199,18 +250,21 @@ export class SessionHandler {
         }),
       );
     };
-    const disconnectedHandler = () => finish('disconnected', true);
+    const backgroundFinish = (reason: Fallback, disconnected = false) => {
+      this.deps.waitUntil(finish(reason, disconnected));
+    };
+    const disconnectedHandler = () => backgroundFinish('disconnected', true);
     const body = new ReadableStream<Uint8Array>({
       start(value) {
         controller = value;
       },
       cancel() {
-        finish('disconnected', true);
+        return finish('disconnected', true);
       },
     });
     this.live = { id: input.runId, stop: finish };
     timer = setTimeout(
-      () => finish('timeout'),
+      () => backgroundFinish('timeout'),
       Math.min(RUN_MS, session.created + LIFE_MS - Date.now()),
     );
     request.signal.addEventListener('abort', disconnectedHandler, {
@@ -259,10 +313,10 @@ export class SessionHandler {
         });
         if (!closed) {
           custom('lulu.a2ui.v1', result);
-          finish();
+          await finish();
         }
       } catch (error) {
-        finish(
+        await finish(
           error instanceof ShoppingFailure
             ? error.reason
             : 'inference_unavailable',

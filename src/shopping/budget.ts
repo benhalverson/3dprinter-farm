@@ -18,19 +18,19 @@ export type { Reservation } from './storage/contracts';
 export class BudgetLedger {
   constructor(private readonly storage: BudgetStorage) {}
 
-  admit(visitor: string, sessionId: string, runId: string) {
+  async admit(visitor: string, sessionId: string, runId: string) {
     const now = Date.now();
     const id = `${sessionId}/${runId}`;
-    if (this.storage.getStart(id)) return true;
-    this.storage.deleteStartsThrough(now - 86_400_000);
-    const day = this.storage.countStarts(visitor);
-    const minute = this.storage.countStarts(visitor, now - 60_000);
+    if (await this.storage.getStart(id)) return true;
+    await this.storage.deleteStartsThrough(now - 86_400_000);
+    const day = await this.storage.countStarts(visitor);
+    const minute = await this.storage.countStarts(visitor, now - 60_000);
     if (minute >= 6 || day >= 60) return false;
-    this.storage.insertStart({ id, visitor, at: now });
+    await this.storage.insertStart({ id, visitor, at: now });
     return true;
   }
 
-  reserve(correlation: Correlation, version: string) {
+  async reserve(correlation: Correlation, version: string) {
     if (version !== PRICE.version) throw new Error('pricing_unavailable');
     const { sessionId, runId, invocation } = correlation;
     if (!Number.isInteger(invocation) || invocation < 0 || invocation >= 3)
@@ -38,12 +38,14 @@ export class BudgetLedger {
     const id = `${sessionId}/${runId}/${invocation}`;
     const month = new Date().toISOString().slice(0, 7);
     // A repeated reservation must never authorize a repeated provider request.
-    if (this.storage.getReservation(id))
+    if (await this.storage.getReservation(id))
       return { status: 'duplicate' as const, id };
-    const total = this.storage.totalCharged(month);
-    if (total + RESERVATION > MONTHLY_CAP)
+    const total = await this.storage.totalCharged(month);
+    if (total + RESERVATION > MONTHLY_CAP) {
+      await this.queueAlerts(month, total, true);
       return { status: 'exhausted' as const, id };
-    this.storage.insertReservation({
+    }
+    await this.storage.insertReservation({
       id,
       month,
       sessionId,
@@ -59,17 +61,45 @@ export class BudgetLedger {
       inputTokens: null,
       outputTokens: null,
     });
+    await this.queueAlerts(month, total + RESERVATION, false);
     return { status: 'reserved' as const, id };
   }
 
-  settle(id: string, usage: Usage) {
+  private async queueAlerts(
+    month: string,
+    charged: number,
+    exhausted: boolean,
+  ) {
+    for (const threshold of [50, 75, 100]) {
+      if (
+        charged < (MONTHLY_CAP * threshold) / 100 &&
+        !(threshold === 100 && exhausted)
+      )
+        continue;
+      await this.storage.insertAlert({
+        id: `lulu-inference-${month}-${threshold}`,
+        month,
+        threshold,
+        charged,
+        exhausted,
+        attempts: 0,
+        nextAttempt: Date.now(),
+        lease: null,
+        sender: null,
+        recipient: null,
+        messageId: null,
+      });
+    }
+  }
+
+  async settle(id: string, usage: Usage) {
     const cost = usageCost(usage);
-    const record = this.storage.getReservation(id);
+    const record = await this.storage.getReservation(id);
     if (!record) throw new Error('unknown_reservation');
     if (record.status === 'settled') return record.charged;
     if (record.priceVersion !== PRICE.version || cost > record.maximum)
       throw new Error('invalid_usage');
-    this.storage.updateReservation(id, {
+    await this.storage.updateReservation(id, {
       charged: cost,
       status: 'settled',
       inputTokens: usage.prompt_tokens,
