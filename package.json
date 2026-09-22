@@ -4,7 +4,6 @@
   "private": true,
   "scripts": {
     "db:generate": "drizzle-kit generate",
-    "db:generate:do": "drizzle-kit generate --config=drizzle-do.config.ts",
     "db:migrate:local": "drizzle-kit migrate",
     "db:push:local": "drizzle-kit push",
     "db:migrate:remote": "wrangler d1 migrations apply ecommerce --remote",
@@ -14,7 +13,7 @@
     "dev": "wrangler dev",
     "start": "wrangler dev",
     "test": "vitest",
-    "test:ci": "vitest run",
+    "test:ci": "vitest run && vitest run --config vitest.d1.config.mts",
     "test:project-notes": "node --test --disable-warning=ExperimentalWarning --experimental-default-type=module --experimental-strip-types test/project-notes/*.spec.ts",
     "cf-typegen": "wrangler types"
   },

@@ -15,7 +15,8 @@ export class UsageReconciler {
   ) {}
 
   async restore() {
-    for (const row of this.storage.listUsage()) await this.tasks.schedule(row);
+    for (const row of await this.storage.listUsage())
+      await this.tasks.schedule(row);
   }
 
   async record(id: string, usage: Usage) {
@@ -25,21 +26,21 @@ export class UsageReconciler {
       inputTokens: valid.prompt_tokens,
       outputTokens: valid.completion_tokens,
     };
-    // The SDK persists the payload before the first ledger RPC. A crash between
+    // The SDK persists the payload before the first D1 settlement. A crash between
     // scheduling and writing the outbox can still recover those exact counts.
     const task = await this.tasks.schedule(payload);
     return this.reconcile(payload, task.id);
   }
 
   async reconcile(payload: PendingUsage, taskId: string) {
-    this.storage.insertUsage(payload);
-    const row = this.storage.getUsage(payload.id);
+    await this.storage.insertUsage(payload);
+    const row = await this.storage.getUsage(payload.id);
     if (!row) throw new Error('usage_unavailable');
     const charged = await this.settle(row.id, {
       prompt_tokens: row.inputTokens,
       completion_tokens: row.outputTokens,
     });
-    this.storage.deleteUsage(row.id);
+    await this.storage.deleteUsage(row.id);
     // Cancel this invocation's task only: another late result has its own task.
     await this.tasks.cancel(taskId);
     return charged;

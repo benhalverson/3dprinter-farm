@@ -6,8 +6,8 @@ import { BudgetLedger } from '../../src/shopping/budget';
 import { IDLE_MS, LIFE_MS } from '../../src/shopping/contracts';
 import { PRICE } from '../../src/shopping/pricing';
 import { UsageReconciler } from '../../src/shopping/reconciliation';
-import type { PendingUsage } from '../../src/shopping/storage/contracts';
 import { SessionHandler } from '../../src/shopping/session';
+import type { PendingUsage } from '../../src/shopping/storage/contracts';
 import { mockEnv } from '../mocks/env';
 import { catalog, completion } from './fixtures';
 import {
@@ -18,16 +18,16 @@ import {
 
 vi.mock('agents', () => ({
   getAgentByName: async (_namespace: object, id: string) => ({
-    fetch: (request: Request) => fixture(id).handler.onRequest(request),
+    fetch: async (request: Request) =>
+      (await fixture(id)).handler.onRequest(request),
   }),
 }));
-
 type Mode = 'valid' | 'disabled' | 'malformed' | 'outage' | 'wait';
 let budgetStorage: MemoryBudgetStorage;
 let budget: BudgetLedger;
 const sessions = new Map<string, ReturnType<typeof createFixture>>();
 const pending = new Set<Promise<void>>();
-function createFixture() {
+async function createFixture() {
   const storage = new MemorySessionStorage();
   const controls = {
     mode: 'valid' as Mode,
@@ -48,15 +48,15 @@ function createFixture() {
     },
     async (id, counts) => {
       if (controls.settlementFailure) throw new Error('mock accounting outage');
-      return budget.settle(id, counts);
+      return await budget.settle(id, counts);
     },
   );
   const handler = new SessionHandler(storage, {
     enabled: () => controls.mode !== 'disabled',
     priceVersion: PRICE.version,
     ledger: () => ({
-      admit: async (...args) => budget.admit(...args),
-      reserve: async (...args) => budget.reserve(...args),
+      admit: async (...args) => await budget.admit(...args),
+      reserve: async (...args) => await budget.reserve(...args),
       settle: (...args) => reconciliation.record(...args),
     }),
     read: async () => catalog,
@@ -74,7 +74,7 @@ function createFixture() {
       pending.add(task);
     },
   });
-  handler.onStart();
+  await handler.onStart();
   return { storage, controls, handler, reconciliation, usage, tasks };
 }
 function fixture(id: string) {
@@ -91,7 +91,6 @@ beforeEach(() => {
   budgetStorage = new MemoryBudgetStorage();
   budget = new BudgetLedger(budgetStorage);
 });
-
 const sessionSchema = z.object({
   sessionId: z.string().uuid(),
   capability: z.string(),
@@ -155,7 +154,7 @@ const cancel = (session: Session, runId: string) =>
     testEnv(),
   );
 const mode = async (session: Session, value: Mode) => {
-  fixture(session.sessionId).controls.mode = value;
+  (await fixture(session.sessionId)).controls.mode = value;
 };
 const events = async (res: Response) =>
   (await res.text())
@@ -167,13 +166,77 @@ const events = async (res: Response) =>
       ),
     );
 const calls = async (session: Session) =>
-  fixture(session.sessionId).controls.invocations;
+  (await fixture(session.sessionId)).controls.invocations;
 afterEach(async () => {
   await Promise.all(pending);
   vi.useRealTimers();
 });
-
 describe('anonymous shopping transport with mocked persistence', () => {
+  it('serializes a duplicate and cancellation while the initial run insert is pending', async () => {
+    const session = await create();
+    const instance = await fixture(session.sessionId);
+    instance.controls.mode = 'wait';
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => {
+      release = resolve;
+    });
+    const insert = instance.storage.insertRun.bind(instance.storage);
+    const pendingInsert = vi
+      .spyOn(instance.storage, 'insertRun')
+      .mockImplementationOnce(async row => {
+        await gate;
+        return insert(row);
+      });
+    const runId = crypto.randomUUID();
+    const first = start(session, runId);
+    await vi.waitFor(() => expect(pendingInsert).toHaveBeenCalled());
+    const duplicate = start(session, runId);
+    const cancelled = cancel(session, runId);
+    release();
+    const response = await first;
+    expect((await duplicate).headers.get('content-type')).toContain(
+      'application/json',
+    );
+    expect(await (await cancelled).json()).toMatchObject({
+      reason: 'cancelled',
+    });
+    expect(
+      (await events(response)).some(event => event.name === 'lulu.a2ui.v1'),
+    ).toBe(false);
+    expect(instance.controls.invocations).toBeLessThanOrEqual(1);
+    expect((await instance.storage.getRun(runId))?.reason).toBe('cancelled');
+  });
+
+  it('fails closed before inference when session persistence is unavailable', async () => {
+    const session = await create();
+    const instance = await fixture(session.sessionId);
+    vi.spyOn(instance.storage, 'insertRun').mockRejectedValueOnce(
+      new Error('D1 unavailable'),
+    );
+    const response = await start(session);
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({ error: 'accounting_unavailable' });
+    expect(instance.controls.invocations).toBe(0);
+  });
+
+  it('closes the stream on terminal persistence failure and prevents repeated inference after restart', async () => {
+    const session = await create();
+    const instance = await fixture(session.sessionId);
+    vi.spyOn(instance.storage, 'updateRun').mockRejectedValueOnce(
+      new Error('D1 unavailable'),
+    );
+    const runId = crypto.randomUUID();
+    const output = await events(await start(session, runId));
+    expect(
+      output.find(event => event.name === 'lulu.fallback.v1')?.value?.reason,
+    ).toBe('accounting_unavailable');
+    await instance.handler.onStart();
+    expect(await (await start(session, runId)).json()).toMatchObject({
+      reason: 'interrupted',
+    });
+    expect(instance.controls.invocations).toBe(1);
+  });
+
   it('publishes ordered AG-UI lifecycle and validated revision-tagged composition', async () => {
     const session = await create();
     expect(session.absoluteExpiresAt - session.expiresAt).toBe(
@@ -196,15 +259,14 @@ describe('anonymous shopping transport with mocked persistence', () => {
       uiRevision: 42,
     });
     expect(await calls(session)).toBe(1);
-    const storage = fixture(session.sessionId).storage;
+    const storage = (await fixture(session.sessionId)).storage;
     const persisted = JSON.stringify([
-      storage.getVisit(),
+      await storage.getVisit(),
       [...storage.runs.values()],
     ]);
     expect(persisted).not.toContain('Show pit tools');
     expect(persisted).not.toContain(session.capability);
   });
-
   it('isolates capabilities, rejects URL transport and exposes no generic SDK surface', async () => {
     const a = await create();
     const b = await create();
@@ -245,13 +307,12 @@ describe('anonymous shopping transport with mocked persistence', () => {
         .status,
     ).toBe(503);
   });
-
   it.each([
     'idle',
     'absolute',
   ])('expires %s sessions and their capabilities', async kind => {
     const session = await create();
-    fixture(session.sessionId).storage.updateVisit(
+    await (await fixture(session.sessionId)).storage.updateVisit(
       session.sessionId,
       kind === 'idle'
         ? { touched: Date.now() - IDLE_MS }
@@ -260,7 +321,6 @@ describe('anonymous shopping transport with mocked persistence', () => {
     expect((await start(session)).status).toBe(410);
     expect((await cancel(session, crypto.randomUUID())).status).toBe(410);
   });
-
   it('validates input and handles CORS preflight for the storefront', async () => {
     const session = await create();
     const url = `/agent/sessions/${session.sessionId}/runs`;
@@ -303,7 +363,6 @@ describe('anonymous shopping transport with mocked persistence', () => {
     );
     expect(blocked.headers.has('access-control-allow-origin')).toBe(false);
   });
-
   it('supports cancel-before-start tombstones without inference', async () => {
     const session = await create();
     const runId = crypto.randomUUID();
@@ -316,7 +375,6 @@ describe('anonymous shopping transport with mocked persistence', () => {
     });
     expect(await calls(session)).toBe(0);
   });
-
   it('does not duplicate an in-flight run and suppresses cancelled output', async () => {
     const session = await create();
     await mode(session, 'wait');
@@ -334,7 +392,6 @@ describe('anonymous shopping transport with mocked persistence', () => {
     ).toBe('cancelled');
     expect(await calls(session)).toBe(1);
   });
-
   it('supersedes the prior run and retains its originating revision', async () => {
     const session = await create();
     await mode(session, 'wait');
@@ -351,7 +408,6 @@ describe('anonymous shopping transport with mocked persistence', () => {
         ?.uiRevision,
     ).toBe(3);
   });
-
   it.each([
     ['disabled', 'disabled'],
     ['malformed', 'invalid_output'],
@@ -367,7 +423,6 @@ describe('anonymous shopping transport with mocked persistence', () => {
     expect((await app.request('/health', {}, testEnv())).status).toBe(200);
     expect(await calls(session)).toBe(value === 'disabled' ? 0 : 1);
   });
-
   it('enforces the visitor limit across new sessions', async () => {
     const ip = crypto.randomUUID();
     for (let count = 0; count < 7; count++) {
@@ -383,7 +438,6 @@ describe('anonymous shopping transport with mocked persistence', () => {
         expect(output.some(event => event.name === 'lulu.a2ui.v1')).toBe(true);
     }
   });
-
   it('cancels on disconnect, suppresses output and retains or settles the reservation', async () => {
     const session = await create();
     await mode(session, 'wait');
@@ -402,10 +456,9 @@ describe('anonymous shopping transport with mocked persistence', () => {
     );
     expect(record?.charged).toBeGreaterThan(0);
   });
-
   it('reconciles accounting outages without repeating inference or blocking direct shopping', async () => {
     const session = await create();
-    const f = fixture(session.sessionId);
+    const f = await fixture(session.sessionId);
     f.controls.settlementFailure = true;
     const runId = crypto.randomUUID();
     const output = await events(await start(session, runId));
@@ -424,9 +477,8 @@ describe('anonymous shopping transport with mocked persistence', () => {
     expect(f.controls.invocations).toBe(1);
     expect(
       [...budgetStorage.reservations.values()].find(row => row.runId === runId),
-    ).toMatchObject({ status: 'settled', charged: 65_000 });
+    ).toMatchObject({ status: 'settled', charged: 65000 });
   });
-
   it('ends a stalled provider call at the run deadline', async () => {
     const session = await create();
     await mode(session, 'wait');
@@ -441,7 +493,7 @@ describe('anonymous shopping transport with mocked persistence', () => {
       if (chunk.done) throw new Error('inference did not start');
       stream += decoder.decode(chunk.value);
     }
-    await vi.advanceTimersByTimeAsync(30_000);
+    await vi.advanceTimersByTimeAsync(30000);
     for (;;) {
       const chunk = await reader.read();
       if (chunk.done) break;

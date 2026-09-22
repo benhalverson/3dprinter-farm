@@ -2,47 +2,47 @@ import type { budgetAlerts, reservations, starts } from './ledger-schema';
 import type { pendingUsage, runs, visits } from './visit-schema';
 
 export type Visit = typeof visits.$inferSelect;
-export type Run = typeof runs.$inferSelect;
+export type Run = Omit<typeof runs.$inferSelect, 'sessionId'>;
 export type Reservation = typeof reservations.$inferSelect;
 export type Start = typeof starts.$inferSelect;
 export type BudgetAlert = typeof budgetAlerts.$inferSelect;
-export type PendingUsage = typeof pendingUsage.$inferSelect;
+export type PendingUsage = Omit<typeof pendingUsage.$inferSelect, 'sessionId'>;
 
 export interface UsageStorage {
-  insertUsage(usage: PendingUsage): void;
-  getUsage(id: string): PendingUsage | undefined;
-  deleteUsage(id: string): void;
-  listUsage(): PendingUsage[];
+  insertUsage(usage: PendingUsage): Promise<void>;
+  getUsage(id: string): Promise<PendingUsage | undefined>;
+  deleteUsage(id: string): Promise<void>;
+  listUsage(): Promise<PendingUsage[]>;
 }
 
 export interface AlertStorage {
-  nextAttempt(): number | undefined;
+  nextAttempt(): Promise<number | undefined>;
   claim(
     now: number,
     sender: string | null,
     recipient: string | null,
-  ): BudgetAlert | undefined;
-  accept(id: string, lease: string, messageId: string): void;
+  ): Promise<BudgetAlert | undefined>;
+  accept(id: string, lease: string, messageId: string): Promise<void>;
 }
 
 export interface SessionStorage {
-  getVisit(): Visit | undefined;
-  insertVisit(visit: Visit): void;
-  updateVisit(id: string, changes: Partial<Visit>): void;
-  getRun(id: string): Run | undefined;
-  insertRun(run: Run, ignoreConflict?: boolean): void;
-  updateRun(id: string, changes: Partial<Run>): void;
-  interruptRuns(): void;
+  getVisit(): Promise<Visit | undefined>;
+  insertVisit(visit: Visit): Promise<boolean>;
+  updateVisit(id: string, changes: Partial<Visit>): Promise<void>;
+  getRun(id: string): Promise<Run | undefined>;
+  insertRun(run: Run): Promise<boolean>;
+  updateRun(id: string, changes: Partial<Run>): Promise<void>;
+  interruptRuns(): Promise<void>;
 }
 
 export interface BudgetStorage {
-  getStart(id: string): Start | undefined;
-  deleteStartsThrough(at: number): void;
-  countStarts(visitor: string, after?: number): number;
-  insertStart(start: Start): void;
-  getReservation(id: string): Reservation | undefined;
-  totalCharged(month: string): number;
-  insertReservation(reservation: Reservation): void;
-  updateReservation(id: string, changes: Partial<Reservation>): void;
-  insertAlert(alert: BudgetAlert): void;
+  getStart(id: string): Promise<Start | undefined>;
+  deleteStartsThrough(at: number): Promise<void>;
+  countStarts(visitor: string, after?: number): Promise<number>;
+  insertStart(start: Start): Promise<void>;
+  getReservation(id: string): Promise<Reservation | undefined>;
+  totalCharged(month: string): Promise<number>;
+  insertReservation(reservation: Reservation): Promise<void>;
+  updateReservation(id: string, changes: Partial<Reservation>): Promise<void>;
+  insertAlert(alert: BudgetAlert): Promise<void>;
 }

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import type { Correlation } from './budget';
 import {
   type CatalogItem,
   type CatalogQuery,
@@ -7,7 +8,6 @@ import {
 } from './catalog';
 import { compose } from './composition';
 import { bytes, MAX_BYTES, type RunInput, ShoppingFailure } from './contracts';
-import type { Correlation } from './ledger';
 import { PRICE, type Usage, usageSchema } from './pricing';
 
 const providerSchema = z.object({

@@ -1,5 +1,13 @@
 import { index, integer, sqliteTable, text } from 'drizzle-orm/sqlite-core';
 
+// Append-only: a conflicting next revision rolls back the entire accounting batch.
+export const accountingRevisions = sqliteTable(
+  'shopping_accounting_revisions',
+  {
+    revision: integer().primaryKey(),
+  },
+);
+
 export const reservations = sqliteTable(
   'reservations',
   {

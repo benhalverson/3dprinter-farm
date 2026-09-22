@@ -5,11 +5,11 @@ import { UsageReconciler } from '../../src/shopping/reconciliation';
 import type { PendingUsage } from '../../src/shopping/storage/contracts';
 import { MemoryBudgetStorage, MemoryUsageStorage } from './storage';
 
-function fixture() {
+async function fixture() {
   const storage = new MemoryUsageStorage();
   const budgetStorage = new MemoryBudgetStorage();
   const ledger = new BudgetLedger(budgetStorage);
-  const reservation = ledger.reserve(
+  const reservation = await ledger.reserve(
     {
       sessionId: crypto.randomUUID(),
       runId: crypto.randomUUID(),
@@ -24,8 +24,8 @@ function fixture() {
     return { id };
   });
   const cancel = vi.fn(async (id: string) => tasks.delete(id));
-  const settle = vi.fn(async (id: string, usage: Usage) =>
-    ledger.settle(id, usage),
+  const settle = vi.fn(
+    async (id: string, usage: Usage) => await ledger.settle(id, usage),
   );
   const reconciler = () =>
     new UsageReconciler(storage, { schedule, cancel }, settle);
@@ -42,7 +42,6 @@ function fixture() {
   };
 }
 afterEach(() => vi.useRealTimers());
-
 describe('usage reconciliation with mocked persistence and SDK schedules', () => {
   it.each([
     'before',
@@ -50,18 +49,16 @@ describe('usage reconciliation with mocked persistence and SDK schedules', () =>
   ])('recovers a %s-settlement outage and concurrent retries exactly once in the original month', async failure => {
     vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(new Date('2026-01-31T23:59:00Z'));
-    const f = fixture();
+    const f = await fixture();
     f.settle.mockImplementationOnce(async (id, usage) => {
-      if (failure === 'after') f.ledger.settle(id, usage);
+      if (failure === 'after') await f.ledger.settle(id, usage);
       throw new Error('private RPC failure');
     });
     await expect(
-      f
-        .reconciler()
-        .record(f.reservation.id, {
-          prompt_tokens: 100,
-          completion_tokens: 100,
-        }),
+      f.reconciler().record(f.reservation.id, {
+        prompt_tokens: 100,
+        completion_tokens: 100,
+      }),
     ).rejects.toThrow();
     expect(f.storage.rows.size).toBe(1);
     expect(f.tasks.size).toBe(1);
@@ -76,16 +73,17 @@ describe('usage reconciliation with mocked persistence and SDK schedules', () =>
     ]);
     expect(f.storage.rows.size).toBe(0);
     expect(f.tasks.size).toBe(0);
-    expect(f.budgetStorage.getReservation(f.reservation.id)).toMatchObject({
+    expect(
+      await f.budgetStorage.getReservation(f.reservation.id),
+    ).toMatchObject({
       month: '2026-01',
-      charged: 65_000,
+      charged: 65000,
       status: 'settled',
     });
-    expect(f.budgetStorage.totalCharged('2026-02')).toBe(0);
+    expect(await f.budgetStorage.totalCharged('2026-02')).toBe(0);
   });
-
   it('recovers a crash after SDK payload persistence but before the outbox write', async () => {
-    const f = fixture();
+    const f = await fixture();
     f.schedule.mockImplementationOnce(async payload => {
       f.tasks.set('persisted-before-crash', payload);
       throw new Error('interrupted');
@@ -99,19 +97,20 @@ describe('usage reconciliation with mocked persistence and SDK schedules', () =>
     expect(f.settle).not.toHaveBeenCalled();
     const [id, payload] = [...f.tasks][0];
     await f.reconciler().reconcile(payload, id);
-    expect(f.budgetStorage.getReservation(f.reservation.id)?.charged).toBe(650);
+    expect(
+      (await f.budgetStorage.getReservation(f.reservation.id))?.charged,
+    ).toBe(650);
     expect(f.tasks.size).toBe(0);
   });
-
   it('keeps another late result scheduled when a completed invocation cancels its task', async () => {
-    const f = fixture();
+    const f = await fixture();
     f.settle.mockRejectedValue(new Error('outage'));
     await expect(
       f
         .reconciler()
         .record(f.reservation.id, { prompt_tokens: 1, completion_tokens: 1 }),
     ).rejects.toThrow();
-    const other = f.ledger.reserve(
+    const other = await f.ledger.reserve(
       {
         sessionId: crypto.randomUUID(),
         runId: crypto.randomUUID(),
@@ -125,17 +124,16 @@ describe('usage reconciliation with mocked persistence and SDK schedules', () =>
         .record(other.id, { prompt_tokens: 2, completion_tokens: 2 }),
     ).rejects.toThrow();
     expect(f.tasks.size).toBe(2);
-    f.settle.mockImplementation(async (id, usage) =>
-      f.ledger.settle(id, usage),
+    f.settle.mockImplementation(
+      async (id, usage) => await f.ledger.settle(id, usage),
     );
     const [id, payload] = [...f.tasks][0];
     await f.reconciler().reconcile(payload, id);
     expect(f.tasks.size).toBe(1);
     expect([...f.tasks.values()][0].id).toBe(other.id);
   });
-
   it('retains the reservation on invalid usage or unavailable task persistence', async () => {
-    const f = fixture();
+    const f = await fixture();
     await expect(
       f
         .reconciler()
@@ -149,13 +147,12 @@ describe('usage reconciliation with mocked persistence and SDK schedules', () =>
         .record(f.reservation.id, { prompt_tokens: 1, completion_tokens: 1 }),
     ).rejects.toThrow();
     expect(f.settle).not.toHaveBeenCalled();
-    expect(f.budgetStorage.getReservation(f.reservation.id)?.charged).toBe(
-      RESERVATION,
-    );
+    expect(
+      (await f.budgetStorage.getReservation(f.reservation.id))?.charged,
+    ).toBe(RESERVATION);
   });
-
   it('safely retries when acknowledgement is lost while cancelling a completed task', async () => {
-    const f = fixture();
+    const f = await fixture();
     f.cancel.mockRejectedValueOnce(new Error('cancel interrupted'));
     await expect(
       f
@@ -165,6 +162,8 @@ describe('usage reconciliation with mocked persistence and SDK schedules', () =>
     const [id, payload] = [...f.tasks][0];
     await f.reconciler().reconcile(payload, id);
     expect(f.tasks.size).toBe(0);
-    expect(f.budgetStorage.getReservation(f.reservation.id)?.charged).toBe(650);
+    expect(
+      (await f.budgetStorage.getReservation(f.reservation.id))?.charged,
+    ).toBe(650);
   });
 });

@@ -1,0 +1,8 @@
+name = "shopping-d1-tests"
+compatibility_date = "2024-10-05"
+compatibility_flags = ["nodejs_compat"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "shopping-tests"
+database_id = "00000000-0000-0000-0000-000000000001"

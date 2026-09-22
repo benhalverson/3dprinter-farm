@@ -26,14 +26,10 @@ export function claimAlert(
 export async function flushBudgetAlerts(
   storage: AlertStorage,
   env: BudgetEmailEnv,
-  wake: (at: number) => Promise<void>,
 ) {
-  if (storage.nextAttempt() === undefined) return;
-  // A crash during the external send must leave a durable wake-up behind.
-  await wake(Date.now() + 60_000);
   const config = budgetEmailConfig.safeParse(env);
   for (let n = 0; n < 10; n++) {
-    const alert = storage.claim(
+    const alert = await storage.claim(
       Date.now(),
       config.success ? config.data.AGENT_BUDGET_FROM : null,
       config.success ? config.data.AGENT_BUDGET_TO : null,
@@ -48,7 +44,7 @@ export async function flushBudgetAlerts(
         },
         alert,
       );
-      storage.accept(alert.id, alert.lease, messageId);
+      await storage.accept(alert.id, alert.lease, messageId);
       console.log(
         JSON.stringify({
           event: 'shopping_budget_alert',
@@ -68,6 +64,4 @@ export async function flushBudgetAlerts(
       );
     }
   }
-  const due = storage.nextAttempt();
-  if (due !== undefined) await wake(Math.max(Date.now() + 60_000, due));
 }
