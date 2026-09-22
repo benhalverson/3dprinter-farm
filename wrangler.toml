@@ -12,7 +12,6 @@ invocation_logs = false
 
 [[send_email]]
 name = "AUTH_EMAIL"
-allowed_sender_addresses = ["noreply@luluspeedworks.com"]
 remote = false
 
 [[kv_namespaces]]

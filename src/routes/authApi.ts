@@ -25,5 +25,5 @@ export default new Hono<AuthApiEnv>()
     }),
   )
   .on(['GET', 'POST'], '/*', c =>
-    createAuth(c.env.DB, c.env, c.executionCtx).handler(c.req.raw),
+    createAuth(c.env.DB, c.env).handler(c.req.raw),
   );
