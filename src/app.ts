@@ -1,11 +1,10 @@
 import { Scalar } from '@scalar/hono-api-reference';
 import { cors } from 'hono/cors';
-import { logger } from 'hono/logger';
 import { openAPISpecs } from 'hono-openapi';
-import { createAuth } from '../lib/auth';
 import factory from './factory';
 import adminOrders from './routes/adminOrders';
 import auth from './routes/auth';
+import authApi from './routes/authApi';
 import email from './routes/email';
 import ordersRouter from './routes/orders';
 import paymentsRouter from './routes/payments';
@@ -14,13 +13,12 @@ import product from './routes/product';
 import shoppingAgent from './routes/shoppingAgent';
 import shoppingCart from './routes/shoppingCart';
 import userRouter from './routes/users';
+import { requestLogger } from './utils/requestLogger';
 import { validateBindings } from './utils/validateBindings';
 
 const app = factory
   .createApp()
-  .use((c, next) =>
-    c.req.path.startsWith('/agent/') ? next() : logger()(c, next),
-  )
+  .use(requestLogger)
   .use(
     cors({
       origin: [
@@ -44,9 +42,7 @@ const app = factory
       return c.json({ status: 'error', message: (e as Error).message }, 503);
     }
   })
-  .on(['GET', 'POST'], '/api/auth/*', c =>
-    createAuth(c.env.DB, c.env).handler(c.req.raw),
-  )
+  .route('/api/auth', authApi)
   .route('/auth', auth)
   .route('/agent', shoppingAgent)
   .route('/', product)

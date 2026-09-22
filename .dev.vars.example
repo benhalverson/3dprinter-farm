@@ -1,5 +1,6 @@
 BETTER_AUTH_SECRET=replace-with-a-random-32-byte-secret
 DOMAIN=http://localhost:8787
+AUTH_BASE_URL=http://localhost:8787
 JWT_SECRET=
 RP_ID=localhost
 RP_NAME=

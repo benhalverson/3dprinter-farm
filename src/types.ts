@@ -33,6 +33,8 @@ import type { orderSchema } from './db/schema';
  *  - R2_PUBLIC_BASE_URL / R2_PHOTO_BASE_URL – CDN base URLs for R2 assets
  */
 export type Bindings = {
+  AUTH_EMAIL: Env['AUTH_EMAIL'];
+  AUTH_BASE_URL: string;
   SHOPPING_AGENT: DurableObjectNamespace<import('./shopping/agent').ShoppingAgent>;
   SHOPPING_LEDGER: DurableObjectNamespace<import('./shopping/ledger').ShoppingLedger>;
   AI: Ai;
