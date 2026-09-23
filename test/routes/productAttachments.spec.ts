@@ -659,7 +659,12 @@ describe('durable product attachments through Hono', () => {
           'DELETE',
         )
       ).status,
-    ).toBe(409);
+    ).toBe(200);
+    expect(draft().attachments!.transfers).toEqual([]);
+    expect(draft().attachments!.abandonedTransfers![0].id).toBe(transfer.id);
+    expect(records(schema.productAssets)[0].references).toContain(
+      `transfer:${transfer.id}`,
+    );
     const discarded = await request(
       `?expectedRevision=${revision()}`,
       'DELETE',
@@ -668,6 +673,117 @@ describe('durable product attachments through Hono', () => {
     expect((await discarded.json()).cleanup[0].status).toBe('pending');
     expect((await request('')).status).toBe(404);
     expect((await request('/cleanup')).status).toBe(200);
+  });
+  it('cancels an unresolved print replacement while retaining the saved file and cleanup identity', async () => {
+    const original = await savedPrint();
+    const answers = structuredClone(draft().state);
+    const abandonedProvider = provider();
+    await intent('print', { name: 'part.3mf', replacesId: original.assetId });
+    const pending = draft().attachments!.transfers.at(-1)!;
+    vi.mocked(fetch).mockRejectedValueOnce(
+      new Error('Provider cannot confirm'),
+    );
+    await request(`/attachments/transfers/${pending.id}/confirm`, 'POST', {
+      expectedRevision: revision(),
+    });
+    expect(draft().attachments!.transfers.at(-1)!.status).toBe('unresolved');
+    expect(
+      (
+        await request(
+          `/attachments/${original.assetId}?expectedRevision=${revision()}`,
+          'DELETE',
+        )
+      ).status,
+    ).toBe(409);
+    vi.mocked(fetch).mockRejectedValueOnce(new Error('Still cannot confirm'));
+    const removed = await request(
+      `/attachments/${pending.attachmentId}?expectedRevision=${revision()}`,
+      'DELETE',
+    );
+    expect(removed.status).toBe(200);
+    const body = await removed.json();
+    expect(body.draft.state).toEqual(answers);
+    expect(body.draft.attachments.printFile.publicFileServiceId).toBe(
+      original.providerId,
+    );
+    expect(
+      body.draft.attachments.transfers.some(item => item.id === pending.id),
+    ).toBe(false);
+    expect(body.draft.attachments.cleanup[0].status).toBe('pending');
+    expect(
+      draft().attachments!.abandonedTransfers![0].placeholder!
+        .publicFileServiceId,
+    ).toBe(abandonedProvider);
+    expect(
+      records(schema.productAssets).find(
+        asset => asset.id === pending.attachmentId,
+      )!.references,
+    ).toEqual([`transfer:${pending.id}`]);
+    expect(
+      vi.mocked(fetch).mock.calls.some(([, init]) => init?.method === 'DELETE'),
+    ).toBe(false);
+
+    provider();
+    await intent('print', { replacesId: original.assetId });
+    const replacement = draft().attachments!.transfers.at(-1)!;
+    expect(replacement.id).not.toBe(pending.id);
+    vi.mocked(fetch).mockResolvedValueOnce(
+      Response.json({
+        data: {
+          publicFileServiceId: abandonedProvider,
+          fileURL: 'https://files.example.com/old',
+        },
+      }),
+    );
+    vi.mocked(fetch).mockResolvedValueOnce(Response.json({ success: true }));
+    const cleanup = await request('/cleanup/retry', 'POST', {
+      expectedRevision: revision(),
+    });
+    expect(cleanup.status).toBe(200);
+    expect((await cleanup.json()).cleanup[0].status).toBe('deleted');
+    expect(draft().attachments!.printFile!.publicFileServiceId).toBe(
+      original.providerId,
+    );
+    expect(draft().attachments!.transfers.at(-1)!.id).toBe(replacement.id);
+  });
+  it('does not attach a late print confirmation after its replacement was cancelled', async () => {
+    const original = await savedPrint();
+    const nextProvider = provider();
+    await intent('print', { replacesId: original.assetId });
+    const pending = draft().attachments!.transfers.at(-1)!;
+    vi.mocked(fetch).mockImplementationOnce(async () => {
+      vi.mocked(fetch).mockRejectedValueOnce(
+        new Error('Confirmation still running'),
+      );
+      const removed = await request(
+        `/attachments/${pending.attachmentId}?expectedRevision=${revision()}`,
+        'DELETE',
+      );
+      expect(removed.status).toBe(200);
+      return Response.json({
+        data: {
+          publicFileServiceId: nextProvider,
+          fileURL: 'https://files.example.com/late',
+        },
+      });
+    });
+    const response = await request(
+      `/attachments/transfers/${pending.id}/confirm`,
+      'POST',
+      { expectedRevision: revision() },
+    );
+    expect(response.status).toBe(200);
+    expect(draft().attachments!.printFile!.publicFileServiceId).toBe(
+      original.providerId,
+    );
+    expect(
+      draft().attachments!.transfers.some(item => item.id === pending.id),
+    ).toBe(false);
+    expect(
+      records(schema.productAssets).find(
+        asset => asset.id === pending.attachmentId,
+      )!.references,
+    ).toEqual([]);
   });
   it.each([
     401, 403, 429, 503,

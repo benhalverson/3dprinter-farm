@@ -680,11 +680,9 @@ export async function removeAttachment(
   )
     throw new AttachmentError(404, 'Attachment not found');
   if (
-    transfer &&
-    (transfer.status === 'unresolved' ||
-      state.transfers.some(
-        item => item.replacesId === attachmentId && item.status !== 'saved',
-      ))
+    state.transfers.some(
+      item => item.replacesId === attachmentId && item.status !== 'saved',
+    )
   )
     throw new AttachmentError(
       409,
@@ -724,10 +722,13 @@ export async function removeAttachment(
   const asset = await readAsset(db, attachmentId);
   if (asset && asset.status === 'active')
     await changeAsset(db, asset, {
+      // Cancelling removes the slot, not evidence of a possibly running upload.
+      // Abandoned-transfer cleanup or late completion releases this reference.
       references: asset.references.filter(
         reference =>
           reference !== `draft:${id}` &&
-          reference !== `transfer:${transfer?.id}`,
+          (transfer?.status === 'unresolved' ||
+            reference !== `transfer:${transfer?.id}`),
       ),
     });
   return row;

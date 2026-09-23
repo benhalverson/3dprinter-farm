@@ -33,6 +33,7 @@ import {
   authMiddleware,
   requireCatalogMutationRole,
 } from '../utils/authMiddleware';
+import { logProductDraftError } from '../utils/productDraftError';
 import attachmentsRouter from './productAttachments';
 
 const errors = Object.fromEntries(
@@ -82,14 +83,20 @@ const validationError = (
 };
 async function withDraftErrors(
   c: Context<WorkerEnv>,
-  action: (ownerId: string) => Promise<Response>,
+  operation: string,
+  action: (
+    ownerId: string,
+    setOperation: (operation: string) => void,
+  ) => Promise<Response>,
 ) {
   try {
-    return await action(c.var.userId!);
+    return await action(c.var.userId!, value => {
+      operation = value;
+    });
   } catch (error) {
     if (error instanceof AttachmentError)
       return c.json({ error: error.message }, error.status);
-    console.error('Product draft request failed');
+    logProductDraftError(c, operation, error);
     return c.json({ error: 'Product draft request failed' }, 500);
   }
 }
@@ -105,6 +112,7 @@ const router = factory
       const invalidInput =
         c.error instanceof HTTPException &&
         (c.error.status === 400 || c.error.status === 413);
+      if (!invalidInput) logProductDraftError(c, 'draft.middleware', c.error);
       c.res = c.json(
         {
           error: invalidInput
@@ -137,7 +145,7 @@ const router = factory
     }),
     zValidator('json', beginProductDraftSchema, validationError),
     c =>
-      withDraftErrors(c, async ownerId => {
+      withDraftErrors(c, 'draft.begin', async ownerId => {
         const draft = await beginProductDraft(
           c.var.db,
           ownerId,
@@ -156,7 +164,7 @@ const router = factory
       responses: { ...errors, 200: response(productDraftListSchema) },
     }),
     c =>
-      withDraftErrors(c, async ownerId =>
+      withDraftErrors(c, 'draft.list', async ownerId =>
         c.json(await listProductDrafts(c.var.db, ownerId)),
       ),
   )
@@ -173,7 +181,7 @@ const router = factory
     }),
     zValidator('param', productDraftIdSchema, validationError),
     c =>
-      withDraftErrors(c, async ownerId => {
+      withDraftErrors(c, 'draft.read', async ownerId => {
         const row = await readProductDraft(
           c.var.db,
           ownerId,
@@ -198,7 +206,7 @@ const router = factory
     zValidator('param', productDraftIdSchema, validationError),
     zValidator('json', saveProductDraftSchema, validationError),
     c =>
-      withDraftErrors(c, async ownerId => {
+      withDraftErrors(c, 'draft.save', async ownerId => {
         const id = c.req.valid('param').id;
         const row = await saveProductDraft(
           c.var.db,
@@ -239,23 +247,28 @@ const router = factory
     zValidator('param', productDraftIdSchema, validationError),
     zValidator('query', discardProductDraftSchema, validationError),
     c =>
-      withDraftErrors(c, async ownerId => {
-        const id = c.req.valid('param').id;
-        let row = await discardAttachments(
-          c.var.db,
-          ownerId,
-          id,
-          c.req.valid('query').expectedRevision,
-        );
-        row = await retryAttachmentCleanup(
-          c.var.db,
-          c.env,
-          ownerId,
-          id,
-          row.revision,
-        );
-        return c.json(cleanupResponse(row));
-      }),
+      withDraftErrors(
+        c,
+        'draft.discard.save',
+        async (ownerId, setOperation) => {
+          const id = c.req.valid('param').id;
+          let row = await discardAttachments(
+            c.var.db,
+            ownerId,
+            id,
+            c.req.valid('query').expectedRevision,
+          );
+          setOperation('draft.discard.cleanup');
+          row = await retryAttachmentCleanup(
+            c.var.db,
+            c.env,
+            ownerId,
+            id,
+            row.revision,
+          );
+          return c.json(cleanupResponse(row));
+        },
+      ),
   );
 
 export default router;
