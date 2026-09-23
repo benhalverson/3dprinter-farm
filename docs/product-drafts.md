@@ -121,8 +121,8 @@ re-selection retains the transfer ID, reserves a new asset generation before
 allocation, and keeps the earlier operation protected in visible cleanup.
 Confirmation retries remain separate and reuse the known placeholder. Late
 completion of an abandoned generation cannot replace the current print file.
-Cleanup can reconcile known abandoned placeholders; unsupported Slant deletion
-and unknown allocations remain pending or protected. An expired presigned URL can
+Cleanup can reconcile known abandoned placeholders and delete unreferenced Slant
+files; unknown allocations remain protected. An expired presigned URL can
 be abandoned through safe transfer removal and a new explicitly selected intent.
 When recovery finds no photo bytes, it does not assume the original PUT stopped:
 the transfer retains its ID but receives a fresh asset generation for re-selection.
@@ -161,8 +161,12 @@ revision; once claimed, new reference creation is rejected. Existing catalog
 writers reserve matching assets before mutation. Ambiguous catalog reservations
 are conservatively retained. Reservations have individual request identities;
 confirmed success and known rejection release only that request's reservation,
-preserving other attempts and actual catalog references. R2 deletion is idempotent and retryable; Slant file
-deletion is unsupported by the configured adapter and remains visibly pending.
+preserving other attempts and actual catalog references. R2 and Slant file deletion
+are retryable. Slant cleanup calls the authenticated `DELETE /files/{publicFileId}`
+endpoint after claiming the asset. Only a successful provider acknowledgement or
+a confirmed missing file completes cleanup; an ambiguous DELETE 404 is checked
+with GET before treating the file as absent. Missing identities, authorization
+failures, unavailable providers, and failed persistence remain visibly pending.
 Pending operations remain protected until recovery resolves them, including when
 discard races an upload. Cleanup retries preserve newly added cleanup candidates.
 

@@ -7,6 +7,7 @@ import {
   productsTable,
 } from '../db/schema';
 import type { WorkerEnv } from '../factory';
+import { deleteSlant3DFile } from '../lib/slant3d-v2-files';
 import type { Bindings } from '../types';
 
 type Database = WorkerEnv['Variables']['db'];
@@ -197,24 +198,25 @@ export async function cleanupAsset(
         'Retained draft, catalog, order, or unresolved operation references this asset',
     };
   }
-  if (asset.kind === 'print')
+  const storageId = asset.kind === 'print' ? asset.providerId : asset.objectKey;
+  if (!storageId)
     return {
       status: 'pending' as const,
-      reason:
-        'Slant3D file deletion is not supported by the configured adapter',
+      reason: 'File storage identity is not available; retry cleanup',
     };
   // Reservations CAS the same row and require active: once claimed, reference
   // creation fails. Retrying an interrupted delete keeps the claim closed.
   if (asset.status === 'active')
     asset = await changeAsset(db, asset, { status: 'deleting' });
   try {
-    await env.PHOTO_BUCKET.delete(asset.objectKey);
+    if (asset.kind === 'print') await deleteSlant3DFile(env, storageId);
+    else await env.PHOTO_BUCKET.delete(storageId);
     await changeAsset(db, asset, { status: 'deleted' });
     return { status: 'deleted' as const, reason: null };
   } catch {
     return {
       status: 'pending' as const,
-      reason: 'Photo cleanup failed; retry cleanup',
+      reason: `${asset.kind === 'print' ? 'Slant3D file' : 'Photo'} cleanup failed; retry cleanup`,
     };
   }
 }

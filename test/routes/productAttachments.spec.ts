@@ -214,6 +214,28 @@ function provider() {
   );
   return providerId;
 }
+async function savedPrint(extra: Row = {}) {
+  const providerId = provider();
+  await intent('print', extra);
+  const transfer = draft().attachments!.transfers.at(-1)!;
+  vi.mocked(fetch).mockResolvedValueOnce(
+    Response.json({
+      data: {
+        publicFileServiceId: providerId,
+        fileURL: `https://files.example.com/${providerId}`,
+      },
+    }),
+  );
+  const response = await request(
+    `/attachments/transfers/${transfer.id}/confirm`,
+    'POST',
+    {
+      expectedRevision: revision(),
+    },
+  );
+  expect(response.status).toBe(200);
+  return { providerId, assetId: transfer.attachmentId };
+}
 function orderRequest(reference: string) {
   return new Hono()
     .post('/fulfill', async c => {
@@ -266,6 +288,9 @@ function orderRequest(reference: string) {
 describe('durable product attachments through Hono', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(fetch)
+      .mockReset()
+      .mockRejectedValue(new Error('Unexpected provider request'));
     tables.clear();
     bucket.clear();
     beforeUpdate = undefined;
@@ -500,7 +525,7 @@ describe('durable product attachments through Hono', () => {
       providerId,
     );
   });
-  it('does not reallocate an unknown Slant outcome and leaves unsupported deletion pending', async () => {
+  it('does not reallocate an unknown Slant outcome and protects unresolved cleanup', async () => {
     vi.mocked(fetch).mockRejectedValueOnce(new Error('Connection lost'));
     await intent('print');
     const transfer = draft().attachments!.transfers[0];
@@ -529,6 +554,219 @@ describe('durable product attachments through Hono', () => {
     expect((await discarded.json()).cleanup[0].status).toBe('protected');
     expect((await request('')).status).toBe(404);
     expect((await request('/cleanup')).status).toBe(200);
+  });
+  it.each([
+    401, 403, 429, 503,
+  ])('retains failed print deletion (%s) for retry without losing other attachments or answers', async status => {
+    const photo = (await upload()).draft.attachments.photos[0];
+    const print = await savedPrint();
+    vi.mocked(fetch).mockResolvedValueOnce(
+      Response.json(
+        { success: false, message: 'Provider rejected deletion' },
+        { status },
+      ),
+    );
+    const response = await request(
+      `/attachments/${print.assetId}?expectedRevision=${revision()}`,
+      'DELETE',
+    );
+    expect(response.status).toBe(200);
+    expect((await response.json()).draft.attachments.cleanup[0]).toMatchObject({
+      status: 'pending',
+      reason: 'Slant3D file cleanup failed; retry cleanup',
+    });
+    expect(
+      records(schema.productAssets).find(asset => asset.id === print.assetId)
+        ?.status,
+    ).toBe('deleting');
+    expect(draft().state.answers).toEqual({ name: 'Saved name' });
+    expect(draft().attachments!.photos[0]).toEqual(photo);
+    vi.mocked(fetch).mockResolvedValueOnce(
+      Response.json({ success: true, message: 'File deleted' }),
+    );
+    const retried = await request('/cleanup/retry', 'POST', {
+      expectedRevision: revision(),
+    });
+    expect((await retried.json()).cleanup[0].status).toBe('deleted');
+    const calls = vi.mocked(fetch).mock.calls.length;
+    await request('/cleanup/retry', 'POST', { expectedRevision: revision() });
+    expect(fetch).toHaveBeenCalledTimes(calls);
+    expect(remove).not.toHaveBeenCalled();
+  });
+  it('reconciles a lost deletion response with a confirmed missing file', async () => {
+    const print = await savedPrint();
+    vi.mocked(fetch).mockRejectedValueOnce(
+      new Error('Response lost after deletion'),
+    );
+    const response = await request(`?expectedRevision=${revision()}`, 'DELETE');
+    expect((await response.json()).cleanup[0].status).toBe('pending');
+    vi.mocked(fetch)
+      .mockResolvedValueOnce(Response.json({ success: false }, { status: 404 }))
+      .mockResolvedValueOnce(
+        Response.json(
+          { success: false, message: 'File not found' },
+          { status: 404 },
+        ),
+      );
+    const retry = await request('/cleanup/retry', 'POST', {
+      expectedRevision: revision(),
+    });
+    expect((await retry.json()).cleanup[0].status).toBe('deleted');
+    expect(fetch).toHaveBeenLastCalledWith(
+      `https://slant3dapi.com/v2/api/files/${print.providerId}`,
+      {
+        method: 'GET',
+        headers: { Authorization: 'Bearer fake-api-key-v2' },
+      },
+    );
+  });
+  it('keeps a successful provider deletion pending if saving its result fails and retries safely', async () => {
+    const print = await savedPrint();
+    beforeUpdate = (table, changes) => {
+      if (table === schema.productAssets && changes.status === 'deleted') {
+        beforeUpdate = undefined;
+        throw new Error('Persistence unavailable');
+      }
+    };
+    vi.mocked(fetch).mockResolvedValueOnce(
+      Response.json({ success: true, message: 'File deleted' }),
+    );
+    const response = await request(`?expectedRevision=${revision()}`, 'DELETE');
+    expect((await response.json()).cleanup[0].status).toBe('pending');
+    expect(records(schema.productAssets)[0]).toMatchObject({
+      id: print.assetId,
+      status: 'deleting',
+    });
+    vi.mocked(fetch)
+      .mockResolvedValueOnce(Response.json({}, { status: 404 }))
+      .mockResolvedValueOnce(Response.json({}, { status: 404 }));
+    const retry = await request('/cleanup/retry', 'POST', {
+      expectedRevision: revision(),
+    });
+    expect((await retry.json()).cleanup[0].status).toBe('deleted');
+  });
+  it('protects print files referenced by catalog items, orders and retained drafts', async () => {
+    const print = await savedPrint();
+    vi.mocked(fetch).mockClear();
+    tables.set(schema.productsTable, [
+      { id: 42, publicFileServiceId: print.providerId },
+    ]);
+    let response = await request(`?expectedRevision=${revision()}`, 'DELETE');
+    expect((await response.json()).cleanup[0].status).toBe('protected');
+    tables.set(schema.productsTable, []);
+    tables.set(schema.ordersTable, [
+      { id: 1, fileUrl: `https://files.example.com/${print.providerId}` },
+    ]);
+    response = await request('/cleanup/retry', 'POST', {
+      expectedRevision: revision(),
+    });
+    expect((await response.json()).cleanup[0].status).toBe('protected');
+    tables.set(schema.ordersTable, []);
+    tables.get(schema.productDrafts)!.push({
+      ...structuredClone(draft()),
+      id: missing,
+      status: 'active',
+      attachments: { printFile: { publicFileServiceId: print.providerId } },
+    });
+    response = await request('/cleanup/retry', 'POST', {
+      expectedRevision: revision(),
+    });
+    expect((await response.json()).cleanup[0].status).toBe('protected');
+    expect(fetch).not.toHaveBeenCalled();
+  });
+  it('claims print deletion before provider access and refuses racing reference creation', async () => {
+    const print = await savedPrint();
+    vi.mocked(fetch).mockImplementationOnce(async () => {
+      expect(records(schema.productAssets)[0].status).toBe('deleting');
+      const reserve = await app.request(
+        '/update-product',
+        {
+          method: 'PUT',
+          headers: {
+            cookie: 'session=yes',
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ image: `product-drafts/${print.assetId}` }),
+        },
+        env,
+      );
+      expect(reserve.status).toBe(409);
+      return Response.json({ success: true, message: 'File deleted' });
+    });
+    const response = await request(`?expectedRevision=${revision()}`, 'DELETE');
+    expect((await response.json()).cleanup[0].status).toBe('deleted');
+  });
+  it('does not call Slant when a reference wins the deletion claim', async () => {
+    await savedPrint();
+    vi.mocked(fetch).mockClear();
+    beforeUpdate = (table, changes) => {
+      if (table === schema.productAssets && changes.status === 'deleting') {
+        beforeUpdate = undefined;
+        const asset = records(schema.productAssets)[0];
+        asset.references = ['order-attempt:concurrent'];
+        asset.revision = Number(asset.revision) + 1;
+      }
+    };
+    const response = await request(`?expectedRevision=${revision()}`, 'DELETE');
+    expect(response.status).toBe(409);
+    expect(fetch).not.toHaveBeenCalled();
+    const retry = await request('/cleanup/retry', 'POST', {
+      expectedRevision: revision(),
+    });
+    expect((await retry.json()).cleanup[0].status).toBe('protected');
+  });
+  it('keeps a print asset with a missing provider identity pending without guessing an identifier', async () => {
+    await savedPrint();
+    records(schema.productAssets)[0].providerId = null;
+    vi.mocked(fetch).mockClear();
+    const response = await request(`?expectedRevision=${revision()}`, 'DELETE');
+    expect((await response.json()).cleanup[0]).toMatchObject({
+      status: 'pending',
+      reason: 'File storage identity is not available; retry cleanup',
+    });
+    expect(fetch).not.toHaveBeenCalled();
+  });
+  it('deletes only the replaced print after the replacement saves', async () => {
+    const first = await savedPrint();
+    const nextId = provider();
+    await intent('print', { replacesId: first.assetId });
+    const transfer = draft().attachments!.transfers.at(-1)!;
+    expect(draft().attachments!.printFile!.publicFileServiceId).toBe(
+      first.providerId,
+    );
+    expect(
+      vi
+        .mocked(fetch)
+        .mock.calls.some(([, options]) => options?.method === 'DELETE'),
+    ).toBe(false);
+    vi.mocked(fetch)
+      .mockResolvedValueOnce(
+        Response.json({
+          data: {
+            publicFileServiceId: nextId,
+            fileURL: `https://files.example.com/${nextId}`,
+          },
+        }),
+      )
+      .mockResolvedValueOnce(
+        Response.json({ success: true, message: 'File deleted' }),
+      );
+    const response = await request(
+      `/attachments/transfers/${transfer.id}/confirm`,
+      'POST',
+      { expectedRevision: revision() },
+    );
+    expect(response.status).toBe(200);
+    expect(draft().attachments!.printFile!.publicFileServiceId).toBe(nextId);
+    await request('/cleanup/retry', 'POST', { expectedRevision: revision() });
+    expect(fetch).toHaveBeenLastCalledWith(
+      `https://slant3dapi.com/v2/api/files/${first.providerId}`,
+      {
+        method: 'DELETE',
+        headers: { Authorization: 'Bearer fake-api-key-v2' },
+      },
+    );
+    expect(draft().attachments!.cleanup[0].status).toBe('deleted');
   });
   it('discards saved draft-only photos and leaves a discoverable retryable cleanup tombstone', async () => {
     await upload();
@@ -788,7 +1026,7 @@ describe('durable product attachments through Hono', () => {
       'Concurrent saved correction',
     );
   });
-  it('retries print confirmation without reallocating and leaves confirmed print deletion visibly pending', async () => {
+  it('retries print confirmation without reallocating and deletes the confirmed file on removal', async () => {
     const providerId = provider();
     await intent('print');
     const transfer = draft().attachments!.transfers[0];
@@ -837,16 +1075,27 @@ describe('durable product attachments through Hono', () => {
       ).status,
     ).toBe(200);
     expect(draft().attachments!.printFile).not.toBeNull();
+    vi.mocked(fetch).mockResolvedValueOnce(
+      Response.json({ success: true, message: 'File deleted' }),
+    );
     const removed = await request(
       `/attachments/${transfer.attachmentId}?expectedRevision=${revision()}`,
       'DELETE',
     );
     expect(removed.status).toBe(200);
     expect((await removed.json()).draft.attachments.cleanup[0]).toMatchObject({
-      status: 'pending',
-      reason: expect.stringContaining('Slant3D'),
+      status: 'deleted',
+      reason: null,
     });
+    expect(fetch).toHaveBeenLastCalledWith(
+      `https://slant3dapi.com/v2/api/files/${providerId}`,
+      {
+        method: 'DELETE',
+        headers: { Authorization: 'Bearer fake-api-key-v2' },
+      },
+    );
     expect(draft().attachments!.printFile).toBeNull();
+    expect(draft().state.answers).toEqual({ name: 'Saved name' });
   });
   it('removes saved photos and abandoned intents without selecting a new primary from several photos', async () => {
     const first = (await upload()).draft.attachments.photos[0];
@@ -1233,7 +1482,7 @@ describe('durable product attachments through Hono', () => {
     ).toBe(200);
     expect(draft().attachments!.cleanup).toHaveLength(2);
   });
-  it('counts pending slots and cleans saved print references on discard without deleting provider files', async () => {
+  it('counts pending slots and deletes saved print files on discard', async () => {
     await intent();
     await intent();
     const providerId = provider();
@@ -1262,14 +1511,24 @@ describe('durable product attachments through Hono', () => {
     await request(`/attachments/transfers/${transfer.id}/confirm`, 'POST', {
       expectedRevision: revision(),
     });
+    vi.mocked(fetch).mockResolvedValueOnce(
+      Response.json({ success: true, message: 'File deleted' }),
+    );
     expect(
       (await request(`?expectedRevision=${revision()}`, 'DELETE')).status,
     ).toBe(200);
     expect(
-      draft().attachments!.cleanup.some(item =>
-        item.reason?.includes('Slant3D'),
-      ),
-    ).toBe(true);
+      draft().attachments!.cleanup.find(
+        item => item.assetId === transfer.attachmentId,
+      )?.status,
+    ).toBe('deleted');
+    expect(fetch).toHaveBeenLastCalledWith(
+      `https://slant3dapi.com/v2/api/files/${providerId}`,
+      {
+        method: 'DELETE',
+        headers: { Authorization: 'Bearer fake-api-key-v2' },
+      },
+    );
   });
   it('handles catalog requests without private references, unmatched references, object keys and malformed JSON', async () => {
     const photo = (await upload()).draft.attachments.photos[0];
@@ -1709,7 +1968,7 @@ describe('durable product attachments through Hono', () => {
     expect(draft().attachments!.transfers[0].attachmentId).toBe(identity);
     expect(draft().attachments!.transfers[0].status).toBe('unresolved');
   });
-  it('recovers a known unresolved print placeholder after discard without claiming provider deletion', async () => {
+  it('recovers and deletes a known unresolved print placeholder after discard', async () => {
     const providerId = provider();
     await intent('print');
     const transfer = draft().attachments!.transfers[0];
@@ -1730,13 +1989,16 @@ describe('durable product attachments through Hono', () => {
         }),
       ),
     );
+    vi.mocked(fetch).mockResolvedValueOnce(
+      Response.json({ success: true, message: 'File deleted' }),
+    );
     const response = await request('/cleanup/retry', 'POST', {
       expectedRevision: revision(),
     });
     expect(response.status).toBe(200);
     expect((await response.json()).cleanup[0]).toMatchObject({
-      status: 'pending',
-      reason: expect.stringContaining('Slant3D'),
+      status: 'deleted',
+      reason: null,
     });
     expect(draft().attachments!.printFile).toBeNull();
     expect(draft().attachments!.transfers[0].status).toBe('saved');
