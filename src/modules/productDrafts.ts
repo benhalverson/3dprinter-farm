@@ -1,11 +1,14 @@
 import { and, asc, desc, eq, inArray, or } from 'drizzle-orm';
 import {
   categoryTable,
+  productAssets,
   productDrafts,
   productsTable,
   productsToCategories,
 } from '../db/schema';
 import type { WorkerEnv } from '../factory';
+import { assetCleanupPending } from './productAssets';
+import { attachmentProjection } from './productAttachments';
 import {
   type BeginProductDraft,
   type ProductDraftContext,
@@ -67,18 +70,46 @@ export async function readProductDraftContext(
 
 export async function productDraftResponse(db: Database, row: DraftRow) {
   return productDraftResponseSchema.parse({
-    ...summary(row),
+    ...(await summary(db, row)),
     state: row.state,
     context: await readProductDraftContext(db, row.target),
+    attachments: attachmentProjection(row),
   });
 }
-function summary(row: DraftRow) {
+async function summary(db: Database, row: Omit<DraftRow, 'ownerId' | 'state'>) {
+  let cleanupPending = Boolean(
+    row.attachments?.cleanup.some(item => item.status === 'pending') ||
+      row.attachments?.transfers.some(
+        item =>
+          item.status === 'unresolved' ||
+          (row.status === 'active' && item.status !== 'saved'),
+      ),
+  );
+  if (row.attachments && !cleanupPending) {
+    const assets = await db
+      .select()
+      .from(productAssets)
+      .where(eq(productAssets.draftId, row.id))
+      .all();
+    const assetIds = new Set(assets.map(asset => asset.id));
+    if (
+      row.attachments.cleanup.some(
+        item => item.status !== 'deleted' && !assetIds.has(item.assetId),
+      )
+    )
+      cleanupPending = true;
+    for (const asset of assets) {
+      if (await assetCleanupPending(db, asset)) cleanupPending = true;
+    }
+  }
   return productDraftSummarySchema.parse({
     id: row.id,
     target: row.target,
     revision: row.revision,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
+    status: row.status,
+    cleanupPending,
   });
 }
 export async function beginProductDraft(
@@ -102,9 +133,10 @@ export async function beginProductDraft(
     })
     .returning();
   return productDraftResponseSchema.parse({
-    ...summary(row),
+    ...(await summary(db, row)),
     state: row.state,
     context,
+    attachments: attachmentProjection(row),
   });
 }
 export async function listProductDrafts(db: Database, ownerId: string) {
@@ -115,15 +147,23 @@ export async function listProductDrafts(db: Database, ownerId: string) {
       revision: productDrafts.revision,
       createdAt: productDrafts.createdAt,
       updatedAt: productDrafts.updatedAt,
+      status: productDrafts.status,
+      attachments: productDrafts.attachments,
     })
     .from(productDrafts)
     .where(eq(productDrafts.ownerId, ownerId))
     .orderBy(desc(productDrafts.updatedAt), asc(productDrafts.id))
     .all();
-  return { drafts: rows.map(row => productDraftSummarySchema.parse(row)) };
+  return {
+    drafts: await Promise.all(rows.map(row => summary(db, row))),
+  };
 }
 export function readProductDraft(db: Database, ownerId: string, id: string) {
-  return db.select().from(productDrafts).where(owned(id, ownerId)).get();
+  return db
+    .select()
+    .from(productDrafts)
+    .where(and(owned(id, ownerId), eq(productDrafts.status, 'active')))
+    .get();
 }
 export async function saveProductDraft(
   db: Database,
@@ -142,22 +182,9 @@ export async function saveProductDraft(
       and(
         owned(id, ownerId),
         eq(productDrafts.revision, input.expectedRevision),
+        eq(productDrafts.status, 'active'),
       ),
     )
     .returning();
-  return row;
-}
-export async function discardProductDraft(
-  db: Database,
-  ownerId: string,
-  id: string,
-  expectedRevision: number,
-) {
-  const [row] = await db
-    .delete(productDrafts)
-    .where(
-      and(owned(id, ownerId), eq(productDrafts.revision, expectedRevision)),
-    )
-    .returning({ id: productDrafts.id });
   return row;
 }

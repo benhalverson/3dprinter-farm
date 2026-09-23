@@ -30,6 +30,17 @@ const row = {
   revision: 1,
   createdAt: 1000,
   updatedAt: 1000,
+  status: 'active',
+  attachments: null,
+};
+const attachments = {
+  photos: [],
+  printFile: null,
+  primaryPhotoId: null,
+  photoOrder: [],
+  transfers: [],
+  validation: [],
+  cleanup: [],
 };
 const mockDb = drizzle(mockEnv().DB);
 const updateTable = vi.spyOn(mockDb, 'update');
@@ -38,7 +49,12 @@ const updateWhere = vi.fn();
 const deleteTable = vi.spyOn(mockDb, 'delete');
 const deleteWhere = vi.fn();
 const dialect = new SQLiteSyncDialect();
-function expectDraftCondition(actual: SQL, ownerId: string, revision?: number) {
+function expectDraftCondition(
+  actual: SQL,
+  ownerId: string,
+  revision?: number,
+  active = true,
+) {
   // Compare Drizzle-built conditions, without executing or writing SQL.
   const conditions = [
     eq(productDrafts.id, id),
@@ -47,8 +63,14 @@ function expectDraftCondition(actual: SQL, ownerId: string, revision?: number) {
   const owned = and(...conditions);
   const expected =
     revision === undefined
-      ? owned
-      : and(owned, eq(productDrafts.revision, revision));
+      ? active
+        ? and(owned, eq(productDrafts.status, 'active'))
+        : owned
+      : and(
+          owned,
+          eq(productDrafts.revision, revision),
+          eq(productDrafts.status, 'active'),
+        );
   expect(dialect.sqlToQuery(actual)).toEqual(
     dialect.sqlToQuery(expected as SQL),
   );
@@ -61,6 +83,9 @@ const responseBody = {
   createdAt: 1000,
   updatedAt: 1000,
   context: { status: 'new' },
+  status: 'active',
+  cleanupPending: false,
+  attachments,
 };
 async function expectError(result: Response, status: number, error: string) {
   expect(result.status).toBe(status);
@@ -127,7 +152,9 @@ describe('private admin product draft endpoints', () => {
 
   it('begins an incomplete draft owned by the verified session', async () => {
     authorize();
-    mockInsert.mockImplementationOnce(async () => [capturedInserts[0]]);
+    mockInsert.mockImplementationOnce(async () => [
+      { ...capturedInserts[0], status: 'active', attachments: null },
+    ]);
     const result = await request('', 'POST', { target: { kind: 'new' } });
     expect(result.status).toBe(201);
     expect(result.headers.get('cache-control')).toBe('no-store');
@@ -140,6 +167,9 @@ describe('private admin product draft endpoints', () => {
       createdAt: expect.any(Number),
       updatedAt: expect.any(Number),
       context: { status: 'new' },
+      status: 'active',
+      cleanupPending: false,
+      attachments,
     });
     expect(capturedInserts).toEqual([
       {
@@ -171,7 +201,9 @@ describe('private admin product draft endpoints', () => {
         categoryId: null,
       });
       mockAll.mockResolvedValueOnce([]);
-      mockInsert.mockImplementationOnce(async () => [capturedInserts[i]]);
+      mockInsert.mockImplementationOnce(async () => [
+        { ...capturedInserts[i], status: 'active', attachments: null },
+      ]);
       const inputState = i === 0 ? state : empty;
       const result = await request('', 'POST', {
         target: { kind: 'existing', productId: 42 },
@@ -187,6 +219,9 @@ describe('private admin product draft endpoints', () => {
         revision: 1,
         createdAt: expect.any(Number),
         updatedAt: expect.any(Number),
+        status: 'active',
+        cleanupPending: false,
+        attachments,
         context: {
           status: 'available',
           categories: [],
@@ -234,7 +269,15 @@ describe('private admin product draft endpoints', () => {
   it('lists saved summaries without exposing ownership or conversation history', async () => {
     authorize();
     mockAll.mockResolvedValueOnce([
-      { id, target: row.target, revision: 1, createdAt: 1000, updatedAt: 1000 },
+      {
+        id,
+        target: row.target,
+        revision: 1,
+        createdAt: 1000,
+        updatedAt: 1000,
+        status: 'active',
+        attachments: null,
+      },
     ]);
     const result = await request();
     expect(result.status).toBe(200);
@@ -246,6 +289,8 @@ describe('private admin product draft endpoints', () => {
           revision: 1,
           createdAt: 1000,
           updatedAt: 1000,
+          status: 'active',
+          cleanupPending: false,
         },
       ],
     });
@@ -387,31 +432,57 @@ describe('private admin product draft endpoints', () => {
     );
     expectDraftCondition(updateWhere.mock.lastCall?.[0], 'user_123', 1);
     authorize();
-    mockDelete.mockReturnValueOnce({
-      returning: vi.fn().mockResolvedValue([]),
-    });
     get({ ...row, revision: 2 });
     await expectError(
       await request(`/${id}?expectedRevision=1`, 'DELETE'),
       409,
       'Revision conflict',
     );
-    expectDraftCondition(deleteWhere.mock.lastCall?.[0], 'user_123', 1);
+    expectDraftCondition(
+      mockWhere.mock.lastCall?.[0] as SQL,
+      'user_123',
+      undefined,
+      false,
+    );
     expect(mockInsert).not.toHaveBeenCalled();
   });
 
-  it('explicitly discards conversation data only', async () => {
+  it('discards conversation data while retaining a private cleanup tombstone', async () => {
     authorize();
-    mockDelete.mockReturnValueOnce({
-      returning: vi.fn().mockResolvedValue([{ id }]),
+    get(row);
+    let stored = { ...row };
+    mockUpdate.mockImplementation(async () => {
+      stored = { ...stored, ...updateSet.mock.lastCall?.[0] };
+      return [stored];
     });
+    mockWhere.mockReturnValueOnce({ get: vi.fn(async () => stored) });
+    mockWhere.mockReturnValueOnce({ all: vi.fn(async () => []) });
+    mockWhere.mockReturnValueOnce({ get: vi.fn(async () => stored) });
     const result = await request(`/${id}?expectedRevision=1`, 'DELETE');
-    expect(result.status).toBe(204);
-    expect(await result.text()).toBe('');
+    expect(result.status).toBe(200);
+    expect(await result.json()).toEqual({
+      id,
+      revision: 3,
+      status: 'discarded',
+      cleanup: [],
+    });
     expect(result.headers.get('cache-control')).toBe('no-store');
-    expect(mockDelete).toHaveBeenCalledOnce();
-    expect(deleteTable).toHaveBeenLastCalledWith(productDrafts);
-    expectDraftCondition(deleteWhere.mock.lastCall?.[0], 'user_123', 1);
+    expect(mockDelete).not.toHaveBeenCalled();
+    expect(stored).toMatchObject({
+      ownerId: 'user_123',
+      state: empty,
+      status: 'discarded',
+    });
+    expect(dialect.sqlToQuery(updateWhere.mock.calls[0][0])).toEqual(
+      dialect.sqlToQuery(
+        and(
+          eq(productDrafts.id, id),
+          eq(productDrafts.ownerId, 'user_123'),
+          eq(productDrafts.revision, 1),
+          eq(productDrafts.status, 'active'),
+        ) as SQL,
+      ),
+    );
     expect(globalThis.fetch).not.toHaveBeenCalled();
   });
 
@@ -436,6 +507,8 @@ describe('private admin product draft endpoints', () => {
     expectDraftCondition(
       mockWhere.mock.lastCall?.[0] as SQL,
       'different-admin',
+      undefined,
+      method !== 'DELETE',
     );
     if (method === 'PUT') {
       expectDraftCondition(
@@ -444,13 +517,7 @@ describe('private admin product draft endpoints', () => {
         1,
       );
     }
-    if (method === 'DELETE') {
-      expectDraftCondition(
-        deleteWhere.mock.lastCall?.[0],
-        'different-admin',
-        1,
-      );
-    }
+    if (method === 'DELETE') expect(mockUpdate).not.toHaveBeenCalled();
   });
 
   const endpoints = [
@@ -637,7 +704,14 @@ describe('private admin product draft endpoints', () => {
     const document = await result.json();
     expect(
       Object.keys(document.paths).filter(path => path.includes('draft')),
-    ).toEqual(['/admin/product-drafts', '/admin/product-drafts/{id}']);
+    ).toEqual(
+      expect.arrayContaining([
+        '/admin/product-drafts',
+        '/admin/product-drafts/{id}',
+        '/admin/product-drafts/{id}/attachments/intents',
+        '/admin/product-drafts/{id}/cleanup',
+      ]),
+    );
     expect(
       document.paths['/admin/product-drafts'].post.responses['201'],
     ).toBeDefined();

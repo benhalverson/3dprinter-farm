@@ -4,6 +4,7 @@ import type { PaymentStatusResponse } from '../../src/types';
 import { mockAuth } from '../mocks/auth';
 import {
   capturedInserts,
+  mockAll,
   mockDelete,
   mockDrizzle,
   mockInsert,
@@ -83,6 +84,7 @@ describe('Payments Routes', () => {
 
     // Reset all mock functions
     mockWhere.mockReset();
+    mockAll.mockReset().mockResolvedValue([]);
     mockInsert.mockReset();
     mockUpdate.mockReset();
     mockDelete.mockReset();

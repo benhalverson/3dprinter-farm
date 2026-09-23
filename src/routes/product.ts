@@ -5,6 +5,7 @@ import { describeRoute } from 'hono-openapi';
 import { resolver } from 'hono-openapi/zod';
 import Stripe from 'stripe';
 import { ZodError, z } from 'zod';
+import { reserveCatalogAssets } from '../modules/productAssets';
 
 type OpenAPISchema = Record<string, unknown>;
 
@@ -774,6 +775,7 @@ const product = factory
       },
     }),
     zValidator('json', addProductV2Schema),
+    reserveCatalogAssets,
     async c => {
       try {
         const stripe = new Stripe(c.env.STRIPE_SECRET_KEY, {
