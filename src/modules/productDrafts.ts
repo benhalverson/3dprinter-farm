@@ -6,6 +6,7 @@ import {
   productsToCategories,
 } from '../db/schema';
 import type { WorkerEnv } from '../factory';
+import { attachmentProjection } from './productAttachments';
 import {
   type BeginProductDraft,
   type ProductDraftContext,
@@ -70,15 +71,19 @@ export async function productDraftResponse(db: Database, row: DraftRow) {
     ...summary(row),
     state: row.state,
     context: await readProductDraftContext(db, row.target),
+    attachments: attachmentProjection(row),
   });
 }
-function summary(row: DraftRow) {
+function summary(row: Omit<DraftRow, 'ownerId' | 'state'>) {
   return productDraftSummarySchema.parse({
     id: row.id,
     target: row.target,
     revision: row.revision,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
+    status: row.status,
+    cleanupPending:
+      row.attachments?.cleanup.some(item => item.status === 'pending') ?? false,
   });
 }
 export async function beginProductDraft(
@@ -105,6 +110,7 @@ export async function beginProductDraft(
     ...summary(row),
     state: row.state,
     context,
+    attachments: attachmentProjection(row),
   });
 }
 export async function listProductDrafts(db: Database, ownerId: string) {
@@ -115,15 +121,23 @@ export async function listProductDrafts(db: Database, ownerId: string) {
       revision: productDrafts.revision,
       createdAt: productDrafts.createdAt,
       updatedAt: productDrafts.updatedAt,
+      status: productDrafts.status,
+      attachments: productDrafts.attachments,
     })
     .from(productDrafts)
     .where(eq(productDrafts.ownerId, ownerId))
     .orderBy(desc(productDrafts.updatedAt), asc(productDrafts.id))
     .all();
-  return { drafts: rows.map(row => productDraftSummarySchema.parse(row)) };
+  return {
+    drafts: rows.map(summary),
+  };
 }
 export function readProductDraft(db: Database, ownerId: string, id: string) {
-  return db.select().from(productDrafts).where(owned(id, ownerId)).get();
+  return db
+    .select()
+    .from(productDrafts)
+    .where(and(owned(id, ownerId), eq(productDrafts.status, 'active')))
+    .get();
 }
 export async function saveProductDraft(
   db: Database,
@@ -142,22 +156,9 @@ export async function saveProductDraft(
       and(
         owned(id, ownerId),
         eq(productDrafts.revision, input.expectedRevision),
+        eq(productDrafts.status, 'active'),
       ),
     )
     .returning();
-  return row;
-}
-export async function discardProductDraft(
-  db: Database,
-  ownerId: string,
-  id: string,
-  expectedRevision: number,
-) {
-  const [row] = await db
-    .delete(productDrafts)
-    .where(
-      and(owned(id, ownerId), eq(productDrafts.revision, expectedRevision)),
-    )
-    .returning({ id: productDrafts.id });
   return row;
 }

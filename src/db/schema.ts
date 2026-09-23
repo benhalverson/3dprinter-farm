@@ -9,6 +9,7 @@ import {
   uniqueIndex,
 } from 'drizzle-orm/sqlite-core';
 import { z } from 'zod';
+import type { AttachmentState } from '../modules/productAttachmentState';
 import type {
   ProductDraftState,
   ProductDraftTarget,
@@ -20,16 +21,39 @@ export const productDrafts = sqliteTable(
   {
     id: text('id').primaryKey(),
     ownerId: text('owner_id').notNull(),
-    target: text('target', { mode: 'json' }).$type<ProductDraftTarget>().notNull(),
+    target: text('target', { mode: 'json' })
+      .$type<ProductDraftTarget>()
+      .notNull(),
     state: text('state', { mode: 'json' }).$type<ProductDraftState>().notNull(),
     revision: integer('revision').notNull(),
     createdAt: integer('created_at').notNull(),
     updatedAt: integer('updated_at').notNull(),
+    status: text('status', { enum: ['active', 'discarded'] })
+      .notNull()
+      .default('active'),
+    attachments: text('attachments', { mode: 'json' }).$type<AttachmentState>(),
   },
   table => [
     index('product_drafts_owner_updated').on(table.ownerId, table.updatedAt),
   ],
 );
+
+// Reference reservations and deletion claims share one versioned row. A reservation
+// is retained after an ambiguous catalog write, so cleanup cannot race publication.
+export const productAssets = sqliteTable('product_assets', {
+  id: text('id').primaryKey(),
+  ownerId: text('owner_id').notNull(),
+  draftId: text('draft_id').notNull(),
+  kind: text('kind', { enum: ['photo', 'print'] }).notNull(),
+  objectKey: text('object_key').notNull().unique(),
+  providerId: text('provider_id'),
+  fileUrl: text('file_url'),
+  contentType: text('content_type'),
+  encryptionKey: text('encryption_key').notNull(),
+  references: text('references', { mode: 'json' }).$type<string[]>().notNull(),
+  status: text('status', { enum: ['active', 'deleting', 'deleted'] }).notNull(),
+  revision: integer('revision').notNull(),
+});
 
 export const DEFAULT_PLA_BLACK_FILAMENT_ID =
   '76fe1f79-3f1e-43e4-b8f4-61159de5b93c';

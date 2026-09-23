@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { productAttachmentsSchema } from './productAttachmentContracts';
 
 const productIdSchema = z.number().int().positive().safe();
 export const draftRevisionSchema = z.number().int().positive().safe();
@@ -109,12 +110,15 @@ export const productDraftSummarySchema = z
     revision: draftRevisionSchema,
     createdAt: z.number().int().nonnegative(),
     updatedAt: z.number().int().nonnegative(),
+    status: z.enum(['active', 'discarded']),
+    cleanupPending: z.boolean(),
   })
   .strict();
 export const productDraftResponseSchema = productDraftSummarySchema
   .extend({
     state: productDraftStateSchema,
     context: productDraftContextSchema,
+    attachments: productAttachmentsSchema,
   })
   .strict();
 export const productDraftListSchema = z

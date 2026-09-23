@@ -7,6 +7,13 @@ import { resolver } from 'hono-openapi/zod';
 import { z } from 'zod';
 import { createSchema } from 'zod-openapi';
 import factory, { type WorkerEnv } from '../factory';
+import { AttachmentError } from '../modules/productAssets';
+import { draftCleanupResponseSchema } from '../modules/productAttachmentContracts';
+import {
+  cleanupResponse,
+  discardAttachments,
+  retryAttachmentCleanup,
+} from '../modules/productAttachments';
 import {
   beginProductDraftSchema,
   discardProductDraftSchema,
@@ -17,7 +24,6 @@ import {
 } from '../modules/productDraftContracts';
 import {
   beginProductDraft,
-  discardProductDraft,
   listProductDrafts,
   productDraftResponse,
   readProductDraft,
@@ -27,6 +33,7 @@ import {
   authMiddleware,
   requireCatalogMutationRole,
 } from '../utils/authMiddleware';
+import attachmentsRouter from './productAttachments';
 
 const errors = Object.fromEntries(
   [
@@ -77,10 +84,11 @@ async function withDraftErrors(
   c: Context<WorkerEnv>,
   action: (ownerId: string) => Promise<Response>,
 ) {
-  if (!c.var.userId) return c.json({ error: 'Unauthorized' }, 401);
   try {
-    return await action(c.var.userId);
-  } catch {
+    return await action(c.var.userId!);
+  } catch (error) {
+    if (error instanceof AttachmentError)
+      return c.json({ error: error.message }, error.status);
     console.error('Product draft request failed');
     return c.json({ error: 'Product draft request failed' }, 500);
   }
@@ -108,6 +116,7 @@ const router = factory
     }
   })
   .use('*', authMiddleware, requireCatalogMutationRole)
+  .route('/', attachmentsRouter)
   .use(
     '*',
     bodyLimit({
@@ -208,9 +217,9 @@ const router = factory
     '/:id',
     describeRoute({
       tags: ['Admin product drafts'],
-      summary: 'Explicitly discard conversation data',
+      summary: 'Discard conversation and clean up exclusively owned uploads',
       description:
-        'Deletes only the owned draft matching expectedRevision. Does not delete a Catalog Item or clean up uploads.',
+        'Retains a recovery tombstone and unresolved transfer identities. Cleanup checks references and remains visible when pending.',
       security: [{ cookieAuth: [] }],
       parameters: [
         pathParameter,
@@ -225,24 +234,27 @@ const router = factory
           },
         },
       ],
-      responses: { ...errors, 204: { description: 'Draft discarded' } },
+      responses: { ...errors, 200: response(draftCleanupResponseSchema) },
     }),
     zValidator('param', productDraftIdSchema, validationError),
     zValidator('query', discardProductDraftSchema, validationError),
     c =>
       withDraftErrors(c, async ownerId => {
         const id = c.req.valid('param').id;
-        const row = await discardProductDraft(
+        let row = await discardAttachments(
           c.var.db,
           ownerId,
           id,
           c.req.valid('query').expectedRevision,
         );
-        if (row) return c.body(null, 204);
-        const exists = await readProductDraft(c.var.db, ownerId, id);
-        return exists
-          ? c.json({ error: 'Revision conflict' }, 409)
-          : c.json({ error: 'Draft not found' }, 404);
+        row = await retryAttachmentCleanup(
+          c.var.db,
+          c.env,
+          ownerId,
+          id,
+          row.revision,
+        );
+        return c.json(cleanupResponse(row));
       }),
   );
 

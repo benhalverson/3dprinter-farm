@@ -32,7 +32,7 @@ const app = factory
         'https://luluspeedworks.com',
       ],
       credentials: true,
-      allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+      allowMethods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     }),
   )
   .get('/health', c => {

@@ -5,6 +5,7 @@ import { describeRoute } from 'hono-openapi';
 import { resolver } from 'hono-openapi/zod';
 import Stripe from 'stripe';
 import { ZodError, z } from 'zod';
+import { reserveCatalogAssets } from '../modules/productAssets';
 
 type OpenAPISchema = Record<string, unknown>;
 
@@ -529,6 +530,7 @@ const product = factory
     '/add-product',
     authMiddleware,
     requireCatalogMutationRole,
+    reserveCatalogAssets,
     describeRoute({
       description: 'Add a new product',
       tags: ['Products'],
@@ -706,6 +708,7 @@ const product = factory
     '/v2/add-product',
     authMiddleware,
     requireCatalogMutationRole,
+    reserveCatalogAssets,
     describeRoute({
       description:
         'Add a new product using Slant3D V2 API. The STL must already be uploaded by calling /v2/presigned-upload, uploading the file to the returned presignedUrl from the browser, then calling /v2/confirm. Submit publicFileServiceId from /v2/confirm as the durable print file reference; stl is optional and deprecated.',
@@ -1036,6 +1039,7 @@ const product = factory
     '/update-product',
     authMiddleware,
     requireCatalogMutationRole,
+    reserveCatalogAssets,
     describeRoute({
       description: 'Update an existing product',
       tags: ['Products'],
