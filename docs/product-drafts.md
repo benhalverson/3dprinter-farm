@@ -74,8 +74,10 @@ contracts and failure behavior; mocks do not establish real D1 durability or
 concurrency guarantees.
 
 Migration generation/application use `pnpm run db:generate` and
-`pnpm run db:migrate:local`. The generated draft migration preserves existing
-history. Current local application is blocked by existing schema/migration tracking mismatch: Drizzle reports `table account already exists` before the new migration. Historical migrations and local data are not reset or rewritten.
+`pnpm run db:migrate:local`. Migration `0016_plain_supreme_intelligence.sql`
+adds reference-attempt recovery records and asset lookup indexes. It was generated
+with Drizzle; historical migrations and the confirmed local database configuration
+are unchanged. Apply the new migration before rolling out the code.
 
 ## Durable attachments
 
@@ -104,6 +106,9 @@ Cleanup reads/retries and discard return `{ id, revision, status, cleanup }`;
 status is active or discarded. Normal draft reads/saves return 404 after discard.
 Confirm can resolve a previously started transfer on a tombstone, but never
 reattaches it to that discarded conversation.
+Deterministic finalization failures (including revision conflicts or an asset
+already claimed by cleanup) return `409`. Uncertain provider or persistence
+outcomes retain unresolved recovery state.
 Cleanup retry also reconciles the tombstone's current unresolved photo writes
 and known print placeholders, so recovery after reload needs only the cleanup
 response. Missing bytes and unavailable providers remain protected for retry.
@@ -157,7 +162,7 @@ it does not assert that previously deployed public assets are repaired.
 Assets, associations, transfer attempts, and cleanup use durable Drizzle records.
 Cleanup checks retained drafts, catalog items, orders, and unresolved operations.
 Reference reservations and deletion claims conditionally update the same asset
-revision; once claimed, new reference creation is rejected. Existing catalog
+revision; once claimed, new reference creation is rejected. V2 catalog
 writers reserve matching assets before mutation. Ambiguous catalog reservations
 are conservatively retained. Reservations have individual request identities;
 confirmed success and known rejection release only that request's reservation,
@@ -169,6 +174,47 @@ with GET before treating the file as absent. Missing identities, authorization
 failures, unavailable providers, and failed persistence remain visibly pending.
 Pending operations remain protected until recovery resolves them, including when
 discard races an upload. Cleanup retries preserve newly added cleanup candidates.
+
+Reference attempts persist their token and immutable candidate asset IDs before
+any reservations or downstream work. They start `unresolved`; known completion,
+rejection, or partial reservation failure records `release_pending` before
+removing references. Each release removes only its own token, retries revision
+conflicts with fresh reads up to three times per asset, and continues other
+assets after an individual failure. Completed releases become `released`.
+`POST /admin/product-drafts/:id/cleanup/retry` also retries pending releases for
+that draft's assets. Missing records and uncertain outcomes never permit deletion.
+Failed release bookkeeping does not turn a saved catalog item or order into an
+error, and order event recording continues.
+
+Unfinished transfers and releases are `pending` cleanup; `protected` denotes
+retained draft, catalog, or order references. Draft list summaries include
+unfinished work without running cleanup during reads. Asset identity queries use
+IDs, object keys, Slant IDs, and stored file URLs. Legacy reference checks use
+existence queries over relevant columns without truncating the checked records.
+
+## V2 catalog mutations
+
+`POST /v2/add-product` retains its existing create payload, estimate, pricing,
+authorization, and response behavior. `PUT /v2/update-product` uses
+`updateProductSchema`, the same authorization and response envelopes as
+`PUT /update-product`. It validates the product exists, retains both category
+input aliases and category validation, and preserves fields outside that update
+contract, including SKU, print-file identity and payment-provider IDs. The supplied
+`price` remains the update price; there is no new estimate or print replacement.
+As on the original update endpoint, omitting `imageGallery` stores an empty gallery,
+and omitting categories preserves the existing category associations.
+
+Both V2 mutations reject private draft-photo references in `image` and
+`imageGallery` with a field-specific `400` before provider calls or writes. This
+includes relative/absolute draft URLs, draft object keys, and identities resolving
+to draft photos. Draft photos remain private; public promotion and repair of
+existing catalog images are outside this feature.
+
+The original `/add-product` and `/update-product` keep their base-branch behavior.
+Existing catalog/order references still protect retained assets, but unmodified
+legacy writers do not participate in the V2 reservation protocol; this change
+does not claim concurrency protection for those writers. No frontend catalog-write
+migration is required by the current draft workspace.
 
 JSON attachment requests retain the 256 KiB limit. Mocked Hono endpoint tests
 exercise ownership, revisions, bytes, recovery, and observable provider calls;

@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
-import { DEFAULT_PLA_BLACK_FILAMENT_ID } from '../../src/db/schema';
 import app from '../../src/app';
+import { DEFAULT_PLA_BLACK_FILAMENT_ID } from '../../src/db/schema';
 import { mockBetterAuth } from '../mocks/auth';
 import {
   capturedInserts,
@@ -106,6 +106,7 @@ function mockV2AddProductDependencies() {
 describe('Product Routes', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockAll.mockResolvedValue([]);
     capturedInserts.length = 0;
   });
 

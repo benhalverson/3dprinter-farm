@@ -1,16 +1,30 @@
-import { Param, SQL } from 'drizzle-orm';
+import { Param, SQL, StringChunk } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/d1';
 import { SQLiteColumn, type SQLiteTable } from 'drizzle-orm/sqlite-core';
 import { Hono } from 'hono';
 import { HTTPException } from 'hono/http-exception';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { ZodError } from 'zod';
 import app from '../../src/app';
 import * as schema from '../../src/db/schema';
 import { createPaidOrderFulfillment } from '../../src/modules/paidOrderFulfillment';
-import { emptyAttachments } from '../../src/modules/productAttachmentState';
+import {
+  attachmentIdentities,
+  findAssets,
+  reserveAssetReference,
+  reservePendingOrderAssets,
+} from '../../src/modules/productAssets';
 import { productPhotoBase64 } from '../fixtures/productPhotoBytes';
 import { mockBetterAuth } from '../mocks/auth';
 import { mockEnv } from '../mocks/env';
+
+const stripe = vi.hoisted(() => ({ product: vi.fn(), price: vi.fn() }));
+vi.mock('stripe', () => ({
+  default: vi.fn(() => ({
+    products: { create: stripe.product },
+    prices: { create: stripe.price },
+  })),
+}));
 
 const id = '4a1a372c-cbd7-4bac-bc73-6c29d2a9e292';
 const missing = '5a1a372c-cbd7-4bac-bc73-6c29d2a9e292';
@@ -22,23 +36,47 @@ let rejectUpdate = false;
 let failRead: SQLiteTable | undefined;
 let failReadError: Error;
 let beforeRead: ((table: SQLiteTable) => void) | undefined;
+let beforeInsert: ((table: SQLiteTable) => void) | undefined;
 function records(table: SQLiteTable) {
   return tables.get(table) ?? [];
 }
 function matching(row: Row, condition?: SQL): boolean {
   if (!condition) return true;
   const chunks = condition.queryChunks;
+  const operator = chunks
+    .filter(chunk => chunk instanceof StringChunk)
+    .map(chunk => chunk.value.join(''))
+    .join('');
   const column = chunks.find(chunk => chunk instanceof SQLiteColumn);
   const parameter = chunks.find(chunk => chunk instanceof Param);
-  if (column instanceof SQLiteColumn && parameter instanceof Param) {
+  if (column instanceof SQLiteColumn) {
     const key = Object.keys(column.table).find(
       key => (column.table as unknown as Row)[key] === column,
     )!;
-    return row[key] === parameter.value;
+    const value =
+      parameter instanceof Param
+        ? parameter.value
+        : chunks.find(chunk => typeof chunk === 'string');
+    if (operator.includes(' like ')) {
+      const stored =
+        typeof row[key] === 'object' ? JSON.stringify(row[key]) : row[key];
+      return (
+        typeof stored === 'string' &&
+        stored.includes(String(value).slice(1, -1))
+      );
+    }
+    if (operator.includes(' in ')) {
+      return chunks
+        .flatMap(chunk => (Array.isArray(chunk) ? chunk : []))
+        .some(chunk => chunk instanceof Param && chunk.value === row[key]);
+    }
+    if (operator.includes('<>')) return row[key] !== value;
+    return row[key] === value;
   }
-  return chunks
-    .filter(chunk => chunk instanceof SQL)
-    .every(chunk => matching(row, chunk as SQL));
+  const nested = chunks.filter((chunk): chunk is SQL => chunk instanceof SQL);
+  return operator.includes(' or ')
+    ? nested.some(chunk => matching(row, chunk))
+    : nested.every(chunk => matching(row, chunk));
 }
 const db = {
   select: vi.fn(() => ({
@@ -51,10 +89,13 @@ const db = {
             records(table).find(row => matching(row, condition)),
           );
         },
-        all: async () =>
-          structuredClone(
+        all: async () => {
+          beforeRead?.(table);
+          if (failRead === table) throw failReadError;
+          return structuredClone(
             records(table).filter(row => matching(row, condition)),
-          ),
+          );
+        },
         orderBy: () => ({
           all: async () =>
             structuredClone(
@@ -66,35 +107,45 @@ const db = {
     },
   })),
   insert: vi.fn((table: SQLiteTable) => ({
-    values: (value: Row) => {
+    values: (value: Row | Row[]) => {
       const insert = () => {
+        beforeInsert?.(table);
         const rows = records(table);
-        if (!rows.some(row => row.id === value.id)) {
-          if (table === schema.ordersTable) value.id = 42;
-          rows.push(
-            structuredClone({
-              ...value,
-              ...(table === schema.productDrafts
-                ? { status: 'active', attachments: null }
-                : {}),
-            }),
-          );
-          tables.set(table, rows);
+        const values = Array.isArray(value) ? value : [value];
+        for (const value of values) {
+          if (!rows.some(row => row.id !== undefined && row.id === value.id)) {
+            if (table === schema.ordersTable || table === schema.productsTable)
+              value.id = 42;
+            rows.push(
+              structuredClone({
+                ...value,
+                ...(table === schema.productDrafts
+                  ? { status: 'active', attachments: null }
+                  : {}),
+              }),
+            );
+            tables.set(table, rows);
+          }
         }
-        return structuredClone(rows.filter(row => row.id === value.id));
+        return structuredClone(rows);
       };
       return {
         returning: async () => insert(),
         onConflictDoNothing: async () => {
           insert();
         },
+        // biome-ignore lint/suspicious/noThenProperty: Drizzle queries are thenable.
+        then: (
+          resolve: (rows: Row[]) => unknown,
+          reject: (error: unknown) => unknown,
+        ) => Promise.resolve().then(insert).then(resolve, reject),
       };
     },
   })),
   update: vi.fn((table: SQLiteTable) => ({
     set: (changes: Row) => ({
-      where: (condition: SQL) => ({
-        returning: async () => {
+      where: (condition: SQL) => {
+        const update = async () => {
           beforeUpdate?.(table, changes);
           if (rejectUpdate) {
             rejectUpdate = false;
@@ -105,10 +156,26 @@ const db = {
             Object.assign(row, structuredClone(changes));
           });
           return structuredClone(rows);
-        },
-      }),
+        };
+        return {
+          returning: update,
+          // biome-ignore lint/suspicious/noThenProperty: Drizzle queries are thenable.
+          then: (
+            resolve: (rows: Row[]) => unknown,
+            reject: (error: unknown) => unknown,
+          ) => update().then(resolve, reject),
+        };
+      },
     }),
   })),
+  delete: (table: SQLiteTable) => ({
+    where: async (condition: SQL) => {
+      tables.set(
+        table,
+        records(table).filter(row => !matching(row, condition)),
+      );
+    },
+  }),
 };
 const put = vi.fn(async (key: string, bytes: Uint8Array) => {
   if (bucket.has(key)) return null;
@@ -236,7 +303,7 @@ async function savedPrint(extra: Row = {}) {
   expect(response.status).toBe(200);
   return { providerId, assetId: transfer.attachmentId };
 }
-function orderRequest(reference: string) {
+function orderRequest(reference: string, secondReference?: string) {
   return new Hono()
     .post('/fulfill', async c => {
       try {
@@ -273,7 +340,7 @@ function orderRequest(reference: string) {
                 productName: 'Part',
                 productImage: reference,
                 productPrice: 1,
-                stl: null,
+                stl: secondReference ?? null,
                 publicFileServiceId: 'provider',
               },
             ],
@@ -285,6 +352,50 @@ function orderRequest(reference: string) {
     })
     .request('/fulfill', { method: 'POST' });
 }
+const catalogPayload = {
+  id: 42,
+  name: 'Part',
+  description: 'Part description',
+  price: 12,
+  filamentType: 'PLA',
+  color: 'black',
+  image: 'https://public.example/part.png',
+};
+function catalogRequest(
+  extra: Row = {},
+  method = 'PUT',
+  path = method === 'PUT' ? '/v2/update-product' : '/v2/add-product',
+) {
+  return app.request(
+    path,
+    {
+      method,
+      headers: { cookie: 'session=yes', 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        ...catalogPayload,
+        publicFileServiceId: 'external-print',
+        ...extra,
+      }),
+    },
+    env,
+  );
+}
+function existingProduct(extra: Row = {}) {
+  const product = {
+    ...catalogPayload,
+    name: 'Old name',
+    categoryId: 7,
+    imageGallery: '["old-image"]',
+    stl: 'old-stl',
+    publicFileServiceId: 'old-print',
+    skuNumber: 'KEEP-SKU',
+    stripeProductId: 'keep-product',
+    stripePriceId: 'keep-price',
+    ...extra,
+  };
+  tables.set(schema.productsTable, [product]);
+  return product;
+}
 describe('durable product attachments through Hono', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -292,6 +403,9 @@ describe('durable product attachments through Hono', () => {
       .mockReset()
       .mockRejectedValue(new Error('Unexpected provider request'));
     tables.clear();
+    beforeInsert = undefined;
+    stripe.product.mockReset().mockResolvedValue({ id: 'stripe-product' });
+    stripe.price.mockReset().mockResolvedValue({ id: 'stripe-price' });
     bucket.clear();
     beforeUpdate = undefined;
     rejectUpdate = false;
@@ -551,7 +665,7 @@ describe('durable product attachments through Hono', () => {
       'DELETE',
     );
     expect(discarded.status).toBe(200);
-    expect((await discarded.json()).cleanup[0].status).toBe('protected');
+    expect((await discarded.json()).cleanup[0].status).toBe('pending');
     expect((await request('')).status).toBe(404);
     expect((await request('/cleanup')).status).toBe(200);
   });
@@ -655,7 +769,7 @@ describe('durable product attachments through Hono', () => {
     expect((await response.json()).cleanup[0].status).toBe('protected');
     tables.set(schema.productsTable, []);
     tables.set(schema.ordersTable, [
-      { id: 1, fileUrl: `https://files.example.com/${print.providerId}` },
+      { id: 1, fileURL: `https://files.example.com/${print.providerId}` },
     ]);
     response = await request('/cleanup/retry', 'POST', {
       expectedRevision: revision(),
@@ -678,19 +792,9 @@ describe('durable product attachments through Hono', () => {
     const print = await savedPrint();
     vi.mocked(fetch).mockImplementationOnce(async () => {
       expect(records(schema.productAssets)[0].status).toBe('deleting');
-      const reserve = await app.request(
-        '/update-product',
-        {
-          method: 'PUT',
-          headers: {
-            cookie: 'session=yes',
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({ image: `product-drafts/${print.assetId}` }),
-        },
-        env,
-      );
-      expect(reserve.status).toBe(409);
+      await expect(
+        reserveAssetReference(db as never, print.assetId, 'order:late'),
+      ).rejects.toMatchObject({ status: 409 });
       return Response.json({ success: true, message: 'File deleted' });
     });
     const response = await request(`?expectedRevision=${revision()}`, 'DELETE');
@@ -713,7 +817,7 @@ describe('durable product attachments through Hono', () => {
     const retry = await request('/cleanup/retry', 'POST', {
       expectedRevision: revision(),
     });
-    expect((await retry.json()).cleanup[0].status).toBe('protected');
+    expect((await retry.json()).cleanup[0].status).toBe('pending');
   });
   it('keeps a print asset with a missing provider identity pending without guessing an identifier', async () => {
     await savedPrint();
@@ -824,16 +928,9 @@ describe('durable product attachments through Hono', () => {
     tables.get(schema.productDrafts)!.pop();
     remove.mockRejectedValueOnce(new Error('Interrupted delete'));
     await request('/cleanup/retry', 'POST', { expectedRevision: revision() });
-    const reserve = await app.request(
-      '/update-product',
-      {
-        method: 'PUT',
-        headers: { cookie: 'session=yes', 'Content-Type': 'application/json' },
-        body: JSON.stringify({ image: photo.imageUrl }),
-      },
-      env,
-    );
-    expect(reserve.status).toBe(409);
+    await expect(
+      reserveAssetReference(db as never, photo.assetId, 'order:late'),
+    ).rejects.toMatchObject({ status: 409 });
     expect(records(schema.productAssets)[0].status).toBe('deleting');
   });
   it('checks role, owner, malformed ids and missing attachments without provider access', async () => {
@@ -1222,77 +1319,6 @@ describe('durable product attachments through Hono', () => {
     expect(response.status).toBe(200);
     expect((await response.json()).transfer.id).toBe(transfer.id);
   });
-  it('reserves catalog references before writes, preserves ambiguous reservations, and guards claim races', async () => {
-    const photo = (await upload()).draft.attachments.photos[0];
-    const catalogRequest = () =>
-      app.request(
-        '/update-product',
-        {
-          method: 'PUT',
-          headers: {
-            cookie: 'session=yes',
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({ image: photo.imageUrl }),
-        },
-        env,
-      );
-    expect((await catalogRequest()).status).toBe(400);
-    expect(records(schema.productAssets)[0].references).toEqual([
-      `draft:${id}`,
-    ]);
-    expect((await catalogRequest()).status).toBe(400);
-    failRead = schema.productsTable;
-    const unknown = await app.request(
-      '/update-product',
-      {
-        method: 'PUT',
-        headers: { cookie: 'session=yes', 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          id: 42,
-          name: 'part',
-          description: '',
-          price: 1,
-          filamentType: 'PLA',
-          color: '',
-          image: photo.imageUrl,
-        }),
-      },
-      env,
-    );
-    expect(unknown.status).toBe(500);
-    failRead = undefined;
-    expect(records(schema.productAssets)[0].references).toEqual(
-      expect.arrayContaining([expect.stringMatching(/^catalog-attempt:/)]),
-    );
-    const protectedReferences = structuredClone(
-      records(schema.productAssets)[0].references,
-    );
-    expect((await catalogRequest()).status).toBe(400);
-    expect(records(schema.productAssets)[0].references).toEqual(
-      protectedReferences,
-    );
-    expect(
-      (await request(`?expectedRevision=${revision()}`, 'DELETE')).status,
-    ).toBe(200);
-    expect(remove).not.toHaveBeenCalled();
-    records(schema.productAssets)[0].references = [];
-    beforeUpdate = (table, changes) => {
-      if (table === schema.productAssets && changes.status === 'deleting') {
-        records(schema.productAssets)[0].revision =
-          Number(records(schema.productAssets)[0].revision) + 1;
-        records(schema.productAssets)[0].references = ['order:concurrent'];
-      }
-    };
-    expect(
-      (
-        await request('/cleanup/retry', 'POST', {
-          expectedRevision: revision(),
-        })
-      ).status,
-    ).toBe(409);
-    expect(remove).not.toHaveBeenCalled();
-  });
   it('bounds JSON and preserves structured errors for middleware failures', async () => {
     const preflight = await app.request(
       `/admin/product-drafts/${id}/attachments`,
@@ -1564,9 +1590,7 @@ describe('durable product attachments through Hono', () => {
       env,
     );
     expect(malformed.status).toBe(400);
-    expect(await malformed.json()).toEqual({
-      error: 'Could not reserve attachment references',
-    });
+    expect(await malformed.text()).toContain('Malformed JSON');
   });
   it('does not convert request-stream failures into successful uploads', async () => {
     const start = await intent();
@@ -1895,24 +1919,17 @@ describe('durable product attachments through Hono', () => {
     ).toBe(200);
     expect(draft().attachments!.photos).toHaveLength(1);
   });
-  it('does not modify an asset record that disappeared before known-rejection reservation release', async () => {
+  it('leaves release pending if the asset record disappears after a known rejection', async () => {
     const photo = (await upload()).draft.attachments.photos[0];
-    let reads = 0;
-    beforeRead = table => {
-      if (table === schema.productAssets && ++reads === 2)
-        tables.set(schema.productAssets, []);
-    };
-    const response = await app.request(
-      '/update-product',
-      {
-        method: 'PUT',
-        headers: { cookie: 'session=yes', 'Content-Type': 'application/json' },
-        body: JSON.stringify({ image: photo.imageUrl }),
-      },
-      env,
-    );
-    expect(response.status).toBe(400);
+    vi.mocked(fetch).mockImplementationOnce(async () => {
+      tables.set(schema.productAssets, []);
+      return new Response('{}', { status: 400 });
+    });
+    expect((await orderRequest(photo.id)).status).toBe(500);
     expect(records(schema.productAssets)).toEqual([]);
+    expect(records(schema.productAssetReferenceAttempts)[0].state).toBe(
+      'release_pending',
+    );
   });
   it('recovers a stored unresolved photo from only the discarded cleanup surface after reload', async () => {
     const start = await intent();
@@ -1936,7 +1953,7 @@ describe('durable product attachments through Hono', () => {
       'DELETE',
     );
     expect(discarded.status).toBe(200);
-    expect((await discarded.json()).cleanup[0].status).toBe('protected');
+    expect((await discarded.json()).cleanup[0].status).toBe('pending');
     expect((await request('')).status).toBe(404);
     const persisted = await (await request('/cleanup')).json();
     const retried = await request('/cleanup/retry', 'POST', {
@@ -1963,7 +1980,7 @@ describe('durable product attachments through Hono', () => {
       expectedRevision: recovered.revision,
     });
     expect(response.status).toBe(200);
-    expect((await response.json()).cleanup[0].status).toBe('protected');
+    expect((await response.json()).cleanup[0].status).toBe('pending');
     expect(remove).not.toHaveBeenCalled();
     expect(draft().attachments!.transfers[0].attachmentId).toBe(identity);
     expect(draft().attachments!.transfers[0].status).toBe('unresolved');
@@ -2104,12 +2121,12 @@ describe('durable product attachments through Hono', () => {
     let cleanup = await request('/cleanup/retry', 'POST', {
       expectedRevision: revision(),
     });
-    expect((await cleanup.json()).cleanup[0].status).toBe('protected');
+    expect((await cleanup.json()).cleanup[0].status).toBe('pending');
     vi.mocked(fetch).mockResolvedValueOnce(confirmed('different-provider'));
     cleanup = await request('/cleanup/retry', 'POST', {
       expectedRevision: revision(),
     });
-    expect((await cleanup.json()).cleanup[0].status).toBe('protected');
+    expect((await cleanup.json()).cleanup[0].status).toBe('pending');
     vi.mocked(fetch).mockResolvedValueOnce(confirmed(oldProvider));
     cleanup = await request('/cleanup/retry', 'POST', {
       expectedRevision: revision(),
@@ -2166,7 +2183,7 @@ describe('durable product attachments through Hono', () => {
     });
     expect(
       (await cleanup.json()).cleanup.map((item: Row) => item.status),
-    ).toEqual(['protected', 'pending']);
+    ).toEqual(['pending', 'pending']);
   });
   it('protects pending order photos through provider awaits and releases reservations only after the snapshot exists', async () => {
     const photo = (await upload()).draft.attachments.photos[0];
@@ -2227,7 +2244,7 @@ describe('durable product attachments through Hono', () => {
       `?expectedRevision=${revision()}`,
       'DELETE',
     );
-    expect((await discarded.json()).cleanup[0].status).toBe('protected');
+    expect((await discarded.json()).cleanup[0].status).toBe('pending');
     expect(remove).not.toHaveBeenCalled();
     vi.mocked(fetch).mockResolvedValueOnce(new Response('{}'));
     resolve(new Response(JSON.stringify({ publicOrderId: 'order' })));
@@ -2246,7 +2263,7 @@ describe('durable product attachments through Hono', () => {
     const first = (await upload()).draft.attachments.photos[0];
     const second = (await upload()).draft.attachments.photos[1];
     records(schema.productAssets)[1].status = 'deleting';
-    expect((await orderRequest(`${first.id} ${second.id}`)).status).toBe(500);
+    expect((await orderRequest(first.id, second.id)).status).toBe(500);
     expect(fetch).not.toHaveBeenCalled();
     expect(records(schema.productAssets)[0].references).not.toEqual(
       expect.arrayContaining([expect.stringMatching(/^order-attempt:/)]),
@@ -2317,5 +2334,595 @@ describe('durable product attachments through Hono', () => {
         )
       ).status,
     ).toBe(200);
+  });
+  it.each([
+    'POST',
+    'PUT',
+  ])('requires authorization and valid payloads for V2 %s', async method => {
+    mockBetterAuth.getSession.mockResolvedValueOnce(null);
+    expect((await catalogRequest({}, method)).status).toBe(401);
+    authorize('user_123', 'member');
+    expect((await catalogRequest({}, method)).status).toBe(403);
+    authorize();
+    expect((await catalogRequest({ image: 12 }, method)).status).toBe(400);
+    expect((await catalogRequest({ imageGallery: [] }, method)).status).toBe(
+      400,
+    );
+    expect(fetch).not.toHaveBeenCalled();
+    expect(stripe.product).not.toHaveBeenCalled();
+  });
+  it.each([
+    'POST',
+    'PUT',
+  ])('rejects private image identities on V2 %s before side effects', async method => {
+    const photo = (await upload()).draft.attachments.photos[0];
+    const asset = records(schema.productAssets)[0];
+    asset.providerId = 'private-photo-provider';
+    asset.fileUrl = 'https://stored.example/private-photo';
+    existingProduct();
+    for (const identity of [
+      photo.imageUrl,
+      `https://api.example${photo.imageUrl}`,
+      asset.objectKey,
+      asset.id,
+      asset.providerId,
+      asset.fileUrl,
+    ]) {
+      for (const field of ['image', 'imageGallery']) {
+        const response = await catalogRequest(
+          { [field]: field === 'image' ? identity : [identity] },
+          method,
+        );
+        expect(response.status).toBe(400);
+        expect(await response.json()).toEqual({
+          error: `${field}: private draft photos cannot be used as catalog images`,
+        });
+      }
+    }
+    expect(records(schema.productAssetReferenceAttempts)).toEqual([]);
+    expect(records(schema.productsTable)[0].name).toBe('Old name');
+    expect(fetch).not.toHaveBeenCalled();
+    expect(stripe.product).not.toHaveBeenCalled();
+  });
+  it('keeps the original endpoints free of attachment validation or reservations', async () => {
+    const photo = (await upload()).draft.attachments.photos[0];
+    existingProduct();
+    failRead = schema.productAssets;
+    expect(
+      (
+        await catalogRequest(
+          { image: photo.imageUrl },
+          'PUT',
+          '/update-product',
+        )
+      ).status,
+    ).toBe(200);
+    expect(records(schema.productsTable)[0].image).toBe(photo.imageUrl);
+    const create = await catalogRequest(
+      { stl: 'legacy-file', image: photo.imageUrl },
+      'POST',
+      '/add-product',
+    );
+    // The legacy provider rejects this controlled request, after Stripe creation.
+    expect(create.status).toBe(500);
+    expect(stripe.product).toHaveBeenCalledWith(
+      expect.objectContaining({ images: [photo.imageUrl] }),
+    );
+    expect(records(schema.productAssetReferenceAttempts)).toEqual([]);
+  });
+  it('updates only the original contract fields and keeps pricing, file IDs and omitted categories', async () => {
+    const original = existingProduct();
+    tables.set(schema.productsToCategories, [
+      { productId: 42, categoryId: 7, orderIndex: 0 },
+    ]);
+    const response = await catalogRequest({
+      stl: 'replace-attempt',
+      publicFileServiceId: 'replace-attempt',
+      markupPercentage: 99,
+    });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      success: true,
+      message: 'Product updated successfully',
+    });
+    expect(records(schema.productsTable)[0]).toEqual({
+      ...original,
+      ...catalogPayload,
+      imageGallery: '[]',
+    });
+    expect(records(schema.productsToCategories)).toEqual([
+      { productId: 42, categoryId: 7, orderIndex: 0 },
+    ]);
+    expect(fetch).not.toHaveBeenCalled();
+    expect(stripe.product).not.toHaveBeenCalled();
+    expect(stripe.price).not.toHaveBeenCalled();
+  });
+  it('validates update targets and category aliases and preserves error responses', async () => {
+    expect((await catalogRequest()).status).toBe(404);
+    existingProduct({ publicFileServiceId: null });
+    tables.set(schema.categoryTable, [{ categoryId: 1 }, { categoryId: 2 }]);
+    expect((await catalogRequest({ categoryIds: [1, 1] })).status).toBe(400);
+    let response = await catalogRequest({ categoryIds: [1, 3] });
+    expect(await response.json()).toEqual({
+      error: 'Category with ID 3 does not exist',
+    });
+    response = await catalogRequest({ categoryIds: [3, 4] });
+    expect(await response.json()).toEqual({
+      error: 'Categories with IDs 3, 4 do not exist',
+    });
+    response = await catalogRequest({
+      categoryId: [2, 1],
+      imageGallery: ['https://public.example/gallery.png'],
+    });
+    expect(response.status).toBe(200);
+    expect(records(schema.productsToCategories)).toEqual([
+      { productId: 42, categoryId: 2, orderIndex: 0 },
+      { productId: 42, categoryId: 1, orderIndex: 1 },
+    ]);
+    expect(records(schema.productsTable)[0]).toMatchObject({
+      categoryId: 2,
+      imageGallery: '["https://public.example/gallery.png"]',
+    });
+    let reads = 0;
+    beforeRead = table => {
+      if (table === schema.productsTable && ++reads === 2)
+        tables.set(table, []);
+    };
+    expect((await catalogRequest()).status).toBe(404);
+    beforeRead = undefined;
+    existingProduct();
+    beforeUpdate = table => {
+      if (table === schema.productsTable) rejectUpdate = true;
+    };
+    expect(await (await catalogRequest()).json()).toEqual({
+      error: 'Product update failed',
+    });
+    beforeUpdate = table => {
+      if (table === schema.productsTable)
+        throw new Error('Database unavailable');
+    };
+    expect((await catalogRequest()).status).toBe(500);
+    beforeUpdate = table => {
+      if (table === schema.productsTable) throw new ZodError([]);
+    };
+    response = await catalogRequest();
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({
+      error: 'Validation error',
+      details: [],
+    });
+  });
+  it('reserves a direct Slant ID before V2 create and protects it while discard runs', async () => {
+    const print = await savedPrint();
+    let resolve!: (response: Response) => void;
+    vi.mocked(fetch).mockImplementationOnce(
+      () =>
+        new Promise<Response>(done => {
+          resolve = done;
+        }),
+    );
+    const pending = catalogRequest(
+      { publicFileServiceId: print.providerId },
+      'POST',
+    );
+    await vi.waitFor(() => expect(resolve).toBeTypeOf('function'));
+    expect(records(schema.productAssetReferenceAttempts)[0]).toMatchObject({
+      assetIds: [print.assetId],
+      state: 'unresolved',
+    });
+    const discarded = await request(
+      `?expectedRevision=${revision()}`,
+      'DELETE',
+    );
+    expect((await discarded.json()).cleanup[0].status).toBe('pending');
+    expect(records(schema.productAssets)[0].status).toBe('active');
+    resolve(Response.json({ data: { total: 10 } }));
+    expect((await pending).status).toBe(201);
+    expect(records(schema.productAssetReferenceAttempts)[0].state).toBe(
+      'released',
+    );
+    expect(records(schema.productsTable)[0].publicFileServiceId).toBe(
+      print.providerId,
+    );
+    const cleanup = await request('/cleanup/retry', 'POST', {
+      expectedRevision: revision(),
+    });
+    expect((await cleanup.json()).cleanup[0].status).toBe('protected');
+    expect(fetch).toHaveBeenCalledTimes(3); // allocation, confirmation, estimate; no delete
+  });
+  it.each([
+    'POST',
+    'PUT',
+  ])('returns 409 when cleanup claims a print before V2 %s can reserve it', async method => {
+    const print = await savedPrint();
+    existingProduct({ publicFileServiceId: print.providerId });
+    beforeUpdate = (table, changes) => {
+      if (
+        table === schema.productAssets &&
+        (changes.references as string[]).some(ref =>
+          ref.startsWith('catalog-attempt:'),
+        )
+      ) {
+        const asset = records(table)[0];
+        asset.status = 'deleting';
+        asset.revision = Number(asset.revision) + 1;
+      }
+    };
+    vi.mocked(fetch).mockClear();
+    expect(
+      (await catalogRequest({ publicFileServiceId: print.providerId }, method))
+        .status,
+    ).toBe(409);
+    expect(fetch).not.toHaveBeenCalled();
+    expect(stripe.product).not.toHaveBeenCalled();
+    expect(records(schema.productAssetReferenceAttempts)[0].state).toBe(
+      'released',
+    );
+  });
+  it('retains uncertain V2 writes and releases known provider rejections', async () => {
+    const print = await savedPrint();
+    vi.mocked(fetch).mockResolvedValueOnce(new Response('{}', { status: 400 }));
+    expect(
+      (await catalogRequest({ publicFileServiceId: print.providerId }, 'POST'))
+        .status,
+    ).toBe(400);
+    expect(records(schema.productAssetReferenceAttempts)[0].state).toBe(
+      'released',
+    );
+    vi.mocked(fetch).mockRejectedValueOnce(new Error('Lost estimate response'));
+    expect(
+      (await catalogRequest({ publicFileServiceId: print.providerId }, 'POST'))
+        .status,
+    ).toBe(502);
+    expect(records(schema.productAssetReferenceAttempts)[1].state).toBe(
+      'unresolved',
+    );
+    vi.mocked(fetch).mockResolvedValueOnce(
+      Response.json({ data: { total: 10 } }),
+    );
+    beforeInsert = table => {
+      if (table === schema.productsTable) throw new Error('Lost write result');
+    };
+    expect(
+      (await catalogRequest({ publicFileServiceId: print.providerId }, 'POST'))
+        .status,
+    ).toBe(500);
+    expect(records(schema.productAssetReferenceAttempts)[2].state).toBe(
+      'unresolved',
+    );
+    failRead = schema.productAssets;
+    expect(
+      (await catalogRequest({ publicFileServiceId: print.providerId }, 'POST'))
+        .status,
+    ).toBe(500);
+  });
+  it.each([
+    'claimed',
+    'asset revision',
+    'draft revision',
+  ])('returns 409 for deterministic print finalization failure: %s', async failure => {
+    const providerId = provider();
+    await intent('print');
+    const transfer = draft().attachments!.transfers[0];
+    vi.mocked(fetch).mockImplementationOnce(async () => {
+      if (failure === 'claimed')
+        records(schema.productAssets)[0].status = 'deleting';
+      else
+        beforeUpdate = (table, changes) => {
+          if (
+            (failure === 'asset revision' && table === schema.productAssets) ||
+            (failure === 'draft revision' &&
+              table === schema.productDrafts &&
+              (changes.attachments as { transfers: { status: string }[] })
+                .transfers[0].status === 'saved')
+          )
+            rejectUpdate = true;
+        };
+      return Response.json({
+        data: {
+          publicFileServiceId: providerId,
+          fileURL: 'https://files.example/confirmed',
+        },
+      });
+    });
+    const result = await request(
+      `/attachments/transfers/${transfer.id}/confirm`,
+      'POST',
+      { expectedRevision: revision() },
+    );
+    expect(result.status).toBe(409);
+    expect(draft().attachments!.printFile).toBeNull();
+    expect(draft().attachments!.transfers[0].status).toBe('unresolved');
+  });
+  it('matches explicit identities without treating descriptions or partial IDs as references', async () => {
+    const photo = (await upload()).draft.attachments.photos[0];
+    const asset = records(schema.productAssets)[0];
+    asset.providerId = 'slant-identity';
+    asset.fileUrl = 'https://files.example/identity';
+    expect(attachmentIdentities(null)).toEqual([]);
+    expect(attachmentIdentities('plain')).toEqual([]);
+    expect(
+      await findAssets(
+        db as never,
+        attachmentIdentities({
+          description: photo.id,
+          image: `prefix-${photo.id}-suffix`,
+        }),
+      ),
+    ).toEqual([]);
+    for (const input of [
+      { assetId: photo.id },
+      { objectKey: asset.objectKey },
+      { publicFileServiceId: asset.providerId },
+      { fileUrl: asset.fileUrl },
+      { fileURL: asset.fileUrl },
+      { stl: asset.providerId },
+      { image: photo.imageUrl },
+      { imageGallery: [photo.imageUrl, photo.imageUrl] },
+    ]) {
+      expect(
+        (await findAssets(db as never, attachmentIdentities(input))).map(
+          asset => asset.id,
+        ),
+      ).toEqual([photo.id]);
+    }
+  });
+  it('persists candidates before reservations and stops downstream work when that write fails', async () => {
+    const print = await savedPrint();
+    beforeInsert = table => {
+      if (table === schema.productAssetReferenceAttempts)
+        throw new Error('Write unavailable');
+    };
+    vi.mocked(fetch).mockClear();
+    expect(
+      (await catalogRequest({ publicFileServiceId: print.providerId }, 'POST'))
+        .status,
+    ).toBe(500);
+    expect(fetch).not.toHaveBeenCalled();
+    expect(records(schema.productAssets)[0].references).toEqual([
+      `draft:${id}`,
+    ]);
+  });
+  it('continues partial release after three conflicts and recovers it with fresh reads', async () => {
+    const first = (await upload()).draft.attachments.photos[0];
+    const second = (await upload()).draft.attachments.photos[1];
+    const release = await reservePendingOrderAssets(db as never, [
+      { image: first.id },
+      { image: second.id },
+    ]);
+    const attempt = records(schema.productAssetReferenceAttempts)[0];
+    expect(attempt.assetIds).toEqual([first.id, second.id]);
+    let conflicts = 0;
+    // Reject every release of the first asset, but allow the second release.
+    beforeUpdate = (table, changes) => {
+      if (
+        table === schema.productAssets &&
+        (changes.references as string[]).includes(`draft:${id}`) &&
+        !(changes.references as string[]).includes(String(attempt.id)) &&
+        conflicts < 3
+      ) {
+        conflicts++;
+        const asset = records(table)[0];
+        asset.revision = Number(asset.revision) + 1;
+        (asset.references as string[]).push(`order:other-${conflicts}`);
+        rejectUpdate = true;
+      }
+    };
+    await release();
+    expect(conflicts).toBe(3);
+    expect(attempt.state).toBe('release_pending');
+    conflicts = 0;
+    await request('/cleanup/retry', 'POST', { expectedRevision: revision() });
+    expect(conflicts).toBe(3);
+    expect(attempt.state).toBe('release_pending');
+    expect(records(schema.productAssets)[1].references).toEqual([
+      `draft:${id}`,
+    ]);
+    const before = structuredClone(records(schema.productAssets));
+    const list = await app.request(
+      '/admin/product-drafts',
+      { headers: { cookie: 'session=yes' } },
+      env,
+    );
+    expect((await list.json()).drafts[0].cleanupPending).toBe(true);
+    expect(records(schema.productAssets)).toEqual(before);
+    beforeUpdate = undefined;
+    expect(
+      (
+        await request('/cleanup/retry', 'POST', {
+          expectedRevision: revision(),
+        })
+      ).status,
+    ).toBe(200);
+    expect(attempt.state).toBe('released');
+    expect(records(schema.productAssets)[0].references).toEqual([
+      `draft:${id}`,
+      'order:other-1',
+      'order:other-2',
+      'order:other-3',
+      'order:other-1',
+      'order:other-2',
+      'order:other-3',
+    ]);
+    await release();
+    expect(attempt.state).toBe('released');
+    expect(remove).not.toHaveBeenCalled();
+  });
+  it('retries a transient release conflict and keeps another attempt intact', async () => {
+    const photo = (await upload()).draft.attachments.photos[0];
+    const release = await reservePendingOrderAssets(db as never, {
+      image: photo.id,
+    });
+    await reservePendingOrderAssets(db as never, { image: photo.id });
+    let calls = 0;
+    beforeUpdate = table => {
+      if (table === schema.productAssets && ++calls === 1) rejectUpdate = true;
+    };
+    await release();
+    expect(calls).toBe(2);
+    expect(
+      records(schema.productAssetReferenceAttempts).map(item => item.state),
+    ).toEqual(['released', 'unresolved']);
+    expect(records(schema.productAssets)[0].references).toEqual([
+      `draft:${id}`,
+      records(schema.productAssetReferenceAttempts)[1].id,
+    ]);
+  });
+  it.each([
+    'release intent',
+    'asset release',
+    'release result',
+  ])('keeps successful orders and events when %s persistence fails', async stage => {
+    const photo = (await upload()).draft.attachments.photos[0];
+    beforeUpdate = (table, changes) => {
+      if (
+        (stage === 'release intent' &&
+          table === schema.productAssetReferenceAttempts &&
+          changes.state === 'release_pending') ||
+        (stage === 'release result' &&
+          table === schema.productAssetReferenceAttempts &&
+          changes.state === 'released') ||
+        (stage === 'asset release' &&
+          table === schema.productAssets &&
+          !(changes.references as string[]).some(ref =>
+            ref.startsWith('order-attempt:'),
+          ))
+      ) {
+        throw new Error('Bookkeeping unavailable');
+      }
+    };
+    vi.mocked(fetch)
+      .mockResolvedValueOnce(Response.json({ publicOrderId: 'accepted-order' }))
+      .mockResolvedValueOnce(Response.json({}));
+    expect((await orderRequest(photo.id)).status).toBe(200);
+    expect(records(schema.ordersTable)).toHaveLength(1);
+    expect(records(schema.orderEventsTable)).toHaveLength(1);
+    expect(records(schema.productAssetReferenceAttempts)[0].state).toBe(
+      stage === 'release intent' ? 'unresolved' : 'release_pending',
+    );
+    beforeUpdate = undefined;
+    await request('/cleanup/retry', 'POST', { expectedRevision: revision() });
+    expect(records(schema.productAssetReferenceAttempts)[0].state).toBe(
+      stage === 'release intent' ? 'unresolved' : 'released',
+    );
+  });
+  it('returns successful V2 catalog results even if release fails and recovers after reload', async () => {
+    const print = await savedPrint();
+    beforeUpdate = (table, changes) => {
+      if (
+        table === schema.productAssetReferenceAttempts &&
+        changes.state === 'released'
+      )
+        throw new Error('Lost completion write');
+    };
+    vi.mocked(fetch).mockResolvedValueOnce(
+      Response.json({ data: { total: 10 } }),
+    );
+    const result = await catalogRequest(
+      { publicFileServiceId: print.providerId },
+      'POST',
+    );
+    expect(result.status).toBe(201);
+    expect(records(schema.productsTable)).toHaveLength(1);
+    expect(records(schema.productAssetReferenceAttempts)[0].state).toBe(
+      'release_pending',
+    );
+    expect((await (await request('')).json()).cleanupPending).toBe(true);
+    await request('/cleanup/retry', 'POST', { expectedRevision: revision() });
+    expect(records(schema.productAssetReferenceAttempts)[0].state).toBe(
+      'release_pending',
+    );
+    beforeUpdate = undefined;
+    await request('/cleanup/retry', 'POST', { expectedRevision: revision() });
+    await request('/cleanup/retry', 'POST', { expectedRevision: revision() });
+    expect(records(schema.productAssetReferenceAttempts)[0].state).toBe(
+      'released',
+    );
+    expect((await (await request('')).json()).cleanupPending).toBe(false);
+  });
+  it('keeps missing, unreadable and uncertain attempt records from authorizing deletion', async () => {
+    const photo = (await upload()).draft.attachments.photos[0];
+    const release = await reservePendingOrderAssets(db as never, {
+      image: photo.id,
+    });
+    tables.set(schema.productAssetReferenceAttempts, []);
+    await release();
+    await request(`?expectedRevision=${revision()}`, 'DELETE');
+    expect(draft().attachments!.cleanup[0].status).toBe('pending');
+    expect(remove).not.toHaveBeenCalled();
+    failRead = schema.productAssetReferenceAttempts;
+    expect(
+      (
+        await request('/cleanup/retry', 'POST', {
+          expectedRevision: revision(),
+        })
+      ).status,
+    ).toBe(500);
+    expect(remove).not.toHaveBeenCalled();
+  });
+  it('records partial reservation failure before downstream work and retries failed release', async () => {
+    const first = (await upload()).draft.attachments.photos[0];
+    const second = (await upload()).draft.attachments.photos[1];
+    records(schema.productAssets)[1].status = 'deleting';
+    beforeUpdate = (table, changes) => {
+      if (
+        table === schema.productAssets &&
+        (changes.references as string[]).length === 1
+      )
+        throw new Error('Release interrupted');
+    };
+    expect((await orderRequest(second.id, first.id)).status).toBe(500);
+    expect(fetch).not.toHaveBeenCalled();
+    expect(records(schema.productAssetReferenceAttempts)[0]).toMatchObject({
+      assetIds: [first.id, second.id],
+      state: 'release_pending',
+    });
+    beforeUpdate = undefined;
+    await request('/cleanup/retry', 'POST', { expectedRevision: revision() });
+    expect(records(schema.productAssetReferenceAttempts)[0].state).toBe(
+      'released',
+    );
+  });
+  it('finds legacy references beyond any page boundary, including stored URLs containing file identities', async () => {
+    const print = await savedPrint();
+    const noise = Array.from({ length: 1500 }, (_, index) => ({
+      id: index + 1,
+      stl: 'unrelated',
+    }));
+    tables.set(schema.productsTable, [
+      ...noise,
+      { id: 1501, stl: `https://legacy.example/${print.providerId}?old=1` },
+    ]);
+    vi.mocked(fetch).mockClear();
+    await request(`?expectedRevision=${revision()}`, 'DELETE');
+    expect(draft().attachments!.cleanup[0].status).toBe('protected');
+    tables.set(schema.productsTable, []);
+    tables.set(schema.ordersTable, [
+      ...noise,
+      { id: 1501, fileURL: `https://legacy.example/${print.providerId}?old=2` },
+    ]);
+    await request('/cleanup/retry', 'POST', { expectedRevision: revision() });
+    expect(draft().attachments!.cleanup[0].status).toBe('protected');
+    expect(fetch).not.toHaveBeenCalled();
+  });
+  it('reports unfinished transfers and missing cleanup records on reads without running cleanup', async () => {
+    await intent();
+    expect((await (await request('')).json()).cleanupPending).toBe(true);
+    await request(`?expectedRevision=${revision()}`, 'DELETE');
+    const list = () =>
+      app.request(
+        '/admin/product-drafts',
+        { headers: { cookie: 'session=yes' } },
+        env,
+      );
+    expect((await (await list()).json()).drafts[0].cleanupPending).toBe(false);
+    const state = draft().attachments!;
+    state.cleanup[0].status = 'protected';
+    tables.set(schema.productAssets, []);
+    const before = structuredClone(state);
+    remove.mockClear();
+    expect((await (await list()).json()).drafts[0].cleanupPending).toBe(true);
+    expect(draft().attachments).toEqual(before);
+    expect(remove).not.toHaveBeenCalled();
   });
 });

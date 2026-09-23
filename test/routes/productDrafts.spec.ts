@@ -456,6 +456,7 @@ describe('private admin product draft endpoints', () => {
       return [stored];
     });
     mockWhere.mockReturnValueOnce({ get: vi.fn(async () => stored) });
+    mockWhere.mockReturnValueOnce({ all: vi.fn(async () => []) });
     mockWhere.mockReturnValueOnce({ get: vi.fn(async () => stored) });
     const result = await request(`/${id}?expectedRevision=1`, 'DELETE');
     expect(result.status).toBe(200);

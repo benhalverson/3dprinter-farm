@@ -1,11 +1,13 @@
 import { and, asc, desc, eq, inArray, or } from 'drizzle-orm';
 import {
   categoryTable,
+  productAssets,
   productDrafts,
   productsTable,
   productsToCategories,
 } from '../db/schema';
 import type { WorkerEnv } from '../factory';
+import { assetCleanupPending } from './productAssets';
 import { attachmentProjection } from './productAttachments';
 import {
   type BeginProductDraft,
@@ -68,13 +70,38 @@ export async function readProductDraftContext(
 
 export async function productDraftResponse(db: Database, row: DraftRow) {
   return productDraftResponseSchema.parse({
-    ...summary(row),
+    ...(await summary(db, row)),
     state: row.state,
     context: await readProductDraftContext(db, row.target),
     attachments: attachmentProjection(row),
   });
 }
-function summary(row: Omit<DraftRow, 'ownerId' | 'state'>) {
+async function summary(db: Database, row: Omit<DraftRow, 'ownerId' | 'state'>) {
+  let cleanupPending = Boolean(
+    row.attachments?.cleanup.some(item => item.status === 'pending') ||
+      row.attachments?.transfers.some(
+        item =>
+          item.status === 'unresolved' ||
+          (row.status === 'active' && item.status !== 'saved'),
+      ),
+  );
+  if (row.attachments && !cleanupPending) {
+    const assets = await db
+      .select()
+      .from(productAssets)
+      .where(eq(productAssets.draftId, row.id))
+      .all();
+    const assetIds = new Set(assets.map(asset => asset.id));
+    if (
+      row.attachments.cleanup.some(
+        item => item.status !== 'deleted' && !assetIds.has(item.assetId),
+      )
+    )
+      cleanupPending = true;
+    for (const asset of assets) {
+      if (await assetCleanupPending(db, asset)) cleanupPending = true;
+    }
+  }
   return productDraftSummarySchema.parse({
     id: row.id,
     target: row.target,
@@ -82,8 +109,7 @@ function summary(row: Omit<DraftRow, 'ownerId' | 'state'>) {
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
     status: row.status,
-    cleanupPending:
-      row.attachments?.cleanup.some(item => item.status === 'pending') ?? false,
+    cleanupPending,
   });
 }
 export async function beginProductDraft(
@@ -107,7 +133,7 @@ export async function beginProductDraft(
     })
     .returning();
   return productDraftResponseSchema.parse({
-    ...summary(row),
+    ...(await summary(db, row)),
     state: row.state,
     context,
     attachments: attachmentProjection(row),
@@ -129,7 +155,7 @@ export async function listProductDrafts(db: Database, ownerId: string) {
     .orderBy(desc(productDrafts.updatedAt), asc(productDrafts.id))
     .all();
   return {
-    drafts: rows.map(summary),
+    drafts: await Promise.all(rows.map(row => summary(db, row))),
   };
 }
 export function readProductDraft(db: Database, ownerId: string, id: string) {

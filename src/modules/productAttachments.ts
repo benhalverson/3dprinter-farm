@@ -1,5 +1,5 @@
 import { and, eq } from 'drizzle-orm';
-import { productDrafts } from '../db/schema';
+import { productAssets, productDrafts } from '../db/schema';
 import type { WorkerEnv } from '../factory';
 import {
   confirmSlant3DUpload,
@@ -13,6 +13,7 @@ import {
   cleanupAsset,
   ensureAsset,
   readAsset,
+  retryAssetReleases,
 } from './productAssets';
 import type {
   AttachmentEdit,
@@ -610,7 +611,8 @@ export async function confirmAttachment(
       result.publicFileServiceId,
       result.fileURL,
     );
-  } catch {
+  } catch (error) {
+    if (error instanceof AttachmentError) throw error;
     row = await attachmentDraft(db, ownerId, id, undefined, true);
     return updateTransfer(db, row, {
       ...transfer,
@@ -799,6 +801,12 @@ export async function retryAttachmentCleanup(
   }
   const state = row.attachments ?? emptyAttachments();
   const cleanup = [];
+  const assets = await db
+    .select()
+    .from(productAssets)
+    .where(eq(productAssets.draftId, id))
+    .all();
+  await retryAssetReleases(db, assets);
   for (const item of state.cleanup) {
     let asset = await readAsset(db, item.assetId);
     const abandoned = state.abandonedTransfers?.find(

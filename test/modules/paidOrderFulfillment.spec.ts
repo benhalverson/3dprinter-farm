@@ -36,7 +36,9 @@ function fakeDb() {
   const inserts: unknown[] = [];
   return {
     inserts,
-    select: () => ({ from: () => ({ all: async () => [] }) }),
+    select: () => ({
+      from: () => ({ where: () => ({ all: async () => [] }) }),
+    }),
     insert: (_table: unknown) => ({
       values: (value: unknown) => {
         inserts.push(value);
