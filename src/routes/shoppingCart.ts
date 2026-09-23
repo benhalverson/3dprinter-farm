@@ -1,10 +1,7 @@
 import { zValidator } from '@hono/zod-validator';
 import { and, eq } from 'drizzle-orm';
-import { describeRoute } from 'hono-openapi';
 import { HTTPException } from 'hono/http-exception';
-import { cartLines, claimCart, createCart } from '../modules/cartOwnership';
-import { cartAccessMiddleware } from '../utils/cartAccessMiddleware';
-import { validateCartConfiguration } from '../modules/cartConfiguration';
+import { describeRoute } from 'hono-openapi';
 import Stripe from 'stripe';
 import { z } from 'zod';
 import { createSchema } from 'zod-openapi';
@@ -17,6 +14,8 @@ import {
   users,
 } from '../db/schema';
 import factory from '../factory';
+import { validateCartConfiguration } from '../modules/cartConfiguration';
+import { cartLines, claimCart, createCart } from '../modules/cartOwnership';
 import {
   readinessErrorResponse,
   validateCartReadiness,
@@ -25,8 +24,9 @@ import {
   authMiddleware,
   optionalAuthMiddleware,
 } from '../utils/authMiddleware';
+import { cartAccessMiddleware } from '../utils/cartAccessMiddleware';
 import { decryptStoredShippingProfile } from '../utils/profileCrypto';
-import { serializeCartCreateError } from '../utils/cartCreateError';
+import { serializeError as serializeCartCreateError } from '../utils/serializeError';
 
 // Schema for update cart item
 const updateCartItemSchema = z.object({
