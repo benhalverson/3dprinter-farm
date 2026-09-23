@@ -31,6 +31,7 @@ import {
   productDraftResponseSchema,
 } from '../modules/productDraftContracts';
 import { productDraftResponse } from '../modules/productDrafts';
+import { logProductDraftError } from '../utils/productDraftError';
 
 const parameters = z.object({
   id: z.string().uuid(),
@@ -75,13 +76,20 @@ const description = (
   });
 async function action(
   c: Context<WorkerEnv>,
-  run: (ownerId: string) => Promise<Response>,
+  operation: string,
+  run: (
+    ownerId: string,
+    setOperation: (operation: string) => void,
+  ) => Promise<Response>,
 ) {
   try {
-    return await run(c.var.userId!);
+    return await run(c.var.userId!, value => {
+      operation = value;
+    });
   } catch (error) {
     if (error instanceof AttachmentError)
       return c.json({ error: error.message }, error.status);
+    logProductDraftError(c, operation, error);
     return c.json(
       { error: 'Attachment request failed; reload to recover saved state' },
       500,
@@ -112,7 +120,7 @@ const router = factory
     ),
     zValidator('json', attachmentIntentSchema, validate),
     c =>
-      action(c, async ownerId => {
+      action(c, 'attachment.intent', async ownerId => {
         const result = await createAttachmentIntent(
           c.var.db,
           c.env,
@@ -135,7 +143,7 @@ const router = factory
     description('Validate and store an owned photo'),
     zValidator('query', discardProductDraftSchema, validate),
     c =>
-      action(c, async ownerId => {
+      action(c, 'attachment.upload', async ownerId => {
         const row = await uploadAttachmentPhoto(
           c.var.db,
           c.env,
@@ -158,7 +166,7 @@ const router = factory
     ),
     zValidator('json', attachmentActionSchema, validate),
     c =>
-      action(c, async ownerId => {
+      action(c, 'attachment.confirm', async ownerId => {
         const row = await confirmAttachment(
           c.var.db,
           c.env,
@@ -180,7 +188,7 @@ const router = factory
     ),
     zValidator('json', attachmentActionSchema, validate),
     c =>
-      action(c, async ownerId => {
+      action(c, 'attachment.retry', async ownerId => {
         const result = await retryAttachmentTransfer(
           c.var.db,
           c.env,
@@ -205,7 +213,7 @@ const router = factory
     ),
     zValidator('json', attachmentEditSchema, validate),
     c =>
-      action(c, async ownerId => {
+      action(c, 'attachment.edit', async ownerId => {
         const row = await editAttachments(
           c.var.db,
           ownerId,
@@ -221,7 +229,7 @@ const router = factory
     description('Remove one attachment and retain cleanup recovery'),
     zValidator('query', discardProductDraftSchema, validate),
     c =>
-      action(c, async ownerId => {
+      action(c, 'attachment.remove', async (ownerId, setOperation) => {
         let row = await removeAttachment(
           c.var.db,
           ownerId,
@@ -229,6 +237,7 @@ const router = factory
           c.req.param('attachmentId')!,
           c.req.valid('query').expectedRevision,
         );
+        setOperation('attachment.remove.cleanup');
         row = await retryAttachmentCleanup(
           c.var.db,
           c.env,
@@ -248,7 +257,7 @@ const router = factory
       security: [{ cookieAuth: [] }],
     }),
     c =>
-      action(c, async ownerId => {
+      action(c, 'attachment.read', async ownerId => {
         const photo = await readAttachmentPhoto(
           c.var.db,
           c.env,
@@ -270,7 +279,7 @@ const router = factory
       draftCleanupResponseSchema,
     ),
     c =>
-      action(c, async ownerId =>
+      action(c, 'attachment.cleanup.read', async ownerId =>
         c.json(
           cleanupResponse(
             await attachmentDraft(
@@ -294,7 +303,7 @@ const router = factory
     ),
     zValidator('json', attachmentActionSchema, validate),
     c =>
-      action(c, async ownerId =>
+      action(c, 'attachment.cleanup.retry', async ownerId =>
         c.json(
           cleanupResponse(
             await retryAttachmentCleanup(
