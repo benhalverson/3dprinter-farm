@@ -5,16 +5,19 @@
   "scripts": {
     "db:generate": "drizzle-kit generate",
     "db:migrate:local": "drizzle-kit migrate",
-    "db:push:local": "drizzle-kit push",
     "db:migrate:remote": "wrangler d1 migrations apply ecommerce --remote",
-    "generate:project-notes": "node --disable-warning=ExperimentalWarning --experimental-default-type=module --experimental-strip-types tools/project-notes/generate-project-notes.ts",
-    "validate:project-notes-pr": "node --disable-warning=ExperimentalWarning --experimental-default-type=module --experimental-strip-types tools/project-notes/validate-pr-notes.ts",
+    "generate:project-notes": "node --disable-warning=ExperimentalWarning --experimental-strip-types tools/project-notes/generate-project-notes.ts",
+    "validate:project-notes-pr": "node --disable-warning=ExperimentalWarning --experimental-strip-types tools/project-notes/validate-pr-notes.ts",
     "deploy": "wrangler deploy",
     "dev": "wrangler dev",
     "start": "wrangler dev",
     "test": "vitest",
     "test:ci": "vitest run",
-    "test:project-notes": "node --test --disable-warning=ExperimentalWarning --experimental-default-type=module --experimental-strip-types test/project-notes/*.spec.ts",
+    "test:project-notes": "node --test --disable-warning=ExperimentalWarning --experimental-strip-types test/project-notes/*.spec.ts",
+    "check:biome": "biome lint .",
+    "check:types": "tsc --noEmit",
+    "check:sql": "node --experimental-strip-types tools/sql-policy/check.ts",
+    "check": "pnpm run check:biome && pnpm run check:types && pnpm run check:sql",
     "cf-typegen": "wrangler types"
   },
   "devDependencies": {

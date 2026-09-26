@@ -1,4 +1,4 @@
-import { relations, sql } from 'drizzle-orm';
+import { relations } from 'drizzle-orm';
 import {
   index,
   integer,
@@ -182,7 +182,9 @@ export const productsToCategories = sqliteTable(
         onUpdate: 'cascade',
       }),
     orderIndex: integer('order_index'),
-    createdAt: text('created_at').default(sql`CURRENT_TIMESTAMP`).notNull(),
+    createdAt: text('created_at')
+      .$defaultFn(() => new Date().toISOString().slice(0, 19).replace('T', ' '))
+      .notNull(),
   },
   t => [primaryKey({ columns: [t.productId, t.categoryId] })],
 );
@@ -237,10 +239,10 @@ export const users = sqliteTable('users', {
     .notNull(),
   image: text('image'),
   createdAt: integer('created_at', { mode: 'timestamp_ms' })
-    .default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`)
+    .$defaultFn(() => new Date())
     .notNull(),
   updatedAt: integer('updated_at', { mode: 'timestamp_ms' })
-    .default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`)
+    .$defaultFn(() => new Date())
     .notNull(),
   firstName: text('first_name').default('').notNull(),
   lastName: text('last_name').default('').notNull(),
@@ -295,10 +297,10 @@ export const session = sqliteTable('session', {
   expiresAt: integer('expires_at', { mode: 'timestamp_ms' }).notNull(),
   token: text('token').notNull().unique(),
   createdAt: integer('created_at', { mode: 'timestamp_ms' })
-    .default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`)
+    .$defaultFn(() => new Date())
     .notNull(),
   updatedAt: integer('updated_at', { mode: 'timestamp_ms' })
-    .default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`)
+    .$defaultFn(() => new Date())
     .notNull(),
   ipAddress: text('ip_address'),
   userAgent: text('user_agent'),
@@ -328,10 +330,10 @@ export const account = sqliteTable('account', {
   scope: text('scope'),
   password: text('password'),
   createdAt: integer('created_at', { mode: 'timestamp_ms' })
-    .default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`)
+    .$defaultFn(() => new Date())
     .notNull(),
   updatedAt: integer('updated_at', { mode: 'timestamp_ms' })
-    .default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`)
+    .$defaultFn(() => new Date())
     .notNull(),
 });
 
@@ -340,11 +342,11 @@ export const verification = sqliteTable('verification', {
   identifier: text('identifier').notNull(),
   value: text('value').notNull(),
   expiresAt: integer('expires_at', { mode: 'timestamp_ms' }).notNull(),
-  createdAt: integer('created_at', { mode: 'timestamp_ms' }).default(
-    sql`(cast(unixepoch('subsecond') * 1000 as integer))`,
+  createdAt: integer('created_at', { mode: 'timestamp_ms' }).$defaultFn(
+    () => new Date(),
   ),
-  updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).default(
-    sql`(cast(unixepoch('subsecond') * 1000 as integer))`,
+  updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).$defaultFn(
+    () => new Date(),
   ),
 });
 
@@ -434,8 +436,12 @@ export const ordersTable = sqliteTable('ordersTable', {
   currency: text('currency').default('usd'),
   itemSnapshot: text('item_snapshot'),
   customerSnapshot: text('customer_snapshot'),
-  createdAt: text('created_at').default(sql`CURRENT_TIMESTAMP`),
-  updatedAt: text('updated_at').default(sql`CURRENT_TIMESTAMP`),
+  createdAt: text('created_at').$defaultFn(() =>
+    new Date().toISOString().slice(0, 19).replace('T', ' '),
+  ),
+  updatedAt: text('updated_at').$defaultFn(() =>
+    new Date().toISOString().slice(0, 19).replace('T', ' '),
+  ),
   processedAt: text('processed_at'),
   shippedAt: text('shipped_at'),
   deliveredAt: text('delivered_at'),
@@ -455,7 +461,9 @@ export const orderEventsTable = sqliteTable('order_events', {
   previousStatus: text('previous_status'),
   nextStatus: text('next_status'),
   metadata: text('metadata'),
-  createdAt: text('created_at').default(sql`CURRENT_TIMESTAMP`).notNull(),
+  createdAt: text('created_at')
+    .$defaultFn(() => new Date().toISOString().slice(0, 19).replace('T', ' '))
+    .notNull(),
 });
 
 export const orderCancellationAttemptsTable = sqliteTable(
@@ -476,8 +484,12 @@ export const orderCancellationAttemptsTable = sqliteTable(
     stripeResult: text('stripe_result'),
     finalStatus: text('final_status').notNull(),
     errorMessage: text('error_message'),
-    createdAt: text('created_at').default(sql`CURRENT_TIMESTAMP`).notNull(),
-    updatedAt: text('updated_at').default(sql`CURRENT_TIMESTAMP`).notNull(),
+    createdAt: text('created_at')
+      .$defaultFn(() => new Date().toISOString().slice(0, 19).replace('T', ' '))
+      .notNull(),
+    updatedAt: text('updated_at')
+      .$defaultFn(() => new Date().toISOString().slice(0, 19).replace('T', ' '))
+      .notNull(),
   },
 );
 
@@ -496,8 +508,12 @@ export const orderNotificationAttemptsTable = sqliteTable(
     statusTransition: text('status_transition'),
     source: text('source').notNull(),
     idempotencyKey: text('idempotency_key').notNull(),
-    createdAt: text('created_at').default(sql`CURRENT_TIMESTAMP`).notNull(),
-    updatedAt: text('updated_at').default(sql`CURRENT_TIMESTAMP`).notNull(),
+    createdAt: text('created_at')
+      .$defaultFn(() => new Date().toISOString().slice(0, 19).replace('T', ' '))
+      .notNull(),
+    updatedAt: text('updated_at')
+      .$defaultFn(() => new Date().toISOString().slice(0, 19).replace('T', ' '))
+      .notNull(),
     sentAt: text('sent_at'),
   },
 );
@@ -515,8 +531,12 @@ export const orderReconciliationAttemptsTable = sqliteTable(
     actionsTaken: text('actions_taken'),
     resultStatus: text('result_status').notNull(),
     errorMessage: text('error_message'),
-    createdAt: text('created_at').default(sql`CURRENT_TIMESTAMP`).notNull(),
-    updatedAt: text('updated_at').default(sql`CURRENT_TIMESTAMP`).notNull(),
+    createdAt: text('created_at')
+      .$defaultFn(() => new Date().toISOString().slice(0, 19).replace('T', ' '))
+      .notNull(),
+    updatedAt: text('updated_at')
+      .$defaultFn(() => new Date().toISOString().slice(0, 19).replace('T', ' '))
+      .notNull(),
   },
 );
 
@@ -697,10 +717,10 @@ export const stripeFulfillmentTable = sqliteTable('stripe_fulfillment', {
   slantOrderId: text('slant_order_id'),
   createdAt: integer('created_at', { mode: 'timestamp' })
     .notNull()
-    .default(sql`(unixepoch())`),
+    .$defaultFn(() => new Date()),
   updatedAt: integer('updated_at', { mode: 'timestamp' })
     .notNull()
-    .default(sql`(unixepoch())`),
+    .$defaultFn(() => new Date()),
 });
 
 // Table for storing uploaded STL files with estimates from Slant3D
@@ -731,10 +751,10 @@ export const uploadedFilesTable = sqliteTable('uploaded_files', {
   // Timestamps
   createdAt: integer('created_at', { mode: 'timestamp' })
     .notNull()
-    .default(sql`(unixepoch())`),
+    .$defaultFn(() => new Date()),
   updatedAt: integer('updated_at', { mode: 'timestamp' })
     .notNull()
-    .default(sql`(unixepoch())`),
+    .$defaultFn(() => new Date()),
 });
 export { reservations, starts } from '../shopping/storage/ledger-schema';
 export { runs, visits } from '../shopping/storage/visit-schema';
