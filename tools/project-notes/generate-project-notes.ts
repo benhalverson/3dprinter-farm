@@ -22,7 +22,7 @@ const githubToken = args.token ?? process.env.GITHUB_TOKEN ?? '';
 const projectConfig = await loadProjectConfig(configPath);
 const repositorySlug = splitRepositorySlug(sourceRepository);
 
-let pullRequests;
+let pullRequests: Awaited<ReturnType<typeof fetchMergedPullRequests>>;
 
 if (args.pullsFile) {
   const pullsFile = await readFile(path.resolve(process.cwd(), args.pullsFile), 'utf8');

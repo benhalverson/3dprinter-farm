@@ -46,7 +46,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
-          node --disable-warning=ExperimentalWarning --experimental-default-type=module --experimental-strip-types tools/project-notes/generate-project-notes.ts \
+          node --disable-warning=ExperimentalWarning --experimental-strip-types tools/project-notes/generate-project-notes.ts \
             --config project-notes.config.json \
             --output "$GENERATED_OUTPUT_PATH" \
             --repository "$SOURCE_REPOSITORY" \
