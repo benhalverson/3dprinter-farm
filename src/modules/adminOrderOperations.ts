@@ -56,10 +56,6 @@ export type RetryOrderResult =
       message: string;
     };
 
-export type RecordNotificationResendResult =
-  | { type: 'notification_resend_recorded'; event: AdminOrderEvent }
-  | { type: 'not_found' };
-
 export interface AdminOrderOperations {
   list(filters?: AdminOrderListFilters): Promise<{
     orders: AdminOrderListItem[];
@@ -69,10 +65,6 @@ export interface AdminOrderOperations {
     orderId: number;
     actor: AdminActor;
   }): Promise<RetryOrderResult>;
-  recordNotificationResend(input: {
-    orderId: number;
-    actor: AdminActor;
-  }): Promise<RecordNotificationResendResult>;
 }
 
 export interface AdminOrderReadAdapter {
@@ -84,13 +76,6 @@ export interface AdminOrderReadAdapter {
 export interface AdminOrderWriteAdapter {
   markRetryingAndAppendEvent(input: {
     orderId: number;
-    actor: string;
-    detail: string;
-    at: string;
-  }): Promise<AdminOrderEvent>;
-  appendEvent(input: {
-    orderId: number;
-    type: 'notification_resent';
     actor: string;
     detail: string;
     at: string;
@@ -168,25 +153,6 @@ export function createAdminOrderOperations({
       });
 
       return { type: 'retry_started', event };
-    },
-
-    async recordNotificationResend({ orderId, actor }) {
-      const order = await read.getLifecycle(orderId);
-
-      if (!order) {
-        return { type: 'not_found' };
-      }
-
-      const actorLabel = actorName(actor);
-      const event = await write.appendEvent({
-        orderId,
-        type: 'notification_resent',
-        actor: actorLabel,
-        detail: `Notification resent by ${actorLabel}`,
-        at: clock(),
-      });
-
-      return { type: 'notification_resend_recorded', event };
     },
   };
 }
@@ -274,21 +240,6 @@ function createDrizzleAdminOrderWriteAdapter(
         .values({
           orderId,
           type: 'retry_initiated',
-          detail,
-          actor,
-          createdAt: at,
-        })
-        .returning();
-
-      return event as AdminOrderEvent;
-    },
-
-    async appendEvent({ orderId, type, actor, detail, at }) {
-      const [event] = await db
-        .insert(orderEventsTable)
-        .values({
-          orderId,
-          type,
           detail,
           actor,
           createdAt: at,

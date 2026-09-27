@@ -66,6 +66,7 @@
                 "description": "Catalog facts are shown below. Compatibility and store policies are not verified.",
                 "selectedTitle": "Pit tray",
                 "selectedDescription": "Organize small parts.",
+                "href": "/products/1",
                 "active": true,
                 "ready": true,
                 "price": "$12.50",

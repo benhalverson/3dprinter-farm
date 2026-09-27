@@ -195,20 +195,6 @@ function makeStore({
         createdAt: at,
       });
     },
-
-    async appendEvent({ orderId, type, actor, detail, at }) {
-      if (!orderRecords.has(orderId)) {
-        throw new Error(`Missing order ${orderId}`);
-      }
-
-      return appendEvent({
-        orderId,
-        type,
-        detail,
-        actor,
-        createdAt: at,
-      });
-    },
   };
 
   return {
@@ -378,41 +364,20 @@ describe('AdminOrderOperations', () => {
     expect(result).toEqual({ type: 'not_found' });
   });
 
-  test('records notification resend event', async () => {
-    const store = makeStore({
-      orders: [makeOrder({ id: 1, status: 'pending' })],
-    });
-
-    const result = await makeOperations(store).recordNotificationResend({
-      orderId: 1,
-      actor: { email: 'admin@example.com' },
-    });
-
-    expect(result.type).toBe('notification_resend_recorded');
-    expect(store.eventsFor(1)).toMatchObject([
-      {
-        type: 'notification_resent',
-        detail: 'Notification resent by admin@example.com',
-        actor: 'admin@example.com',
-        createdAt: FIXED_TIME,
-      },
-    ]);
-  });
-
   test('uses unknown-admin actor fallback', async () => {
     const store = makeStore({
       orders: [makeOrder({ id: 1, status: 'pending' })],
     });
 
-    await makeOperations(store).recordNotificationResend({
+    await makeOperations(store).requestRetry({
       orderId: 1,
       actor: {},
     });
 
     expect(store.eventsFor(1)).toMatchObject([
       {
-        type: 'notification_resent',
-        detail: 'Notification resent by unknown-admin',
+        type: 'retry_initiated',
+        detail: 'Admin retry initiated by unknown-admin',
         actor: 'unknown-admin',
       },
     ]);
