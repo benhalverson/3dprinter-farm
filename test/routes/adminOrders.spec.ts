@@ -899,7 +899,7 @@ describe('Admin Orders API', () => {
       );
     });
 
-    test('recovers stale local status from Slant and notifies the customer', async () => {
+    test('recovers stale local status from Slant', async () => {
       mockAdminUser();
       mockWhere
         .mockReturnValueOnce({
