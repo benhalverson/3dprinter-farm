@@ -125,20 +125,25 @@ async function updateTransfer(
   db: Database,
   row: Draft,
   transfer: TransferRecord,
+  includeAbandoned = false,
 ) {
   const state = row.attachments!;
-  const current = state.transfers.find(item => item.id === transfer.id);
-  if (
-    !current ||
-    current.attachmentId !== transfer.attachmentId ||
-    current.status === 'saved'
-  )
-    return row;
+  const matches = (item: TransferRecord) =>
+    item.id === transfer.id && item.attachmentId === transfer.attachmentId;
+  const current =
+    state.transfers.find(matches) ??
+    (includeAbandoned ? state.abandonedTransfers?.find(matches) : undefined);
+  if (!current || current.status === 'saved') return row;
   return writeAttachments(db, row, {
     ...state,
-    transfers: state.transfers.map(item =>
-      item.id === transfer.id ? transfer : item,
-    ),
+    transfers: state.transfers.map(item => (matches(item) ? transfer : item)),
+    ...(includeAbandoned && state.abandonedTransfers
+      ? {
+          abandonedTransfers: state.abandonedTransfers.map(item =>
+            matches(item) ? transfer : item,
+          ),
+        }
+      : {}),
   });
 }
 function uploadFor(row: Draft, transfer: TransferRecord): AttachmentUpload {
@@ -273,7 +278,9 @@ async function prepareTransfer(
         providerId: result.filePlaceholder.publicFileServiceId,
       });
       row = await attachmentDraft(db, row.ownerId, row.id, undefined, true);
-      row = await updateTransfer(db, row, transfer);
+      // Cancellation and retry move attempts out of the active slot. Persist
+      // this allocation on its original attempt so cleanup can release it.
+      row = await updateTransfer(db, row, transfer, true);
     } catch {
       row = await attachmentDraft(db, row.ownerId, row.id, undefined, true);
       transfer = {
@@ -283,10 +290,20 @@ async function prepareTransfer(
         error:
           'Print upload allocation has an unknown outcome; retain this transfer for recovery',
       };
-      row = await updateTransfer(db, row, transfer);
+      row = await updateTransfer(db, row, transfer, true);
     }
   }
-  return { row, transfer: uploadFor(row, transfer) };
+  const current = row.attachments!.transfers.find(
+    item =>
+      item.id === transfer.id && item.attachmentId === transfer.attachmentId,
+  );
+  return {
+    row,
+    transfer:
+      row.status !== 'discarded' && current
+        ? uploadFor(row, current)
+        : { id: transfer.id, upload: null },
+  };
 }
 export async function retryAttachmentTransfer(
   db: Database,

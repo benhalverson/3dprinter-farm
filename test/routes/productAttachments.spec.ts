@@ -257,10 +257,11 @@ async function upload(extra: Row = {}, data = bytes()) {
   expect(response.status, await response.clone().text()).toBe(200);
   return response.json();
 }
-function provider() {
+function provider(waitFor?: Promise<void>) {
   const providerId = crypto.randomUUID();
-  vi.mocked(fetch).mockResolvedValueOnce(
-    new Response(
+  vi.mocked(fetch).mockImplementationOnce(async () => {
+    await waitFor;
+    return new Response(
       JSON.stringify({
         data: {
           presignedUrl: 'https://upload.example.com/file',
@@ -277,8 +278,8 @@ function provider() {
         },
       }),
       { headers: { 'Content-Type': 'application/json' } },
-    ),
-  );
+    );
+  });
   return providerId;
 }
 async function savedPrint(extra: Row = {}) {
@@ -673,6 +674,153 @@ describe('durable product attachments through Hono', () => {
     expect((await discarded.json()).cleanup[0].status).toBe('pending');
     expect((await request('')).status).toBe(404);
     expect((await request('/cleanup')).status).toBe(200);
+  });
+  it.each([
+    { action: 'cancel', succeeds: true },
+    { action: 'replacement', succeeds: true },
+    { action: 'retry', succeeds: true },
+    { action: 'discard', succeeds: true },
+    { action: 'cancel', succeeds: false },
+    { action: 'replacement', succeeds: false },
+    { action: 'retry', succeeds: false },
+    { action: 'discard', succeeds: false },
+  ])('preserves late allocation recovery after $action (success: $succeeds)', async ({
+    action,
+    succeeds,
+  }) => {
+    const original = action === 'replacement' ? await savedPrint() : null;
+    const saved = structuredClone(draft().attachments?.printFile ?? null);
+    let resolve!: () => void;
+    let reject!: (error: Error) => void;
+    const waiting = new Promise<void>((done, fail) => {
+      resolve = done;
+      reject = fail;
+    });
+    const allocatedProvider = provider(waiting);
+    const pending = intent('print', {
+      ...(original ? { replacesId: original.assetId } : {}),
+    });
+    await vi.waitFor(() =>
+      expect(draft().attachments?.transfers.at(-1)?.phase).toBe('allocating'),
+    );
+    const attempt = structuredClone(draft().attachments!.transfers.at(-1)!);
+    expect(attempt.status).toBe('unresolved');
+    // Save another attachment while the provider is pending to catch stale writes.
+    await upload();
+    let response: Response;
+    if (action === 'discard') {
+      response = await request(`?expectedRevision=${revision()}`, 'DELETE');
+    } else if (action === 'retry') {
+      provider();
+      response = await request(
+        `/attachments/transfers/${attempt.id}/retry`,
+        'POST',
+        {
+          expectedRevision: revision(),
+        },
+      );
+      expect((await response.clone().json()).transfer.upload).not.toBeNull();
+    } else {
+      response = await request(
+        `/attachments/${attempt.attachmentId}?expectedRevision=${revision()}`,
+        'DELETE',
+      );
+    }
+    expect(response.status).toBe(200);
+    const latest = structuredClone(draft());
+    const before = revision();
+    const asset = () =>
+      records(schema.productAssets).find(
+        item => item.id === attempt.attachmentId,
+      )!;
+    expect(asset().references).toContain(`transfer:${attempt.id}`);
+    expect(
+      latest.attachments!.cleanup.find(
+        item => item.assetId === attempt.attachmentId,
+      )?.status,
+    ).toBe('pending');
+
+    if (succeeds) resolve();
+    else reject(new Error('Allocation response lost'));
+    const completed = await pending;
+    expect(completed.transfer).toEqual({ id: attempt.id, upload: null });
+    const retained = (
+      action === 'discard'
+        ? draft().attachments!.transfers
+        : draft().attachments!.abandonedTransfers
+    )!.find(
+      item =>
+        item.id === attempt.id && item.attachmentId === attempt.attachmentId,
+    )!;
+    expect(retained).toMatchObject({
+      id: attempt.id,
+      attachmentId: attempt.attachmentId,
+      phase: succeeds ? 'ready' : 'allocating',
+      status: succeeds ? 'pending' : 'unresolved',
+    });
+    if (succeeds) {
+      expect(retained.placeholder?.publicFileServiceId).toBe(allocatedProvider);
+      expect(retained.presignedUrl).toBe('https://upload.example.com/file');
+      expect(asset().providerId).toBe(allocatedProvider);
+    } else {
+      expect(retained.placeholder).toBeUndefined();
+      expect(retained.error).toContain('unknown outcome');
+      expect(asset().providerId).toBeNull();
+    }
+    expect(revision()).toBe(before + 1);
+    expect(draft().state).toEqual(latest.state);
+    expect(draft().attachments!.photos).toEqual(latest.attachments!.photos);
+    expect(draft().attachments!.photoOrder).toEqual(
+      latest.attachments!.photoOrder,
+    );
+    expect(draft().attachments!.primaryPhotoId).toBe(
+      latest.attachments!.primaryPhotoId,
+    );
+    expect(draft().attachments!.printFile).toEqual(saved);
+    if (action === 'discard') {
+      expect(draft().status).toBe('discarded');
+      expect((await request('')).status).toBe(404);
+    } else {
+      expect(draft().attachments!.transfers).toEqual(
+        latest.attachments!.transfers,
+      );
+    }
+
+    vi.mocked(fetch).mockClear();
+    if (succeeds)
+      vi.mocked(fetch).mockResolvedValueOnce(Response.json({ success: true }));
+    const cleanup = await request('/cleanup/retry', 'POST', {
+      expectedRevision: revision(),
+    });
+    expect(cleanup.status).toBe(200);
+    expect(
+      (await cleanup.json()).cleanup.find(
+        item => item.assetId === attempt.attachmentId,
+      ).status,
+    ).toBe(succeeds ? 'deleted' : 'pending');
+    expect(asset().status).toBe(succeeds ? 'deleted' : 'active');
+    if (succeeds) {
+      expect(asset().references).toEqual([]);
+      expect(fetch).toHaveBeenCalledExactlyOnceWith(
+        expect.stringContaining(`/files/${allocatedProvider}`),
+        expect.objectContaining({ method: 'DELETE' }),
+      );
+    } else {
+      expect(asset().references).toContain(`transfer:${attempt.id}`);
+      expect(fetch).not.toHaveBeenCalled();
+    }
+    expect(draft().attachments!.printFile).toEqual(saved);
+    if (original) {
+      expect(
+        records(schema.productAssets).find(
+          item => item.id === original.assetId,
+        ),
+      ).toMatchObject({
+        providerId: original.providerId,
+        status: 'active',
+        references: [`draft:${id}`],
+      });
+    }
   });
   it('cancels an unresolved print replacement while retaining the saved file and cleanup identity', async () => {
     const original = await savedPrint();
