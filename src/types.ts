@@ -28,7 +28,6 @@ import type { orderSchema } from './db/schema';
  *  - BETTER_AUTH_SECRET – Secret for Better Auth sessions (≥ 32 chars)
  *  - RP_ID / RP_NAME   – WebAuthn Relying Party identity
  *  - PASSKEY_ORIGIN    – Allowed passkey origin (optional; defaults to DOMAIN)
- *  - MAILJET_*         – Optional legacy email integration
  *  - ENCRYPTION_PASSPHRASE – Passphrase for profile field encryption
  *  - R2_PUBLIC_BASE_URL / R2_PHOTO_BASE_URL – CDN base URLs for R2 assets
  */
@@ -73,12 +72,6 @@ export type Bindings = {
   PASSKEY_ORIGIN?: string;
   /** KV namespace used by the rate-limiting middleware (binding: RATE_LIMIT_KV) */
   RATE_LIMIT_KV: KVNamespace;
-  MAILJET_API_KEY?: string;
-  MAILJET_API_SECRET?: string;
-  MAILJET_CONTACT_LIST_ID?: string;
-  MAILJET_TEMPLATE_ID?: string;
-  MAILJET_SENDER_EMAIL?: string;
-  MAILJET_SENDER_NAME?: string;
   ENCRYPTION_PASSPHRASE: string;
   R2_PUBLIC_BASE_URL: string;
   R2_PHOTO_BASE_URL: string;

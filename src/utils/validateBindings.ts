@@ -12,7 +12,7 @@
  * Keep this list in sync with the required (non-optional) fields of the
  * `Bindings` type in `src/types.ts` and the bindings declared in
  * `wrangler.toml` / `worker-configuration.d.ts`.
- * Optional bindings (`DB_PREVIEW`, `PASSKEY_ORIGIN`, `MAILJET_*`) are omitted.
+ * Optional bindings (`DB_PREVIEW`, `PASSKEY_ORIGIN`) are omitted.
  */
 const REQUIRED_BINDINGS = [
   'DB',
