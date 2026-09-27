@@ -33,6 +33,25 @@ function dependencies() {
   };
 }
 describe('bounded read-only inference', () => {
+  it('separates the current request from prior requests and untrusted catalog context', () => {
+    const request = modelContext(
+      {
+        ...input(),
+        message: 'Show me pit stands',
+        context: [{ role: 'user', content: 'Show me tool holders' }],
+      },
+      catalog,
+    );
+    expect(request.messages.at(-1)).toEqual({
+      role: 'user',
+      content: 'Show me pit stands',
+    });
+    expect(JSON.parse(request.messages[1].content ?? 'null')).toEqual({
+      priorRequests: [{ role: 'user', content: 'Show me tool holders' }],
+      catalog,
+    });
+  });
+
   it('reserves before each call, runs tools sequentially, and settles reported usage', async () => {
     const deps = dependencies();
     const infer = vi
