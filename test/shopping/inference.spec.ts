@@ -77,6 +77,7 @@ describe('bounded read-only inference', () => {
       max_completion_tokens: 2048,
       parallel_tool_calls: false,
       store: false,
+      reasoning_effort: 'low',
     });
     expect(
       vi.mocked(deps.accounting.reserve).mock.invocationCallOrder[0],
@@ -179,6 +180,7 @@ describe('bounded read-only inference', () => {
       'tool_limit',
     );
     expect(deps.infer).toHaveBeenCalledTimes(3);
+    expect(vi.mocked(deps.infer).mock.calls[2][0].tool_choice).toBe('none');
   });
 
   it('settles late usage after cancellation but does not publish a result', async () => {

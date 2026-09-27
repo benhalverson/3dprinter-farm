@@ -37,6 +37,28 @@ describe('order notifications', () => {
     globalThis.fetch = vi.fn();
   });
 
+  test('skips unconfigured delivery without provider calls or database writes', async () => {
+    const { db, inserts } = makeDb();
+    const env = mockEnv();
+    delete env.MAILJET_API_KEY;
+    delete env.MAILJET_API_SECRET;
+    delete env.MAILJET_SENDER_EMAIL;
+    const result = await sendOrderNotification({
+      db,
+      env,
+      order,
+      type: 'order_confirmation',
+      statusTransition: 'paid_to_processing',
+      source: 'stripe',
+    });
+    expect(result).toEqual({
+      status: 'skipped',
+      errorMessage: 'Email delivery is not configured',
+    });
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+    expect(inserts).toEqual([]);
+  });
+
   test('sends and persists a customer notification attempt', async () => {
     const { db, inserts } = makeDb();
     (globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce({

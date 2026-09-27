@@ -17,6 +17,7 @@ describe('validated A2UI v0.9.1 composition', () => {
     });
     expect(components.find(node => node.id === 'focus')).toMatchObject({
       compatibility: LIMITATIONS.fit_unknown,
+      href: '/products/1',
     });
     expect(components.map(node => node.id)).not.toEqual(
       expect.arrayContaining(['root', 'configuration', 'bag']),

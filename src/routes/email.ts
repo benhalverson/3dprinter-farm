@@ -6,6 +6,15 @@ import factory from '../factory';
 const email = factory
   .createApp()
   .post('/email', zValidator('json', leadsSchema), async c => {
+    if (
+      !c.env.MAILJET_API_KEY ||
+      !c.env.MAILJET_API_SECRET ||
+      !c.env.MAILJET_CONTACT_LIST_ID ||
+      !c.env.MAILJET_TEMPLATE_ID ||
+      !c.env.MAILJET_SENDER_EMAIL
+    ) {
+      return c.json({ error: 'Newsletter signup is unavailable' }, 503);
+    }
     try {
       const { name, email } = c.req.valid('json');
 

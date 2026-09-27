@@ -97,7 +97,9 @@ export function compose(raw: string, catalog: CatalogItem[]) {
           component: node.component,
           controls: [],
           entries: node.entries,
-          status: LIMITATIONS[plan.answer],
+          status: node.entries.length
+            ? LIMITATIONS[plan.answer]
+            : `No matching products were found in the catalog. ${LIMITATIONS[plan.answer]}`,
           paging: '',
           previousDisabled: true,
           nextDisabled: true,
@@ -115,6 +117,7 @@ export function compose(raw: string, catalog: CatalogItem[]) {
           description: LIMITATIONS[plan.answer],
           selectedTitle: item?.name ?? '',
           selectedDescription: item?.description ?? '',
+          href: item ? `/products/${item.id}` : '',
           active: item !== null,
           ready: item !== null,
           price: item ? price(item) : '',

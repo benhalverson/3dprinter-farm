@@ -226,6 +226,16 @@ async function insertAttempt(input: {
 async function sendNotificationAttempt(
   input: NotificationAttemptInput,
 ): Promise<NotificationAttemptResult> {
+  if (
+    !input.env.MAILJET_API_KEY ||
+    !input.env.MAILJET_API_SECRET ||
+    !input.env.MAILJET_SENDER_EMAIL
+  ) {
+    return {
+      status: 'skipped',
+      errorMessage: 'Email delivery is not configured',
+    };
+  }
   const at = now();
   const recipientEmail = input.recipientEmail?.trim();
   const idempotencyKey = notificationIdempotencyKey({
