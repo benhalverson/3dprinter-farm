@@ -11,10 +11,6 @@ import {
 } from '../db/schema';
 import factory from '../factory';
 import {
-  sendAdminFailureAlert,
-  sendOrderNotification,
-} from '../modules/orderNotifications';
-import {
   createPaidOrderFulfillment,
   type PaidOrderProfile,
 } from '../modules/paidOrderFulfillment';
@@ -391,20 +387,6 @@ const paymentsRouter = factory
             error instanceof Error && 'stage' in error
               ? (error as { stage: 'draft' | 'process' }).stage
               : 'draft';
-          const status =
-            error instanceof Error && 'status' in error
-              ? (error as { status?: number }).status
-              : undefined;
-          const message =
-            error instanceof Error ? error.message : String(error);
-          await sendAdminFailureAlert({
-            db: c.var.db,
-            env: c.env,
-            source: 'stripe',
-            statusTransition: `slant_${stage}_failed`,
-            reason: `Slant3D order ${stage} failed after Stripe payment`,
-            details: `Stripe event ${input.stripeEventId}, object ${input.stripeObjectId}${status ? `, HTTP ${status}` : ''}: ${message}`,
-          });
           return c.json(
             {
               error:
@@ -415,21 +397,6 @@ const paymentsRouter = factory
             502,
           );
         }
-
-        await sendOrderNotification({
-          db: c.var.db,
-          env: c.env,
-          order: {
-            id: completed.localOrderId,
-            orderNumber: completed.orderNumber,
-            customerEmail: profile.email || input.customerEmail || null,
-            status: 'processing',
-            slantStatus: 'PROCESSING',
-          },
-          type: 'order_confirmation',
-          source: 'stripe',
-          statusTransition: 'paid_to_processing',
-        });
 
         await c.var.db.insert(stripeFulfillmentTable).values({
           idempotencyKey: input.idempotencyKey,

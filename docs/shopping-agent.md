@@ -141,7 +141,8 @@ Frontend #8 must:
 - Initialize the trusted storefront surface before applying updates. The server
   updates `products` and `focus` plus `agent-*` leaf nodes only; it never creates,
   deletes or replaces the shell, configuration, bag or purchase controls.
-- Treat agent focus as read-only guidance. Follow its authoritative product link
+- Treat agent focus as read-only guidance. Its server-hydrated `href` is the
+  authoritative product link (empty when no product is focused). Follow it
   to change the actual selected product and deterministic configuration.
 - Preserve the last valid surface on all fallbacks or transport failures. Show
   limitations separately if needed; never render raw model content.
@@ -174,7 +175,7 @@ is untrusted context, never privileged model instructions.
 
 ## Inference and durable budget
 
-At most three invocations, sequential tools, 2,048 completion tokens per call,
+At most three invocations, sequential tools, low reasoning effort, 2,048 completion tokens per call,
 32-KiB assembled request, and a 30-second run deadline. History is truncated oldest
 first, then catalog results from the end, deterministically. Tool results are
 bounded to 4 KiB each. No provider retry, repair call, mutation tool, web browsing,

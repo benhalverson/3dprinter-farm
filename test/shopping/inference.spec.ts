@@ -33,6 +33,25 @@ function dependencies() {
   };
 }
 describe('bounded read-only inference', () => {
+  it('separates the current request from prior requests and untrusted catalog context', () => {
+    const request = modelContext(
+      {
+        ...input(),
+        message: 'Show me pit stands',
+        context: [{ role: 'user', content: 'Show me tool holders' }],
+      },
+      catalog,
+    );
+    expect(request.messages.at(-1)).toEqual({
+      role: 'user',
+      content: 'Show me pit stands',
+    });
+    expect(JSON.parse(request.messages[1].content ?? 'null')).toEqual({
+      priorRequests: [{ role: 'user', content: 'Show me tool holders' }],
+      catalog,
+    });
+  });
+
   it('reserves before each call, runs tools sequentially, and settles reported usage', async () => {
     const deps = dependencies();
     const infer = vi
@@ -77,6 +96,7 @@ describe('bounded read-only inference', () => {
       max_completion_tokens: 2048,
       parallel_tool_calls: false,
       store: false,
+      reasoning_effort: 'low',
     });
     expect(
       vi.mocked(deps.accounting.reserve).mock.invocationCallOrder[0],
@@ -179,6 +199,7 @@ describe('bounded read-only inference', () => {
       'tool_limit',
     );
     expect(deps.infer).toHaveBeenCalledTimes(3);
+    expect(vi.mocked(deps.infer).mock.calls[2][0].tool_choice).toBe('none');
   });
 
   it('settles late usage after cancellation but does not publish a result', async () => {

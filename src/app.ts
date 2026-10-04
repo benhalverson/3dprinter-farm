@@ -5,7 +5,6 @@ import factory from './factory';
 import adminOrders from './routes/adminOrders';
 import auth from './routes/auth';
 import authApi from './routes/authApi';
-import email from './routes/email';
 import ordersRouter from './routes/orders';
 import paymentsRouter from './routes/payments';
 import printer from './routes/printer';
@@ -64,7 +63,6 @@ const app = factory
   .route('/', productV2)
   .route('/', userRouter)
   .route('/', printer)
-  .route('/', email)
   .route('/', paymentsRouter)
   .route('/', shoppingCart)
   .route('/', ordersRouter)
