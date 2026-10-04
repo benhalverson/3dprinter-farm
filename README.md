@@ -270,14 +270,24 @@ It does not silently substitute US for missing/invalid countries. `phone` is
 not sent in the existing V2 estimate request.
 
 Success is `{ "shippingCost": 15.99 }`, a finite nonnegative **unconverted
-provider value**, not an address or payable quote. The checked-in adapter and
-historical mocked fixtures establish field compatibility, **not currency or
-major/minor units**. Those units remain unverified: consumers must not label
-this number as dollars/cents or use it to calculate a payment. A verified
-Slant3D V2 response contract specifying currency and units is required before
-Lulu checkout #5 / API #189 can convert or bind this amount. Historical response
-paths remain compatible, but conflicting values, negative/non-finite values,
-non-decimal strings and missing costs are rejected.
+provider value**, not an address or payable quote. The adapter accepts only
+`data.order.deliveryCost` (a nonnegative two-decimal string) and
+`data.totals.deliveryCost` (a finite nonnegative number), as shown in the
+[official V2 Orders examples](https://slant3dapi.com/documentation/orders).
+Either field can supply the estimate; if both are present they must agree.
+Legacy aliases such as top-level `shippingCost` are no longer accepted: their
+units are not established. Malformed, conflicting or missing costs yield 502.
+
+The provider's [August 5, 2026 integration guide](https://www.slant3d.com/blog/2bdfb955-53b3-48d0-8e95-b04cb3187634)
+uses the same V2 draft endpoint, adds printing and delivery costs, then
+multiplies by 100 and rounds for a USD amount. This establishes **major-unit
+USD in that documented flow**, not a universal account currency guarantee.
+The Orders examples include item currency, but do not establish a universal
+currency or a shipping-currency assurance for this account. This response
+therefore does not label the number as USD or convert it to cents. Lulu
+checkout #5 / API #189 still require verified current-account/order shipping
+currency assurance before formatting as currency or calculating payment.
+No currency is inferred from unknown aliases, example values or item currency.
 
 All documented errors have the JSON shape `{ "error": "message" }`:
 

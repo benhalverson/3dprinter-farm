@@ -11,14 +11,14 @@ afterEach(() => {
 });
 
 test.each([
-  0,
-  15.99,
-  '15.99',
-  '0',
-  ' 15.99 ',
-])('preserves nonnegative raw amount %s', raw => {
-  expect(parseShippingEstimate({ shippingCost: raw })).toEqual({
-    shippingCost: Number(raw),
+  { order: { deliveryCost: '0.00' } },
+  { order: { deliveryCost: '15.99' } },
+  { totals: { deliveryCost: 15.99 } },
+  { order: { deliveryCost: '15.99' }, totals: { deliveryCost: 15.99 } },
+])('accepts documented V2 amount shapes %o without conversion', data => {
+  const expected = data.order?.deliveryCost ?? data.totals?.deliveryCost;
+  expect(parseShippingEstimate({ success: true, data })).toEqual({
+    shippingCost: Number(expected),
   });
 });
 test.each([
@@ -28,7 +28,7 @@ test.each([
   [],
   '',
   ' ',
-  '-1',
+  '-1.00',
   '0x10',
   '1e2',
   'NaN',
@@ -36,8 +36,29 @@ test.each([
   -1,
   Infinity,
   NaN,
-])('rejects invalid raw amount %s', raw => {
-  expect(() => parseShippingEstimate({ shippingCost: raw })).toThrow();
+  '1',
+  '1.2',
+  '1.234',
+  15.99,
+])('rejects malformed order.deliveryCost %s', raw => {
+  expect(() =>
+    parseShippingEstimate({ data: { order: { deliveryCost: raw } } }),
+  ).toThrow();
+});
+test.each([
+  null,
+  true,
+  {},
+  [],
+  '',
+  '15.99',
+  -1,
+  Infinity,
+  NaN,
+])('rejects malformed totals.deliveryCost %s', raw => {
+  expect(() =>
+    parseShippingEstimate({ data: { totals: { deliveryCost: raw } } }),
+  ).toThrow();
 });
 test.each([
   null,
@@ -49,44 +70,53 @@ test.each([
 ])('rejects missing amount in %o', raw => {
   expect(() => parseShippingEstimate(raw)).toThrow();
 });
-test('rejects conflicting aliases rather than guessing an amount', () => {
+test('rejects conflicting documented fields or malformed siblings', () => {
   expect(() =>
     parseShippingEstimate({
-      shippingCost: 1,
-      data: { order: { deliveryCost: 100 } },
+      data: { order: { deliveryCost: '1.00' }, totals: { deliveryCost: 100 } },
     }),
   ).toThrow();
-  expect(
+  expect(() =>
     parseShippingEstimate({
-      shippingCost: 1,
-      data: { order: { deliveryCost: '1' } },
+      data: { order: { deliveryCost: null }, totals: { deliveryCost: 1 } },
     }),
-  ).toEqual({ shippingCost: 1 });
+  ).toThrow();
 });
 test('does not accept inherited amount fields', () => {
   expect(() =>
-    parseShippingEstimate(Object.create({ shippingCost: 10 })),
+    parseShippingEstimate({
+      data: { totals: Object.create({ deliveryCost: 10 }) },
+    }),
   ).toThrow();
 });
-test('retains historical compatibility paths without unit conversion', () => {
+test('rejects historical aliases with unestablished units', () => {
   for (const key of [
     'shippingCost',
     'shipping_cost',
     'estimatedShippingCost',
     'deliveryCost',
   ]) {
-    expect(parseShippingEstimate({ [key]: 1 })).toEqual({ shippingCost: 1 });
-    expect(parseShippingEstimate({ data: { [key]: '1' } })).toEqual({
-      shippingCost: 1,
-    });
+    expect(() => parseShippingEstimate({ [key]: 1 })).toThrow();
+    expect(() => parseShippingEstimate({ data: { [key]: '1' } })).toThrow();
   }
   for (const key of ['shipping', 'estimate', 'estimatedCosts']) {
     for (const field of ['shippingCost', 'shipping_cost']) {
-      expect(
+      expect(() =>
         parseShippingEstimate({ data: { [key]: { [field]: '1' } } }),
-      ).toEqual({ shippingCost: 1 });
+      ).toThrow();
     }
   }
+});
+test('does not infer conversion or currency from unrelated aliases or item currency', () => {
+  expect(
+    parseShippingEstimate({
+      shippingCost: 1599,
+      data: {
+        totals: { deliveryCost: 15.99 },
+        items: [{ currency: 'USD' }],
+      },
+    }),
+  ).toEqual({ shippingCost: 15.99 });
 });
 test('owns timeout cancellation for a pending provider request', async () => {
   vi.useFakeTimers();
@@ -129,7 +159,9 @@ test('clears timeout after success and JSON failure', async () => {
     'fetch',
     vi
       .fn()
-      .mockResolvedValueOnce(Response.json({ shippingCost: 0 }))
+      .mockResolvedValueOnce(
+        Response.json({ data: { totals: { deliveryCost: 0 } } }),
+      )
       .mockResolvedValueOnce(new Response('invalid')),
   );
   await expect(

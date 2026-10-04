@@ -113,6 +113,19 @@ describe('shipping estimate contract', () => {
     });
   });
 
+  test('accepts the documented totals-only response without assuming currency', async () => {
+    arrange();
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        success: true,
+        data: { totals: { deliveryCost: 8.25 } },
+      }),
+    );
+    const result = await request();
+    expect(result.status).toBe(200);
+    expect(await result.json()).toEqual({ shippingCost: 8.25 });
+  });
+
   test.each([
     'email',
     'firstName',
@@ -225,11 +238,20 @@ describe('shipping estimate contract', () => {
     });
   });
   test.each([
-    { body: JSON.stringify({ shippingCost: -1 }), status: 200 },
+    {
+      body: JSON.stringify({ data: { totals: { deliveryCost: -1 } } }),
+      status: 200,
+    },
     { body: 'not JSON', status: 200 },
-    { body: JSON.stringify({ shippingCost: 1, deliveryCost: 2 }), status: 200 },
+    {
+      body: JSON.stringify({
+        data: { order: { deliveryCost: '1.00' }, totals: { deliveryCost: 2 } },
+      }),
+      status: 200,
+    },
     { body: JSON.stringify({ secret: 'PII' }), status: 400 },
     { body: '{}', status: 200 },
+    { body: JSON.stringify({ shippingCost: 15.99 }), status: 200 },
   ])('sanitizes upstream failure %o', async ({ body, status }) => {
     arrange();
     fetchMock.mockResolvedValueOnce(new Response(body, { status }));

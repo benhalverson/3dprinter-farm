@@ -125,7 +125,7 @@ export default shippingRouter.get(
   cartAccessMiddleware,
   describeRoute({
     description:
-      'Estimate shipping using the authenticated cart owner’s saved profile. GET /profile retrieves the address; POST /profile/:id updates it. No request body. Requires email, firstName, lastName, shippingAddress, city, state, zipCode, and a two-letter country code. Creates a provider draft estimate, not a purchase or persisted payable quote. Currency and major/minor amount units remain unverified; do not use this response for payment.',
+      'Estimate shipping using the authenticated cart owner’s saved profile. GET /profile retrieves the address; POST /profile/:id updates it. No request body. Requires email, firstName, lastName, shippingAddress, city, state, zipCode, and a two-letter country code. Creates a provider draft estimate, not a purchase or persisted payable quote. Only documented V2 data.order.deliveryCost and data.totals.deliveryCost are accepted. The provider USD example uses major units; current-account currency assurance is still required before currency formatting or payment.',
     tags: ['Shopping Cart'],
     security: [{ cookieAuth: [] }],
     parameters: [

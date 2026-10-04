@@ -7,7 +7,7 @@ export const shippingEstimateSchema = z.object({
     .finite()
     .nonnegative()
     .describe(
-      'Unconverted Slant3D provider amount. Currency and major/minor units are not verified by the available provider contract. Do not format as currency or use for payment until verified. This is not a payable quote.',
+      'Unconverted V2 deliveryCost from data.order or data.totals. The provider USD example uses major units, but this response does not establish currency for the current account. Do not format as currency or use for payment without verified currency assurance. This is not a payable quote.',
     ),
 });
 
@@ -43,24 +43,18 @@ export function mapShippingAddress(
   };
 }
 
-// Historical compatibility paths from the pre-188 adapter, not evidence of
-// currency/units. Reject ambiguous values rather than selecting a guessed total.
-const amountPaths = [
-  ['shippingCost'],
-  ['shipping_cost'],
-  ['estimatedShippingCost'],
-  ['deliveryCost'],
-  ['data', 'shippingCost'],
-  ['data', 'shipping_cost'],
-  ['data', 'estimatedShippingCost'],
-  ['data', 'deliveryCost'],
-  ['data', 'shipping', 'shippingCost'],
-  ['data', 'shipping', 'shipping_cost'],
-  ['data', 'estimate', 'shippingCost'],
-  ['data', 'estimate', 'shipping_cost'],
-  ['data', 'estimatedCosts', 'shippingCost'],
-  ['data', 'estimatedCosts', 'shipping_cost'],
-  ['data', 'order', 'deliveryCost'],
+// Official V2 Orders examples document these two fields. Older aliases have no
+// established units and are deliberately excluded from this contract.
+// https://slant3dapi.com/documentation/orders
+const amountFields = [
+  {
+    path: ['data', 'order', 'deliveryCost'],
+    schema: z.string().regex(/^\d+\.\d{2}$/),
+  },
+  {
+    path: ['data', 'totals', 'deliveryCost'],
+    schema: z.number().finite().nonnegative(),
+  },
 ];
 
 /** Reads an own-property path without treating arrays or inherited fields as DTOs. */
@@ -79,16 +73,15 @@ function readPath(source: unknown, path: string[]): unknown {
   return value;
 }
 
-/** Validates historical response shapes without guessing or converting provider units. */
+/** Validates documented V2 costs without extrapolating USD example units to other currencies. */
 export function parseShippingEstimate(source: unknown) {
   let amount: number | undefined;
-  for (const path of amountPaths) {
-    const raw = readPath(source, path);
+  for (const field of amountFields) {
+    const raw = readPath(source, field.path);
     if (raw === undefined) continue;
-    const candidate =
-      typeof raw === 'string' && /^\d+(?:\.\d+)?$/.test(raw.trim())
-        ? Number(raw.trim())
-        : raw;
+    const value = field.schema.safeParse(raw);
+    if (!value.success) throw new Error('Invalid shipping estimate');
+    const candidate = Number(value.data);
     const parsed =
       shippingEstimateSchema.shape.shippingCost.safeParse(candidate);
     if (!parsed.success || (amount !== undefined && amount !== parsed.data)) {
