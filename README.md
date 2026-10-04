@@ -111,6 +111,14 @@ Notes:
 - Validation errors and response payloads for registration verification follow Better Auth defaults.
 - `/api/auth/passkey/register` and `/api/auth/passkey/authenticate` are client helper names in Better Auth, not server routes in this API.
 
+## Administrator conversation preparation
+
+`POST /admin/product-drafts/:id/prepare` is protected by the existing administrator role and draft ownership checks. Supply `expectedRevision` and an `answers` patch; optionally supply the current `message` for interpretation or an exact `confirmCategoryName`. Responses use the existing durable draft DTO. A concurrent save rejects the interpreted patch rather than overwriting newer work. The optional interpretation state fits the existing draft JSON column; no database schema or migration changed.
+
+Messages make at most one bounded model call through the existing enabled/version gates and deployment-account budget, using administrator-prefixed accounting identities. Direct controls omit `message` and do not call the model. Failures retain the message and answers with deterministic controls. Available material/color pairs come from the existing Slant3D filament metadata contract; failed metadata verification stays visible.
+
+Selecting existing category IDs explicitly replaces name proposals by sending `categoryNames: []` together with `categoryIds`. Exact new-name confirmation is retained as preparation only. **Actual category creation remains unimplemented**, so this does not complete API #209's category-creation acceptance criterion. Product mutation and proposed-price calculation also remain unavailable; current catalog prices are distinct from proposed prices. Neither completeness nor saved confirmation/history authorizes execution. Subsequent mutation handlers must revalidate authoritative options, pricing, ownership and explicit action authority.
+
 ## Database Migrations
 
 Use Drizzle schemas and query APIs for all persistence, including database initialization and data corrections. Load the global [$drizzle-migrations](../../.codex/skills/drizzle-migrations/SKILL.md) skill for this workflow.

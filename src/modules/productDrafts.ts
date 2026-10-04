@@ -7,6 +7,7 @@ import {
   productsToCategories,
 } from '../db/schema';
 import type { WorkerEnv } from '../factory';
+import { productQuestions } from './productInterpretation';
 import { assetCleanupPending } from './productAssets';
 import { attachmentProjection } from './productAttachments';
 import {
@@ -68,13 +69,31 @@ export async function readProductDraftContext(
   };
 }
 
+/** Project current attachments and questions without treating saved history as authority. */
 export async function productDraftResponse(db: Database, row: DraftRow) {
-  return productDraftResponseSchema.parse({
+  const draft = productDraftResponseSchema.parse({
     ...(await summary(db, row)),
     state: row.state,
     context: await readProductDraftContext(db, row.target),
     attachments: attachmentProjection(row),
   });
+  if (draft.state.interpretation)
+    draft.state.pendingQuestions = [
+      ...productQuestions(draft),
+      ...draft.state.pendingQuestions.filter(
+        question =>
+          question.id === 'categoryNames' || question.id === 'clarification',
+      ),
+    ];
+  draft.state.pendingQuestions = Array.from(
+    new Map(
+      draft.state.pendingQuestions.map(question => [
+        `${question.id}:${question.prompt}`,
+        question,
+      ]),
+    ).values(),
+  );
+  return draft;
 }
 async function summary(db: Database, row: Omit<DraftRow, 'ownerId' | 'state'>) {
   let cleanupPending = Boolean(
