@@ -251,3 +251,48 @@ Notes:
 - `POST /auth/signin` - Sign in and issue a session cookie
 - `GET|POST /auth/signout` - Clear the current session cookie
 - `GET /api/auth/get-session` - Return the active Better Auth session
+
+### Shipping estimate contract
+
+`GET /cart/shipping?cartId=<uuid>` requires a valid Better Auth session cookie
+and a cart claimed by that user. Guest credentials alone do not suffice. The
+route accepts no address or amount body and returns `Cache-Control: no-store`.
+Use `GET /profile` to retrieve saved details (its street field is `address`);
+profile writes use `shippingAddress`. Estimation reads the stored, decrypted
+profile, not a client-supplied shipping destination.
+
+Required profile values are nonblank `firstName`, `lastName`, `shippingAddress`,
+`city`, `state`, `zipCode`, a valid `email`, and a two-letter `country` code.
+The adapter explicitly maps `firstName` + `lastName` to `name`,
+`shippingAddress` to `line1`, an empty string to `line2`, `zipCode` to `zip`,
+and uppercase `country` to `country`; `city` and `state` retain their names.
+It does not silently substitute US for missing/invalid countries. `phone` is
+not sent in the existing V2 estimate request.
+
+Success is `{ "shippingCost": 15.99 }`, a finite nonnegative **unconverted
+provider value**, not an address or payable quote. The checked-in adapter and
+historical mocked fixtures establish field compatibility, **not currency or
+major/minor units**. Those units remain unverified: consumers must not label
+this number as dollars/cents or use it to calculate a payment. A verified
+Slant3D V2 response contract specifying currency and units is required before
+Lulu checkout #5 / API #189 can convert or bind this amount. Historical response
+paths remain compatible, but conflicting values, negative/non-finite values,
+non-decimal strings and missing costs are rejected.
+
+All documented errors have the JSON shape `{ "error": "message" }`:
+
+- `400`: invalid/missing cart UUID, incomplete profile, missing printable file,
+  or invalid quantity.
+- `401`: missing/invalid session or an unclaimed cart.
+- `403`: cart lines belong to a different account.
+- `404`: missing profile, missing/inaccessible cart, or empty cart.
+- `500`: server configuration, profile decryption or database failure.
+- `502`: provider rejection, transport failure, 15-second timeout, malformed
+  JSON, or invalid/ambiguous amount. Raw upstream bodies and exceptions are
+  never returned.
+
+The existing `POST /v2/api/orders` provider draft-estimate integration is used;
+no local quote is persisted and no payment/fulfillment endpoint is called.
+The legacy default black filament remains for older cart lines. Checkout must
+perform its own current catalog/configuration validation. Generated endpoint
+schemas are available through `/open-api` and `/docs`.
