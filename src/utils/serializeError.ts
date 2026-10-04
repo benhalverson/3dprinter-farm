@@ -1,7 +1,7 @@
 import { DrizzleQueryError } from 'drizzle-orm';
 
-/** Only explicitly selected fields may reach cart creation logs. */
-export function serializeCartCreateError(
+/** Only explicitly selected fields may reach failure logs. */
+export function serializeError(
   error: unknown,
   depth = 0,
 ): Record<string, unknown> {
@@ -25,7 +25,7 @@ export function serializeCartCreateError(
     message,
     stack,
     ...('cause' in error && error.cause !== undefined
-      ? { cause: serializeCartCreateError(error.cause, depth + 1) }
+      ? { cause: serializeError(error.cause, depth + 1) }
       : {}),
   };
 }

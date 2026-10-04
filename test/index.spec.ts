@@ -48,8 +48,10 @@ describe('API endpoints', () => {
         '/admin/catalog/readiness',
         '/admin/orders/{id}/cancel-refund',
         '/admin/orders/{id}/reconcile',
-        '/admin/orders/{id}/resend-notification',
       ]),
+    );
+    expect(spec.paths).not.toHaveProperty(
+      '/admin/orders/{id}/resend-notification',
     );
   });
 });
