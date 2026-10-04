@@ -1,5 +1,5 @@
 import { zValidator } from '@hono/zod-validator';
-import { and, eq } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import { HTTPException } from 'hono/http-exception';
 import { describeRoute } from 'hono-openapi';
 import Stripe from 'stripe';
@@ -14,8 +14,18 @@ import {
   users,
 } from '../db/schema';
 import factory from '../factory';
+import {
+  addCartLine,
+  removeCartLine,
+  setCartLineQuantity,
+} from '../modules/cartMutations';
 import { validateCartConfiguration } from '../modules/cartConfiguration';
-import { cartLines, claimCart, createCart } from '../modules/cartOwnership';
+import {
+  assertCartIdentity,
+  cartLines,
+  claimCart,
+  createCart,
+} from '../modules/cartOwnership';
 import {
   readinessErrorResponse,
   validateCartReadiness,
@@ -43,6 +53,11 @@ const removeCartItemSchema = z.object({
 
 const cartIdParamSchema = z.object({
   cartId: z.string().uuid(),
+});
+
+const claimCartSchema = z.object({ expectedUserId: z.string().min(1) });
+const createCartIdentitySchema = z.object({
+  expectedUserId: z.string().min(1).nullable().optional(),
 });
 
 // Schema for creating a Stripe Checkout session
@@ -127,6 +142,44 @@ function hasStripePriceId<T extends { stripePriceId?: string | null }>(
   );
 }
 
+/** Documents the bearer capability without exposing it in URLs or response caches. */
+function cartCapabilityParameter() {
+  return {
+    name: 'X-Cart-Token',
+    in: 'header' as const,
+    required: false,
+    description:
+      'Guest capability returned once by POST /cart/create. Required for unclaimed guest carts; ignored for account ownership. Send session cookies for owned carts.',
+    schema: openApiSchema(z.string().uuid()),
+  };
+}
+
+/** Describes non-enumerating ownership denial and mutation conflict responses. */
+function cartAccessResponses() {
+  const content = {
+    'application/json': {
+      schema: openApiSchema(z.object({ error: z.string() })),
+    },
+  };
+  return {
+    401: {
+      description:
+        'A verified account session and claimed cart are required for this operation.',
+      content,
+    },
+    404: {
+      description:
+        'Cart or line not found, or caller lacks the owner session or guest capability.',
+      content,
+    },
+    409: {
+      description:
+        'Cart changed concurrently. Reload using the current owner session before retrying.',
+      content,
+    },
+  };
+}
+
 const shoppingCart = factory
   .createApp()
   .use('/cart/*', optionalAuthMiddleware, async (c, next) => {
@@ -135,15 +188,59 @@ const shoppingCart = factory
   })
   .post(
     '/cart/:cartId/claim',
+    describeRoute({
+      description:
+        'Claim an unowned guest cart for the verified Better Auth session. Requires X-Cart-Token and expectedUserId matching the verified session; this assertion cannot grant ownership. Claim atomically revokes the token. A repeat by the owning account is idempotent.',
+      tags: ['Shopping Cart'],
+      parameters: [
+        {
+          name: 'cartId',
+          in: 'path',
+          required: true,
+          schema: openApiSchema(z.string().uuid()),
+        },
+        cartCapabilityParameter(),
+      ],
+      requestBody: {
+        required: true,
+        content: {
+          'application/json': {
+            schema: openApiSchema(claimCartSchema, 'input'),
+          },
+        },
+      },
+      responses: {
+        ...cartAccessResponses(),
+        200: {
+          description:
+            'The verified account owns the cart, including an empty cart.',
+          content: {
+            'application/json': {
+              schema: openApiSchema(
+                z.object({
+                  message: z.literal('Cart claimed'),
+                  ownerId: z.string(),
+                }),
+              ),
+            },
+          },
+        },
+      },
+    }),
     authMiddleware,
     zValidator('param', cartIdParamSchema),
+    zValidator('json', claimCartSchema),
+    /** Verifies the caller's account expectation before consuming the guest capability. */
     async c => {
       try {
+        const ownerId = c.var.userId;
+        if (!ownerId) throw new HTTPException(401, { message: 'Unauthorized' });
+        assertCartIdentity(ownerId, c.req.valid('json').expectedUserId);
         await claimCart(c.var.db, c.req.valid('param').cartId, {
           userId: c.var.userId,
           guestToken: c.req.header('X-Cart-Token'),
         });
-        return c.json({ message: 'Cart claimed' });
+        return c.json({ message: 'Cart claimed', ownerId });
       } catch (error) {
         if (error instanceof HTTPException)
           return c.json({ error: error.message }, error.status);
@@ -156,31 +253,30 @@ const shoppingCart = factory
     authMiddleware,
     cartAccessMiddleware,
     describeRoute({
-      description: 'Get the shipping address for the logged-in user',
+      description:
+        'Estimate shipping for the authenticated account-owned cart using the saved profile',
       tags: ['Shopping Cart'],
+      parameters: [
+        {
+          name: 'cartId',
+          in: 'query',
+          required: true,
+          schema: openApiSchema(z.string().uuid()),
+        },
+      ],
       responses: {
+        ...cartAccessResponses(),
         200: {
           content: {
             'application/json': {
               schema: openApiSchema(
                 z.object({
-                  address: z
-                    .object({
-                      firstName: z.string(),
-                      lastName: z.string(),
-                      shippingAddress: z.string(),
-                      city: z.string(),
-                      state: z.string(),
-                      zipCode: z.string(),
-                      country: z.string(),
-                      phone: z.string(),
-                    })
-                    .nullable(),
+                  shippingCost: z.number(),
                 }),
               ),
             },
           },
-          description: 'Shipping address retrieved successfully',
+          description: 'Shipping estimate retrieved successfully',
         },
         500: {
           content: {
@@ -188,7 +284,7 @@ const shoppingCart = factory
               schema: openApiSchema(z.object({ error: z.string() })),
             },
           },
-          description: 'Failed to retrieve shipping address',
+          description: 'Failed to retrieve shipping estimate',
         },
       },
     }),
@@ -514,9 +610,19 @@ const shoppingCart = factory
   .post(
     '/cart/create',
     describeRoute({
-      description: 'Create a new shopping cart',
+      description:
+        'Persist an empty cart. A verified session creates an account-owned cart; anonymous creation returns a guestToken capability once. Client-supplied owner fields are ignored.',
       tags: ['Shopping Cart'],
+      requestBody: {
+        required: false,
+        content: {
+          'application/json': {
+            schema: openApiSchema(createCartIdentitySchema, 'input'),
+          },
+        },
+      },
       responses: {
+        ...cartAccessResponses(),
         201: {
           content: {
             'application/json': {
@@ -524,6 +630,7 @@ const shoppingCart = factory
                 z.object({
                   cartId: z.string().uuid(),
                   guestToken: z.string().uuid().optional(),
+                  ownerId: z.string().nullable(),
                   message: z.string(),
                 }),
               ),
@@ -533,19 +640,37 @@ const shoppingCart = factory
         },
       },
     }),
+    /** Creates an empty cart only when the observed account still matches the session. */
     async c => {
       const requestStart = performance.now();
       try {
-        const { cartId, guestToken } = await createCart(c.var.db, c.var.userId);
+        const rawBody = await c.req.text();
+        const parsed = createCartIdentitySchema.safeParse(
+          rawBody ? JSON.parse(rawBody) : {},
+        );
+        if (!parsed.success)
+          return c.json({ error: 'Invalid cart identity assertion' }, 400);
+        if (parsed.data.expectedUserId !== undefined) {
+          assertCartIdentity(c.var.userId, parsed.data.expectedUserId);
+        }
+        const { cartId, guestToken, ownerId } = await createCart(
+          c.var.db,
+          c.var.userId,
+        );
         return c.json(
           {
             cartId,
             guestToken,
+            ownerId,
             message: 'Cart created successfully',
           },
           201,
         );
       } catch (error) {
+        if (error instanceof HTTPException)
+          return c.json({ error: error.message }, error.status);
+        if (error instanceof SyntaxError)
+          return c.json({ error: 'Invalid JSON body' }, 400);
         console.error({
           event: 'cart.create.failed',
           route: 'POST /cart/create',
@@ -565,7 +690,17 @@ const shoppingCart = factory
     describeRoute({
       description: 'Get shopping cart items',
       tags: ['Shopping Cart'],
+      parameters: [
+        {
+          name: 'cartId',
+          in: 'path',
+          required: true,
+          schema: openApiSchema(z.string().uuid()),
+        },
+        cartCapabilityParameter(),
+      ],
       responses: {
+        ...cartAccessResponses(),
         200: {
           content: {
             'application/json': {
@@ -576,12 +711,12 @@ const shoppingCart = factory
                       id: z.number(),
                       productId: z.string(),
                       quantity: z.number(),
-                      color: z.string(),
+                      color: z.string().nullable(),
                       filamentType: z.string(),
                       filamentId: z.string().uuid(),
-                      name: z.string(),
-                      price: z.number(),
-                      stripePriceId: z.string().optional(),
+                      name: z.string().nullable(),
+                      price: z.number().nullable(),
+                      stripePriceId: z.string().nullable(),
                     }),
                   ),
                   total: z.number(),
@@ -601,13 +736,11 @@ const shoppingCart = factory
               ),
             },
           },
-          description: 'Cart not found',
+          description: 'Cart not found or caller lacks access',
         },
       },
     }),
     async c => {
-      const cartId = c.req.param('cartId');
-
       try {
         // Join cart with products to get pricing, name, and Stripe information
         const items = await c.var.db
@@ -656,7 +789,17 @@ const shoppingCart = factory
     describeRoute({
       description: 'Add item to cart',
       tags: ['Shopping Cart'],
+      parameters: [cartCapabilityParameter()],
+      requestBody: {
+        required: true,
+        content: {
+          'application/json': {
+            schema: openApiSchema(addCartItemSchema, 'input'),
+          },
+        },
+      },
       responses: {
+        ...cartAccessResponses(),
         200: {
           content: {
             'application/json': {
@@ -685,81 +828,16 @@ const shoppingCart = factory
     }),
     zValidator('json', addCartItemSchema),
     cartAccessMiddleware,
+    /** Validates the selection and commits a capability-scoped atomic addition. */
     async c => {
-      const { cartId, skuNumber, quantity, color, filamentType, filamentId } =
-        c.req.valid('json');
-      console.log('POST /cart/add called with', {
-        cartId,
-        skuNumber,
-        quantity,
-        color,
-        filamentType,
-        filamentId,
-      });
-
-      // Guest lines remain unowned until the entire cart is claimed.
-      const userId = c.var.cartAccess.userId;
-
       try {
-        await validateCartConfiguration(c.var.db, c.env, c.req.valid('json'));
-        const existing = await c.var.db.query.cart.findFirst({
-          where: and(
-            cartLines(c.var.cartAccess),
-            eq(cart.skuNumber, skuNumber),
-            eq(cart.filamentId, filamentId),
-          ),
-        });
-
-        if (existing) {
-          // Enforce ownership: if the existing item has an owner, it must match the caller.
-          // Use != null (loose) to treat both null and undefined as "no owner".
-          if (
-            existing.userId != null &&
-            userId !== null &&
-            existing.userId !== userId
-          ) {
-            return c.json({ error: 'Forbidden' }, 403);
-          }
-          if (existing.quantity + quantity > 69)
-            return c.json({ error: 'Maximum quantity is 69' }, 400);
-          const updated = await c.var.db
-            .update(cart)
-            .set({
-              quantity: existing.quantity + quantity,
-              filamentId,
-            })
-            .where(
-              and(
-                eq(cart.id, existing.id),
-                eq(cart.quantity, existing.quantity),
-                cartLines(c.var.cartAccess),
-              ),
-            )
-            .returning({ id: cart.id });
-          if (updated.length === 0)
-            return c.json(
-              { error: 'Cart changed; reload before retrying' },
-              409,
-            );
-        } else {
-          await c.var.db.insert(cart).values({
-            cartId,
-            accessVersion: c.var.cartAccess.accessVersion,
-            userId,
-            skuNumber: skuNumber,
-            quantity,
-            color,
-            filamentType,
-            filamentId,
-          });
-        }
-
+        const selection = c.req.valid('json');
+        await validateCartConfiguration(c.var.db, c.env, selection);
+        await addCartLine(c.var.db, c.var.cartAccess, selection);
         return c.json({ message: 'Item added to cart successfully' });
       } catch (error) {
         if (error instanceof HTTPException)
           return c.json({ error: error.message }, error.status);
-        if (error instanceof Error && /constraint/i.test(error.message))
-          return c.json({ error: 'Cart changed; reload before retrying' }, 409);
         console.error('POST /cart/add failed:', error);
         return c.json({ error: 'Failed to add item to cart' }, 500);
       }
@@ -770,7 +848,17 @@ const shoppingCart = factory
     describeRoute({
       description: 'Update cart item quantity',
       tags: ['Shopping Cart'],
+      parameters: [cartCapabilityParameter()],
+      requestBody: {
+        required: true,
+        content: {
+          'application/json': {
+            schema: openApiSchema(updateCartItemSchema, 'input'),
+          },
+        },
+      },
       responses: {
+        ...cartAccessResponses(),
         200: {
           content: {
             'application/json': {
@@ -799,59 +887,20 @@ const shoppingCart = factory
     }),
     zValidator('json', updateCartItemSchema),
     cartAccessMiddleware,
+    /** Applies only a validated quantity to a line in the authorized cart version. */
     async c => {
-      const { cartId, itemId, quantity } = c.req.valid('json');
-
+      const { itemId, quantity } = c.req.valid('json');
       try {
-        // First, let's see what items exist in this cart
-        const existingItems = await c.var.db.query.cart.findMany({
-          where: cartLines(c.var.cartAccess),
+        await setCartLineQuantity(c.var.db, c.var.cartAccess, itemId, quantity);
+        return c.json({
+          message:
+            quantity === 0
+              ? 'Cart item removed successfully'
+              : 'Cart item updated successfully',
         });
-
-        // Enforce ownership: if any item in the cart has an owner, require the caller to match.
-        // Use != null (loose) to treat both null and undefined as "no owner".
-        if (existingItems.length > 0 && existingItems[0].userId != null) {
-          const callerId = getCallerUserId(c);
-          if (!callerId) {
-            return c.json({ error: 'Unauthorized' }, 401);
-          }
-          if (existingItems[0].userId !== callerId) {
-            return c.json({ error: 'Forbidden' }, 403);
-          }
-        }
-
-        if (quantity === 0) {
-          const _deleteResult = await c.var.db
-            .delete(cart)
-            .where(and(eq(cart.id, itemId), cartLines(c.var.cartAccess)));
-          return c.json({ message: 'Cart item removed successfully' });
-        } else {
-          const updateResult = await c.var.db
-            .update(cart)
-            .set({ quantity })
-            .where(and(eq(cart.id, itemId), cartLines(c.var.cartAccess)));
-
-          const updateChanges =
-            'changes' in updateResult
-              ? updateResult.changes
-              : updateResult.meta.changes;
-
-          if (updateChanges === 0) {
-            return c.json(
-              {
-                error: 'No cart item found with that ID',
-                debug: {
-                  itemId,
-                  cartId,
-                },
-              },
-              404,
-            );
-          }
-
-          return c.json({ message: 'Cart item updated successfully' });
-        }
       } catch (error) {
+        if (error instanceof HTTPException)
+          return c.json({ error: error.message }, error.status);
         console.error('Update error:', error);
         return c.json({ error: 'Failed to update cart item' }, 500);
       }
@@ -862,7 +911,17 @@ const shoppingCart = factory
     describeRoute({
       description: 'Remove item from cart',
       tags: ['Shopping Cart'],
+      parameters: [cartCapabilityParameter()],
+      requestBody: {
+        required: true,
+        content: {
+          'application/json': {
+            schema: openApiSchema(removeCartItemSchema, 'input'),
+          },
+        },
+      },
       responses: {
+        ...cartAccessResponses(),
         200: {
           content: {
             'application/json': {
@@ -891,33 +950,15 @@ const shoppingCart = factory
     }),
     zValidator('json', removeCartItemSchema),
     cartAccessMiddleware,
+    /** Deletes a line only while its cart authorization remains current. */
     async c => {
-      const { cartId, itemId } = c.req.valid('json');
-
+      const { itemId } = c.req.valid('json');
       try {
-        // Verify ownership before deleting: reject if the cart is owned by a different user.
-        // Use != null (loose) to treat both null and undefined as "no owner".
-        const [existingItem] = await c.var.db
-          .select({ userId: cart.userId })
-          .from(cart)
-          .where(and(eq(cart.id, itemId), cartLines(c.var.cartAccess)));
-
-        if (existingItem?.userId != null) {
-          const callerId = getCallerUserId(c);
-          if (!callerId) {
-            return c.json({ error: 'Unauthorized' }, 401);
-          }
-          if (existingItem.userId !== callerId) {
-            return c.json({ error: 'Forbidden' }, 403);
-          }
-        }
-
-        await c.var.db
-          .delete(cart)
-          .where(and(eq(cart.id, itemId), cartLines(c.var.cartAccess)));
-
+        await removeCartLine(c.var.db, c.var.cartAccess, itemId);
         return c.json({ message: 'Item removed from cart successfully' });
-      } catch (_error) {
+      } catch (error) {
+        if (error instanceof HTTPException)
+          return c.json({ error: error.message }, error.status);
         return c.json({ error: 'Failed to remove item from cart' }, 500);
       }
     },
@@ -971,8 +1012,6 @@ const shoppingCart = factory
     zValidator('param', cartIdParamSchema),
     cartAccessMiddleware,
     async c => {
-      const cartId = c.req.param('cartId');
-
       try {
         // Join cart with products to get Stripe price IDs
         const items = await c.var.db

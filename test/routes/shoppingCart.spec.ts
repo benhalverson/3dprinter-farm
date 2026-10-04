@@ -3,6 +3,7 @@ import app from '../../src/app';
 import { mockAuth, mockBetterAuth } from '../mocks/auth';
 import {
   capturedInserts,
+  mockDelete,
   mockDrizzle,
   mockInsert,
   mockQuery,
@@ -855,104 +856,37 @@ describe('Shopping Cart Routes', () => {
     });
   });
 
-  describe('PUT /cart/update (ownership enforcement)', () => {
-    test('returns 403 when cart is owned by a different authenticated user', async () => {
-      // findMany returns items owned by a different user
-      mockQuery.cart.findMany.mockResolvedValueOnce([
+  describe('authorized cart mutation results', () => {
+    test.each([
+      { path: '/cart/update', method: 'PUT', quantity: 3, succeeds: true },
+      { path: '/cart/update', method: 'PUT', quantity: 3, succeeds: false },
+      { path: '/cart/update', method: 'PUT', quantity: 0, succeeds: true },
+      { path: '/cart/update', method: 'PUT', quantity: 0, succeeds: false },
+      { path: '/cart/remove', method: 'DELETE', succeeds: true },
+      { path: '/cart/remove', method: 'DELETE', succeeds: false },
+    ])('reports the actual mutation result: %j', async ({
+      path,
+      method,
+      quantity,
+      succeeds,
+    }) => {
+      mockUpdate.mockResolvedValueOnce(succeeds ? [{ id: 1 }] : []);
+      mockDelete.mockReset().mockResolvedValueOnce(succeeds ? [{ id: 1 }] : []);
+      const response = await app.request(
+        path,
         {
-          id: 1,
-          cartId: mockCartId,
-          userId: 'different_user_456',
-          quantity: 2,
+          method,
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ cartId: mockCartId, itemId: 1, quantity }),
         },
-      ]);
-
-      const request = new Request('http://localhost/cart/update', {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          Cookie: 'token=s.mocked.signed.cookie',
-        },
-        body: JSON.stringify({
-          cartId: mockCartId,
-          itemId: 1,
-          quantity: 3,
-        }),
-      });
-
-      const res = await app.fetch(request, env);
-
-      expect(res.status).toBe(403);
-      const data = (await res.json()) as any;
-      expect(data.error).toBe('Forbidden');
-    });
-
-    test('returns 401 when cart is owned but caller is not authenticated', async () => {
-      // findMany returns items with an owner, but no auth cookie is provided
-      mockQuery.cart.findMany.mockResolvedValueOnce([
-        { id: 1, cartId: mockCartId, userId: 'user_123', quantity: 2 },
-      ]);
-
-      const request = new Request('http://localhost/cart/update', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          cartId: mockCartId,
-          itemId: 1,
-          quantity: 3,
-        }),
-      });
-
-      const res = await app.fetch(request, env);
-
-      expect(res.status).toBe(401);
-      const data = (await res.json()) as any;
-      expect(data.error).toBe('Unauthorized');
-    });
-  });
-
-  describe('DELETE /cart/remove (ownership enforcement)', () => {
-    test('returns 403 when cart is owned by a different authenticated user', async () => {
-      // Ownership check select returns an item owned by a different user
-      mockWhere.mockResolvedValueOnce([{ userId: 'different_user_456' }]);
-
-      const request = new Request('http://localhost/cart/remove', {
-        method: 'DELETE',
-        headers: {
-          'Content-Type': 'application/json',
-          Cookie: 'token=s.mocked.signed.cookie',
-        },
-        body: JSON.stringify({
-          cartId: mockCartId,
-          itemId: 1,
-        }),
-      });
-
-      const res = await app.fetch(request, env);
-
-      expect(res.status).toBe(403);
-      const data = (await res.json()) as any;
-      expect(data.error).toBe('Forbidden');
-    });
-
-    test('returns 401 when cart is owned but caller is not authenticated', async () => {
-      // Ownership check select returns an item with an owner, but no auth cookie
-      mockWhere.mockResolvedValueOnce([{ userId: 'user_123' }]);
-
-      const request = new Request('http://localhost/cart/remove', {
-        method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          cartId: mockCartId,
-          itemId: 1,
-        }),
-      });
-
-      const res = await app.fetch(request, env);
-
-      expect(res.status).toBe(401);
-      const data = (await res.json()) as any;
-      expect(data.error).toBe('Unauthorized');
+        env,
+      );
+      expect(response.status).toBe(succeeds ? 200 : 404);
+      if (!succeeds)
+        expect(await response.json()).toEqual({
+          error: 'No cart item found with that ID',
+        });
+      expect(mockQuery.cart.findMany).not.toHaveBeenCalled();
     });
   });
 

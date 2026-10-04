@@ -5,6 +5,7 @@ import { requireCartAccess } from '../modules/cartOwnership';
 
 const cartRequest = z.object({ cartId: z.string().uuid() });
 
+/** Gates private cart operations using a server-owned account or guest capability. */
 export const cartAccessMiddleware = factory.createMiddleware(
   async (c, next) => {
     c.header('Cache-Control', 'no-store');

@@ -19,6 +19,7 @@ const filamentsSchema = z.object({
   ),
 });
 
+/** Checks the persisted SKU material and current provider availability before a cart write. */
 export async function validateCartConfiguration(
   db: WorkerEnv['Variables']['db'],
   env: Pick<WorkerEnv['Bindings'], 'COLOR_CACHE' | 'SLANT_API_V2'>,
@@ -32,11 +33,11 @@ export async function validateCartConfiguration(
   if (!product || product.filamentType !== input.filamentType) {
     throw new HTTPException(400, { message: 'Product or material is invalid' });
   }
-  const cached = await env.COLOR_CACHE.get(
-    `v2:colors:${product.filamentType}:true:all`,
-  );
   let filaments: z.infer<typeof filamentsSchema>;
   try {
+    const cached = await env.COLOR_CACHE.get(
+      `v2:colors:${product.filamentType}:true:all`,
+    );
     if (cached) {
       filaments = filamentsSchema.parse(JSON.parse(cached));
     } else {

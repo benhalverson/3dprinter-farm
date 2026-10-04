@@ -85,6 +85,12 @@ describe('server-owned cart configuration', () => {
       validateCartConfiguration(db, bindings, input),
     ).rejects.toMatchObject({ status: 503 });
   });
+  test('reports cache outages as unavailable verification', async () => {
+    cache.mockRejectedValueOnce(new Error('KV unavailable'));
+    await expect(
+      validateCartConfiguration(db, bindings, input),
+    ).rejects.toMatchObject({ status: 503 });
+  });
   test('does not accept malformed cache data', async () => {
     cache.mockResolvedValueOnce('{}');
     await expect(

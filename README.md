@@ -69,6 +69,14 @@ The API now uses Better Auth for session-based authentication.
 - Compatibility routes remain available at `/auth/signup`, `/auth/signin`, and `/auth/signout`.
 - Native Better Auth routes are mounted under `/api/auth/*`.
 
+### Storefront origin and session contract
+
+`src/config/browserOrigins.ts` is the exact allowlist shared by CORS and Better Auth. It includes `https://luluspeedworks.com`, the existing RC storefront/admin, API and Race Forge origins, and local development ports 3000, 4200, 5173 and 8787. Unrelated origins (including `null`, lookalike suffixes, and unlisted subdomains) receive 403 before route execution. Credentialed preflights permit `Content-Type`, `Authorization` and `X-Cart-Token`. Originless non-browser clients still require each route's authentication/capability checks.
+
+Use `credentials: 'include'` for signup, signin, profile and **POST** signout. GET signout is not supported because link navigation must not revoke a session. A rejected signout remains an error; clients must not claim that the server session was cleared. Auth, profile, cart and other private responses, including errors and credentialed responses, carry `Cache-Control: private, no-store` and vary by Origin, Cookie, Authorization and X-Cart-Token.
+
+`AUTH_BASE_URL` identifies the API origin (local default `http://localhost:8787`), independently of the storefront `DOMAIN`. HTTPS sessions use host-only HttpOnly cookies with Secure and SameSite=None; local HTTP uses SameSite=Lax without Secure. No shared cookie domain is configured. The existing `https://api.benhalverson.dev` API is **cross-site** from `https://luluspeedworks.com`: browsers that block third-party cookies, including WebKit and Chromium with third-party cookie restrictions, can reject or omit the session cookie despite correct CORS. CORS does not override that policy. Reliable support requires an owner-selected same-site API hostname or same-origin proxy, with the corresponding AUTH_BASE_URL and exact origin configuration; this change does not configure or deploy either. Do not treat mocked route tests or same-site localhost browser checks as acceptance of the intended cross-site topology. On a 401 profile/cart response, clients must recover through signin and retain only the local cart/return intent, without serving another account's cached private data.
+
 ### Route auth policy
 
 The API uses the following route protection rules:
@@ -249,5 +257,19 @@ Notes:
 - `PUT /update-product` - Update product (authenticated)
 - `POST /auth/signup` - Create a user and issue a session cookie
 - `POST /auth/signin` - Sign in and issue a session cookie
-- `GET|POST /auth/signout` - Clear the current session cookie
+- `POST /auth/signout` - Clear the current session cookie
 - `GET /api/auth/get-session` - Return the active Better Auth session
+
+## Cart ownership contract
+
+Cart ownership is persisted in `shopping_carts` independently of cart lines. It uses the existing Better Auth session, with no separate identity store. All cart responses are private and non-cacheable; requests must include credentials for account-owned carts.
+
+- `POST /cart/create` persists an empty cart and returns `{ cartId, ownerId, message }` for a verified account, or `{ cartId, guestToken, ownerId: null, message }` for a guest. Store the guest capability locally with its cart ID; it is returned only at creation and only its SHA-256 hash is persisted. Body fields such as `userId` and `ownerId` do not assign ownership. An optional `{ expectedUserId: string | null }` body asserts the account the UI observed (null for a guest); a changed session returns 409 before creating a cart. The response `ownerId` always reflects the verified session.
+- `GET /cart/:cartId`, `POST /cart/add`, `PUT /cart/update`, and `DELETE /cart/remove` require either the owning account's session cookie or `X-Cart-Token: <guestToken>` for an unclaimed cart. A cart ID alone grants no access. An account may access an unclaimed guest cart only with that capability.
+- `POST /cart/:cartId/claim` requires both a verified account session and the unclaimed guest capability. It binds the entire cart, including an empty cart, to that account, clears the capability hash, and rotates the authorization version atomically. Existing lines follow the rotated version through the database foreign key. Subsequent claims by the same owner succeed idempotently; other accounts and the old token cannot access the claimed cart. The required JSON body is `{ expectedUserId: string }`: this is a stale-session guard checked against the verified account, never an ownership credential. A shared-cookie account switch returns 409 before transfer. Success is `{ message: "Cart claimed", ownerId: string }`, reporting the verified account that owns the cart.
+- Shipping and the existing payment preparation routes additionally require the owning account session; sign in and claim first. This work adds no checkout or payment implementation.
+- Reads return `{ items, total }`; an authorized empty cart returns an empty `items` array and zero total. Item `name`, `price`, and `stripePriceId` may be null when their catalog product is absent. These browsing values are not an authoritative quote or payment contract.
+- Addition validates the stored product SKU and fixed material against an available provider filament UUID. Add quantities are integers from 1 through 69; update quantities are integers from 0 through 69, where zero removes the line. Concurrent additions use a conditional quantity update or a unique configuration insertion; a losing request returns 409 instead of dropping an addition or exceeding the limit.
+- Ownership denial returns 404 without disclosing whether the cart exists. Missing required account authentication returns 401; invalid input returns 400; unavailable filament verification returns 503. A lost claim/addition race returns 409 and requires reloading before retrying. Updates/removals return 404 when no line remains in the authorized version, including requests invalidated by a claim. Do not blindly retry additions because a transport failure may conceal a completed mutation.
+
+Legacy lines without an authorization version are inaccessible through this contract; the API never trusts or infers ownership from a line or a client assertion. Existing generated migrations `0012` and `0013` are prerequisites for the durable cart and cascading authorization-version constraint. This PR does not rewrite or apply migration history. Mocked Hono tests cover route authorization, parameter binding, and conflicts; they do not establish deployed migration state or SQLite/D1 concurrency behavior. Non-production database claim/mutation integration remains required before accepting API issue #186, and remote migration/deployment requires separate authorization.
