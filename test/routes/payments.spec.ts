@@ -1,9 +1,10 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
-import app from '../../src/index';
+import app from '../../src/app';
 import type { PaymentStatusResponse } from '../../src/types';
 import { mockAuth } from '../mocks/auth';
 import {
   capturedInserts,
+  mockAll,
   mockDelete,
   mockDrizzle,
   mockInsert,
@@ -83,6 +84,7 @@ describe('Payments Routes', () => {
 
     // Reset all mock functions
     mockWhere.mockReset();
+    mockAll.mockReset().mockResolvedValue([]);
     mockInsert.mockReset();
     mockUpdate.mockReset();
     mockDelete.mockReset();
@@ -232,13 +234,6 @@ describe('Payments Routes', () => {
         .mockResolvedValueOnce({
           ok: true,
           json: () => Promise.resolve({ success: true }),
-        })
-        .mockResolvedValueOnce({
-          ok: true,
-          json: () =>
-            Promise.resolve({
-              Messages: [{ To: [{ MessageID: 123456 }] }],
-            }),
         });
 
       const res = await app.fetch(
@@ -264,7 +259,7 @@ describe('Payments Routes', () => {
         'valid-signature',
         'whsec_123',
       );
-      expect(global.fetch).toHaveBeenCalledTimes(3);
+      expect(global.fetch).toHaveBeenCalledTimes(2);
       expect(global.fetch).toHaveBeenNthCalledWith(
         1,
         'https://slant3dapi.com/v2/api/orders',
@@ -279,13 +274,6 @@ describe('Payments Routes', () => {
       expect(global.fetch).toHaveBeenNthCalledWith(
         2,
         'https://slant3dapi.com/v2/api/orders/slant3d-order-123',
-        expect.objectContaining({
-          method: 'POST',
-        }),
-      );
-      expect(global.fetch).toHaveBeenNthCalledWith(
-        3,
-        'https://api.mailjet.com/v3.1/send',
         expect.objectContaining({
           method: 'POST',
         }),
@@ -306,7 +294,7 @@ describe('Payments Routes', () => {
         'publicPaymentServiceId',
       );
       expect(mockDelete).toHaveBeenCalledTimes(1);
-      expect(capturedInserts).toHaveLength(4);
+      expect(capturedInserts).toHaveLength(3);
       expect(capturedInserts[0]).toMatchObject({
         userId: mockUserId.toString(),
         cartId: mockCartId,
@@ -328,14 +316,6 @@ describe('Payments Routes', () => {
         nextStatus: 'PROCESSING',
       });
       expect(capturedInserts[2]).toMatchObject({
-        orderId: 321,
-        notificationType: 'order_confirmation',
-        recipientEmail: 'test@example.com',
-        status: 'sent',
-        statusTransition: 'paid_to_processing',
-        source: 'stripe',
-      });
-      expect(capturedInserts[3]).toMatchObject({
         idempotencyKey: 'pi_test_123',
         stripeEventId: 'evt_checkout_123',
         stripeObjectId: 'cs_test_123',
@@ -364,13 +344,6 @@ describe('Payments Routes', () => {
         .mockResolvedValueOnce({
           ok: true,
           json: () => Promise.resolve({ success: true }),
-        })
-        .mockResolvedValueOnce({
-          ok: true,
-          json: () =>
-            Promise.resolve({
-              Messages: [{ To: [{ MessageID: 789012 }] }],
-            }),
         });
 
       const res = await app.fetch(

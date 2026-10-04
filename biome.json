@@ -11,7 +11,13 @@
   },
   "files": {
     "maxSize": 2097152,
-    "includes": ["**", "!!.wrangler", "!!node_modules", "!!drizzle"]
+    "includes": [
+      "**",
+      "!!.wrangler",
+      "!!node_modules",
+      "!!drizzle",
+      "!!worker-configuration.d.ts"
+    ]
   },
   "linter": {
     "enabled": true,

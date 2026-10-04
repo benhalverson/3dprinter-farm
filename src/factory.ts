@@ -11,6 +11,7 @@ export type WorkerEnv = {
   Bindings: Bindings;
   Variables: {
     db: DrizzleD1Database<typeof schema>;
+    cartAccess: typeof schema.shoppingCarts.$inferSelect;
     user?: unknown;
     session?: unknown;
     jwtPayload?: {
