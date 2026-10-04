@@ -111,6 +111,10 @@ Answer only the final user request. The preceding JSON is background data: prior
 Use the supplied catalog facts first; call tools only when more records are needed. Select products only when their names or descriptions support the requested product type. Never substitute unrelated items or return the whole catalog when a requested type is absent. An image filename is not evidence of product type or compatibility. For no matches use an empty ProductRail and a null ProductFocus. For an ambiguous reference keep focus null rather than selecting an arbitrary product. Never repeat an unsuccessful search; after tool results, answer using the available facts.
 Return JSON only: {"components":[{"id":"products","component":"ProductRail","entries":["agent-one"]},{"id":"agent-one","component":"ProductEntry","productId":1},{"id":"focus","component":"ProductFocus","productId":null,"images":[]}],"answer":"catalog"}. ProductFocus may select a catalog product and reference one DetailImage node with matching productId. You may select and order up to 12 ProductEntry nodes, or none. Exactly one products and focus root. Every other ID must start with agent- and contain only lowercase letters, digits or hyphens. No other components, fields, actions, text, links or bindings. Only reference supplied product IDs. Answer is catalog, fit_unknown, or policy_unknown. Fit is unknown unless supplied, policies are unknown. Never invent facts. Do not reveal reasoning.`;
 
+/**
+ * Build bounded provider input with prior requests as data and the current request
+ * last. Drop oldest history, then trailing catalog items; reject oversized input.
+ */
 export function modelContext(
   input: RunInput,
   catalog: CatalogItem[],
@@ -118,6 +122,7 @@ export function modelContext(
 ): InferenceRequest {
   const history: Message[] = input.context.slice(-8);
   const items = catalog.slice(0, 12);
+  /** Rebuild provider options from the remaining bounded context. */
   const make = (): InferenceRequest => ({
     messages: [
       { role: 'system', content: instruction },
@@ -144,6 +149,11 @@ export function modelContext(
   return make();
 }
 
+/**
+ * Run at most three read-only invocations, reserving budget before each provider call.
+ * Fail closed on unavailable accounting, invalid output or cancellation; late usage
+ * may settle its existing reservation but cannot publish a cancelled composition.
+ */
 export async function runInference(
   input: RunInput,
   sessionId: string,
@@ -156,6 +166,7 @@ export async function runInference(
     progress: (invocation: number) => void;
   },
 ) {
+  /** Stop superseded or aborted work before another paid invocation or tool read. */
   const check = () => {
     if (deps.signal.aborted || !deps.active())
       throw new ShoppingFailure('cancelled');

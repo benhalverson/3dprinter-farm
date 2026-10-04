@@ -46,6 +46,11 @@ type Component = {
   [key: string]: string | boolean | string[] | { event: { name: string } };
 };
 
+/**
+ * Validate a model-selected graph and hydrate only authoritative catalog facts.
+ * An empty rail can coexist with a focused product; no-match copy requires both
+ * to be empty. Invalid references or unsupported output fail closed.
+ */
 export function compose(raw: string, catalog: CatalogItem[]) {
   try {
     if (bytes(raw) > MAX_BYTES) throw new Error('oversized');
@@ -97,9 +102,10 @@ export function compose(raw: string, catalog: CatalogItem[]) {
           component: node.component,
           controls: [],
           entries: node.entries,
-          status: node.entries.length
-            ? LIMITATIONS[plan.answer]
-            : `No matching products were found in the catalog. ${LIMITATIONS[plan.answer]}`,
+          status:
+            node.entries.length || focus.productId !== null
+              ? LIMITATIONS[plan.answer]
+              : `No matching products were found in the catalog. ${LIMITATIONS[plan.answer]}`,
           paging: '',
           previousDisabled: true,
           nextDisabled: true,

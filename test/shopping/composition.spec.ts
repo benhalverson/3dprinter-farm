@@ -124,3 +124,24 @@ describe('validated A2UI v0.9.1 composition', () => {
     ).toBe('');
   });
 });
+
+// A focus-only answer is a valid catalog match even without rail entries.
+it.each([
+  1,
+  null,
+])('describes an empty rail truthfully with focus %s', productId => {
+  const result = compose(
+    JSON.stringify({
+      answer: 'catalog',
+      components: [
+        { id: 'products', component: 'ProductRail', entries: [] },
+        { id: 'focus', component: 'ProductFocus', productId, images: [] },
+      ],
+    }),
+    catalog,
+  );
+  const rail = result.messages[0].updateComponents.components[0];
+  expect(String(rail.status).includes('No matching products')).toBe(
+    productId === null,
+  );
+});
