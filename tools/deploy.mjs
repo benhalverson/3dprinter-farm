@@ -8,6 +8,18 @@ const config = join(root, 'wrangler.toml');
 const database = '8ea08f02-696c-4410-a690-2bf1fa0333dc';
 const migrationArgs = ['d1', 'migrations'];
 
+/** Conservatively detect destructive statements in Drizzle-generated migrations. */
+export function requiresMigrationApproval(contents) {
+  const statements = contents
+    .replace(/--[^\n]*|\/\*[\s\S]*?\*\//g, '')
+    .split(';');
+  return statements.some(
+    statement =>
+      /\b(?:DROP|TRUNCATE)\b/i.test(statement) ||
+      /^\s*(?:UPDATE|DELETE|REPLACE)\b/i.test(statement),
+  );
+}
+
 /** Run the locked Wrangler CLI without interactive input or a shell. */
 export function runWrangler(args) {
   const cli = join(root, 'node_modules/wrangler/bin/wrangler.js');
@@ -46,6 +58,8 @@ export function pendingMigrations(output, files) {
 /** Apply committed forward migrations before releasing the production Worker. */
 export function deploy({
   run = runWrangler,
+  readMigration = name =>
+    readFileSync(join(root, 'drizzle/migrations', name), 'utf8'),
   workspace = root,
   args = [],
 } = {}) {
@@ -99,6 +113,14 @@ export function deploy({
       throw new Error(
         'Historical migrations are pending. Reconcile the existing database and migration ledger before deployment; automatic bootstrap is blocked.',
       );
+    }
+    // Generated migrations may delete existing data. Never infer approval from deploy.
+    for (const name of pending) {
+      if (requiresMigrationApproval(readMigration(name))) {
+        throw new Error(
+          `Destructive migration ${name} requires specific approval and a separately reviewed migration plan; Worker release blocked.`,
+        );
+      }
     }
     if (pending.length) run([...migrationArgs, 'apply', ...target]);
     if (

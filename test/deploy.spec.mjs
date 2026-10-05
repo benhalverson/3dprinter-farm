@@ -1,10 +1,30 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, rmdirSync } from 'node:fs';
+import { mkdirSync, readFileSync, rmdirSync } from 'node:fs';
 import { test } from 'node:test';
-import { deploy, pendingMigrations } from '../tools/deploy.mjs';
+import {
+  deploy as productionDeploy,
+  pendingMigrations,
+  requiresMigrationApproval,
+} from '../tools/deploy.mjs';
+
+/** Exercise deploy control flow with simulated non-destructive migration contents. */
+function deploy(options) {
+  return productionDeploy({ readMigration: () => '', ...options });
+}
 
 const none = '? No migrations to apply!';
 const pending = 'Migrations to be applied:\n� 0018_square_catalog.sql �';
+
+test('generated additive foreign keys do not require destructive approval', () => {
+  const catalog = readFileSync(
+    'drizzle/migrations/0018_square_catalog.sql',
+    'utf8',
+  );
+  const additive = catalog.split('ALTER TABLE')[0];
+  assert.ok(additive.includes('ON UPDATE no action'));
+  assert.equal(requiresMigrationApproval(additive), false);
+  assert.equal(requiresMigrationApproval(catalog), true);
+});
 
 test('no pending migrations releases only after both checks', () => {
   const calls = [];
@@ -83,6 +103,21 @@ test('remaining pending migrations block release', () => {
     /remain pending/,
   );
   assert.equal(calls.length, 3);
+});
+
+test('published catalog migration is destructive and never auto-applies', () => {
+  const calls = [];
+  assert.throws(
+    () =>
+      productionDeploy({
+        run: args => {
+          calls.push(args);
+          return pending;
+        },
+      }),
+    /Destructive migration 0018_square_catalog.sql requires specific approval/,
+  );
+  assert.equal(calls.length, 1);
 });
 
 test('target overrides and concurrent deployment are rejected', () => {
