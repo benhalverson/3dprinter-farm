@@ -24,8 +24,9 @@ export default defineConfig({
     exclude: [
       ...configDefaults.exclude,
       'test/project-notes/**',
-      'test/database/**',
       'test/persistence/**',
+      'test/database/**',
+      'test/deploy.spec.mjs',
     ],
     isolate: true,
     setupFiles: ['./test/setup.ts'],

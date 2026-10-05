@@ -1,1 +1,0 @@
-DROP TABLE `stripe_fulfillment`;

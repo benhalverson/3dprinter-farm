@@ -1035,7 +1035,7 @@ describe('Product Routes', () => {
 
   test('POST /add-category allows admin users', async () => {
     mockSessionRole('admin');
-    mockInsert.mockResolvedValueOnce([
+    mockAll.mockResolvedValueOnce([
       { categoryId: 1, categoryName: 'Accessories' },
     ]);
 

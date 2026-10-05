@@ -8,9 +8,10 @@ import {
   initiateSquareCheckout,
 } from '../modules/squareCheckout';
 import { authMiddleware } from '../utils/authMiddleware';
+import { cartAccessMiddleware } from '../utils/cartAccessMiddleware';
 
 const router = factory.createApp();
-router.use('/cart/:cartId/checkout', authMiddleware);
+router.use('/cart/:cartId/checkout', authMiddleware, cartAccessMiddleware);
 const checkoutRequest = z
   .object({ quoteId: z.string().uuid(), requestKey: z.string().uuid() })
   .strict();

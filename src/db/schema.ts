@@ -33,6 +33,12 @@ export const productDrafts = sqliteTable(
       .notNull()
       .default('active'),
     attachments: text('attachments', { mode: 'json' }).$type<AttachmentState>(),
+    categoryConfirmationToken: text('category_confirmation_token'),
+    categoryConfirmationName: text('category_confirmation_name'),
+    categoryConfirmationKey: text('category_confirmation_key'),
+    // Drizzle insert-select requires every column, including the generated ID.
+    // This server-only slot is always null so SQLite allocates the category ID.
+    categoryConfirmationId: integer('category_confirmation_id'),
   },
   table => [
     index('product_drafts_owner_updated').on(table.ownerId, table.updatedAt),
@@ -226,6 +232,7 @@ export const productRelations = relations(productsTable, ({ many }) => ({
 export const categoryTable = sqliteTable('category', {
   categoryId: integer().primaryKey({ autoIncrement: true }),
   categoryName: text().notNull(),
+  normalizedKey: text('normalized_key').unique(),
 });
 
 export const productsToCategories = sqliteTable(
@@ -272,7 +279,7 @@ export const categoryDataSchema = z.object({
 
 // Input schema for creating categories (ID auto-increments in DB)
 export const addCategorySchema = z.object({
-  categoryName: z.string(),
+  categoryName: z.string().trim().min(1).max(256),
 });
 
 export const ProductsDataSchema = z
