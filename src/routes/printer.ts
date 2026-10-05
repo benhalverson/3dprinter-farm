@@ -25,7 +25,7 @@ import type {
   SliceResponse,
 } from '../types';
 import { authMiddleware } from '../utils/authMiddleware';
-import { dashFilename } from '../utils/dash';
+import { uploadPublicFile } from './publicFileUpload';
 import {
   confirmUploadDoc,
   estimateV2Doc,
@@ -60,66 +60,7 @@ const printer = factory
     });
     return c.json(data);
   })
-  .post('/upload', describeRoute(uploadFileDoc), async (c: Context) => {
-    const body = await c.req.parseBody();
-
-    if (!body || !body.file) {
-      return c.json({ error: 'No file uploaded' }, 400);
-    }
-
-    const file = body.file as File;
-    const mimeTypeStl = file.type === 'model/stl';
-    const mimeTypePng = file.type === 'image/png';
-
-    const acceptableExtensionStl = file.name.toLowerCase().endsWith('.stl');
-    const acceptableExtensionPng = file.name.toLowerCase().endsWith('.png');
-
-    // if(!mimeTypeStl && !acceptableExtensionStl || !mimeTypePng && !acceptableExtensionPng) {
-    // 	return c.json({ error: 'Invalid file type or extension' }, 415);
-    // }
-    const bucketSTL = c.env.BUCKET;
-    const bucketPNG = c.env.PHOTO_BUCKET;
-    const key = `${file.name}`;
-    const cleanKey = dashFilename(key);
-
-    switch (
-      acceptableExtensionPng ||
-      mimeTypePng ||
-      acceptableExtensionStl ||
-      mimeTypeStl
-    ) {
-      case mimeTypeStl || acceptableExtensionStl:
-        try {
-          await bucketSTL.put(cleanKey, file.stream(), {
-            httpMetadata: { contentType: 'model/stl' },
-          });
-
-          const base = c.env.R2_PUBLIC_BASE_URL || new URL(c.req.url).origin;
-          const url = `${base}/${encodeURIComponent(cleanKey)}`;
-
-          return c.json({ message: 'File uploaded', key: cleanKey, url });
-        } catch (error) {
-          console.error('error', error);
-          return c.json({ error: 'Failed to upload file' }, 500);
-        }
-      case mimeTypePng || acceptableExtensionPng:
-        try {
-          await bucketPNG.put(cleanKey, file.stream(), {
-            httpMetadata: { contentType: 'image/png' },
-          });
-
-          const base = c.env.R2_PHOTO_BASE_URL || new URL(c.req.url).origin;
-          const url = `${base}/${encodeURIComponent(cleanKey)}`;
-
-          return c.json({ message: 'File uploaded', key: cleanKey, url });
-        } catch (error) {
-          console.error('error', error);
-          return c.json({ error: 'Failed to upload file' }, 500);
-        }
-      default:
-        return c.json({ error: 'Invalid file type or extension' }, 415);
-    }
-  })
+  .post('/upload', describeRoute(uploadFileDoc), uploadPublicFile)
   /**
    * Lists the available colors for the filament
    * @param filamentType The type of filament to list colors for (PLA or PETG)
