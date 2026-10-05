@@ -14,10 +14,15 @@ mockAuth();
 mockDrizzle();
 
 vi.mock('stripe', () => ({
-  default: vi.fn().mockImplementation(() => ({
-    checkout: { sessions: { create: vi.fn() } },
-    webhooks: { constructEvent: vi.fn(), constructEventAsync: vi.fn() },
-  })),
+  default: vi.fn(
+    /** Builds the Stripe stub when production code calls its constructor. */
+    function StripeMock() {
+      return {
+        checkout: { sessions: { create: vi.fn() } },
+        webhooks: { constructEvent: vi.fn(), constructEventAsync: vi.fn() },
+      };
+    },
+  ),
 }));
 
 vi.mock('../../src/utils/profileCrypto', async importActual => {

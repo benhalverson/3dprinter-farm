@@ -2,6 +2,11 @@ import { zValidator } from '@hono/zod-validator';
 import { categoryTable } from '../db/schema';
 import factory from '../factory';
 import {
+  CategoryConflictError,
+  saveConfirmedDraftCategory,
+} from '../modules/productCategories';
+import { resolveDraftCategories } from '../modules/productCategoryResolution';
+import {
   productDraftIdSchema,
   productDraftStateSchema,
 } from '../modules/productDraftContracts';
@@ -27,6 +32,13 @@ const router = factory.createApp().post(
     const ownerId = c.var.userId!;
     const id = c.req.valid('param').id;
     const input = c.req.valid('json');
+    if (input.message && input.confirmCategoryName)
+      return c.json(
+        {
+          error: 'Confirm categories separately from conversation instructions',
+        },
+        400,
+      );
     const row = await readProductDraft(c.var.db, ownerId, id);
     if (!row) return c.json({ error: 'Draft not found' }, 404);
     if (row.revision !== input.expectedRevision)
@@ -95,62 +107,29 @@ const router = factory.createApp().post(
       interpretation.productionOptions = [];
     }
     const categories = await c.var.db.select().from(categoryTable).all();
-    const requested = state.answers.categoryNames;
-    interpretation.proposedCategoryNames = [];
-    if (input.confirmCategoryName) {
-      if (!requested?.includes(input.confirmCategoryName))
+    const confirmation = input.confirmCategoryName;
+    if (confirmation) {
+      if (
+        input.message ||
+        !draft.state.interpretation?.proposedCategoryNames.includes(
+          confirmation,
+        ) ||
+        !draft.state.answers.categoryNames?.includes(confirmation) ||
+        !state.answers.categoryNames?.includes(confirmation)
+      )
         return c.json(
           {
             error: 'Category confirmation does not match the current proposal',
           },
           409,
         );
-      interpretation.confirmedCategoryNames = [
-        ...new Set([
-          ...interpretation.confirmedCategoryNames,
-          input.confirmCategoryName,
-        ]),
-      ];
     }
-    const categoryQuestions: { id: string; prompt: string }[] = [];
-    if (requested?.length) {
-      const ids: number[] = [];
-      for (const name of requested) {
-        const matches = categories.filter(
-          category =>
-            category.categoryName.toLocaleLowerCase() ===
-            name.toLocaleLowerCase(),
-        );
-        if (matches.length === 1) ids.push(matches[0].categoryId);
-        else {
-          if (!matches.length) interpretation.proposedCategoryNames.push(name);
-          categoryQuestions.push({
-            id: 'categoryNames',
-            prompt: matches.length
-              ? `Category “${name}” is ambiguous. Choose its exact category identity.`
-              : interpretation.confirmedCategoryNames.includes(name)
-                ? `Category “${name}” confirmed for preparation. Category creation remains unavailable.`
-                : `New category “${name}” needs explicit name confirmation. Category creation remains unavailable.`,
-          });
-        }
-      }
-      state.answers.categoryIds = ids;
-    } else if (
-      state.answers.categoryIds?.some(
-        id => !categories.some(category => category.categoryId === id),
-      )
-    ) {
-      categoryQuestions.push({
-        id: 'categoryNames',
-        prompt:
-          'A selected category is unavailable. Choose an existing category.',
-      });
-    }
-    interpretation.confirmedCategoryNames =
-      interpretation.confirmedCategoryNames.filter(name =>
-        requested?.includes(name),
-      );
     state.interpretation = interpretation;
+    const categoryQuestions = resolveDraftCategories(state, categories);
+    if (confirmation)
+      interpretation.confirmedCategoryNames = [
+        ...new Set([...interpretation.confirmedCategoryNames, confirmation]),
+      ];
     state.pendingQuestions = [
       ...productQuestions({ ...draft, state }),
       ...categoryQuestions,
@@ -160,10 +139,38 @@ const router = factory.createApp().post(
         id: 'clarification',
         prompt: interpretation.explanation,
       });
-    const saved = await saveProductDraft(c.var.db, ownerId, id, {
+    const saveInput = {
       expectedRevision: input.expectedRevision,
       state: productDraftStateSchema.parse(state),
-    });
+    };
+    let saved: Awaited<ReturnType<typeof readProductDraft>>;
+    try {
+      saved = confirmation
+        ? await saveConfirmedDraftCategory(
+            c.var.db,
+            ownerId,
+            id,
+            saveInput,
+            confirmation,
+          )
+        : await saveProductDraft(c.var.db, ownerId, id, saveInput);
+    } catch (error) {
+      if (error instanceof CategoryConflictError)
+        return c.json(
+          {
+            error:
+              'Category is ambiguous. Reload and choose its exact identity.',
+          },
+          409,
+        );
+      return c.json(
+        {
+          error:
+            'Save outcome unavailable. Reload this draft to recover before retrying.',
+        },
+        503,
+      );
+    }
     if (!saved)
       return c.json(
         { error: 'Revision conflict; reload before retrying' },

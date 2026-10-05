@@ -1,5 +1,9 @@
 import { Hono } from 'hono';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  CategoryConflictError,
+  saveConfirmedDraftCategory,
+} from '../../src/modules/productCategories';
 import router from '../../src/routes/productDrafts';
 import { interpretProductMessage } from '../../src/modules/productInterpretation';
 import {
@@ -10,6 +14,10 @@ import {
 import { mockAll } from '../mocks/drizzle';
 import { mockEnv } from '../mocks/env';
 
+vi.mock('../../src/modules/productCategories', async original => ({
+  ...(await original<typeof import('../../src/modules/productCategories')>()),
+  saveConfirmedDraftCategory: vi.fn(),
+}));
 vi.mock('../../src/modules/productDrafts', () => ({
   readProductDraft: vi.fn(),
   saveProductDraft: vi.fn(),
@@ -228,22 +236,88 @@ describe('one-card preparation', () => {
     expect(body.state.interpretation.proposedCategoryNames).toEqual([]);
     expect(interpretProductMessage).not.toHaveBeenCalled();
   });
-  it('records exact-name confirmation as preparation only, without repeated confirmation questions', async () => {
+  it('rejects a newly supplied confirmation without a saved proposal', async () => {
     const result = await request({
       expectedRevision: 4,
       answers: { categoryNames: ['New parts'] },
       confirmCategoryName: 'New parts',
     });
-    expect(result.status).toBe(200);
-    const body = (await result.json()) as any;
-    expect(body.state.interpretation.confirmedCategoryNames).toEqual([
-      'New parts',
-    ]);
-    expect(body.state.pendingQuestions).toContainEqual({
-      id: 'categoryNames',
-      prompt:
-        'Category “New parts” confirmed for preparation. Category creation remains unavailable.',
+    expect(result.status).toBe(409);
+    expect(saveConfirmedDraftCategory).not.toHaveBeenCalled();
+    expect(saveProductDraft).not.toHaveBeenCalled();
+    expect(interpretProductMessage).not.toHaveBeenCalled();
+  });
+  it('rejects confirmation combined with inference before spending', async () => {
+    const result = await request({
+      expectedRevision: 4,
+      answers: {},
+      message: 'Add parts',
+      confirmCategoryName: 'Parts',
     });
+    expect(result.status).toBe(400);
+    expect(interpretProductMessage).not.toHaveBeenCalled();
+    expect(saveConfirmedDraftCategory).not.toHaveBeenCalled();
+  });
+  it.each([
+    'success',
+    'stale',
+    'failure',
+    'ambiguous',
+  ])('handles explicit category creation %s without inference', async outcome => {
+    const state = {
+      ...saved.state,
+      answers: { categoryNames: ['New parts'] },
+      interpretation: {
+        intent: 'create',
+        status: 'prepared',
+        explanation: 'Confirm name',
+        proposedCategoryNames: ['New parts'],
+        confirmedCategoryNames: [],
+        productionOptions: [],
+      },
+    };
+    vi.mocked(readProductDraft).mockResolvedValue({ ...saved, state } as never);
+    if (outcome === 'failure')
+      vi.mocked(saveConfirmedDraftCategory).mockRejectedValue(
+        new Error('Uncertain'),
+      );
+    else if (outcome === 'ambiguous')
+      vi.mocked(saveConfirmedDraftCategory).mockRejectedValue(
+        new CategoryConflictError(),
+      );
+    else
+      vi.mocked(saveConfirmedDraftCategory).mockResolvedValue(
+        outcome === 'stale'
+          ? undefined
+          : ({ ...saved, state, revision: 5 } as never),
+      );
+    const result = await request({
+      expectedRevision: 4,
+      answers: {},
+      confirmCategoryName: 'New parts',
+    });
+    const body = await result.json();
+    expect(result.status).toBe(
+      outcome === 'success' ? 200 : outcome === 'failure' ? 503 : 409,
+    );
+    if (outcome === 'failure')
+      expect(body).toEqual({
+        error:
+          'Save outcome unavailable. Reload this draft to recover before retrying.',
+      });
+    expect(saveConfirmedDraftCategory).toHaveBeenCalledWith(
+      expect.anything(),
+      'owner',
+      id,
+      expect.objectContaining({
+        expectedRevision: 4,
+        state: expect.objectContaining({
+          answers: { categoryNames: ['New parts'], categoryIds: [] },
+        }),
+      }),
+      'New parts',
+    );
+    expect(saveProductDraft).not.toHaveBeenCalled();
     expect(interpretProductMessage).not.toHaveBeenCalled();
   });
 });
