@@ -8,6 +8,11 @@ import {
   createCart,
   requireCartAccess,
 } from '../src/modules/cartOwnership';
+import {
+  addCartLine,
+  removeCartLine,
+  setCartLineQuantity,
+} from '../src/modules/cartMutations';
 import { cartAccessMiddleware } from '../src/utils/cartAccessMiddleware';
 
 const { drizzle } =
@@ -201,5 +206,94 @@ describe('cart access middleware', () => {
     });
     expect(response.status).toBe(400);
     expect(statements).toHaveLength(0);
+  });
+});
+
+describe('cart mutations preserve authorization versions and atomic results', () => {
+  const access = {
+    id: cartId,
+    userId: null,
+    guestTokenHash: 'hash',
+    accessVersion: version,
+  };
+  const selection = {
+    cartId,
+    skuNumber: 'SKU-1',
+    quantity: 1,
+    color: 'Black',
+    filamentType: 'PLA',
+    filamentId: guestToken,
+  };
+
+  test('an update invalidated by a claim cannot report success', async () => {
+    await expect(setCartLineQuantity(db, access, 1, 2)).rejects.toMatchObject({
+      status: 404,
+    });
+    expect(statements[0].params).toEqual([2, cartId, version, 1]);
+    expect(statements[0].query).toContain('returning "id"');
+  });
+
+  test.each([
+    true,
+    false,
+  ])('a stale deletion or zero-quantity update cannot report success: %s', async remove => {
+    await expect(
+      remove
+        ? removeCartLine(db, access, 1)
+        : setCartLineQuantity(db, access, 1, 0),
+    ).rejects.toMatchObject({ status: 404 });
+    expect(statements[0].params).toEqual([cartId, version, 1]);
+    expect(statements[0].query).toContain('returning "id"');
+  });
+
+  test.each([1, 0])('confirms changed rows for quantity %s', async quantity => {
+    raw.mockResolvedValueOnce([[1]]);
+    await expect(
+      setCartLineQuantity(db, access, 1, quantity),
+    ).resolves.toBeUndefined();
+  });
+
+  test('a nested Drizzle foreign-key failure after claim is a retry conflict', async () => {
+    raw
+      .mockResolvedValueOnce([])
+      .mockRejectedValueOnce(
+        new Error('Failed query', {
+          cause: new Error('FOREIGN KEY constraint failed'),
+        }),
+      );
+    await expect(addCartLine(db, access, selection)).rejects.toMatchObject({
+      status: 409,
+    });
+    expect(statements[1].params).toContain(version);
+  });
+
+  test('a concurrent same-configuration insert is a retry conflict', async () => {
+    raw
+      .mockResolvedValueOnce([])
+      .mockRejectedValueOnce(new Error('UNIQUE constraint failed'));
+    await expect(addCartLine(db, access, selection)).rejects.toMatchObject({
+      status: 409,
+    });
+  });
+
+  test('unrelated storage failures are not mislabeled as user conflicts', async () => {
+    const failure = new Error('Storage unavailable');
+    raw.mockResolvedValueOnce([]).mockRejectedValueOnce(failure);
+    await expect(addCartLine(db, access, selection)).rejects.toMatchObject({
+      cause: failure,
+    });
+  });
+
+  test('quantity comparisons and the authorization version guard the same update', async () => {
+    raw
+      .mockResolvedValueOnce([
+        [1, cartId, version, null, 'SKU-1', 2, 'Black', 'PLA', guestToken],
+      ])
+      .mockResolvedValueOnce([]);
+    await expect(addCartLine(db, access, selection)).rejects.toMatchObject({
+      status: 409,
+    });
+    expect(statements[1].params).toEqual([3, cartId, version, 1, 2]);
+    expect(statements[1].query).toContain('"cart"."quantity" = ?');
   });
 });

@@ -363,6 +363,7 @@ const catalogPayload = {
   name: 'Part',
   description: 'Part description',
   price: 12,
+  inPersonPrice: 7.25,
   filamentType: 'PLA',
   color: 'black',
   image: 'https://public.example/part.png',
@@ -395,7 +396,8 @@ function existingProduct(extra: Row = {}) {
     stl: 'old-stl',
     publicFileServiceId: 'old-print',
     skuNumber: 'KEEP-SKU',
-    stripeProductId: 'keep-product',
+    inPersonPrice: 725,
+    squareRevision: 0,
     stripePriceId: 'keep-price',
     ...extra,
   };
@@ -474,7 +476,7 @@ describe('durable product attachments through Hono', () => {
     const response = await request(`/attachments/${photo.id}/image`);
     expect(response.status).toBe(200);
     expect(response.headers.get('content-type')).toBe(mime);
-    expect(response.headers.get('cache-control')).toBe('no-store');
+    expect(response.headers.get('cache-control')).toBe('private, no-store');
     expect(new Uint8Array(await response.arrayBuffer())).toEqual(data);
     authorize('another-admin');
     expect((await request(`/attachments/${photo.id}/image`)).status).toBe(404);
@@ -2672,11 +2674,9 @@ describe('durable product attachments through Hono', () => {
       'POST',
       '/add-product',
     );
-    // The legacy provider rejects this controlled request, after Stripe creation.
+    // The controlled manufacturing request fails before any catalog publication.
     expect(create.status).toBe(500);
-    expect(stripe.product).toHaveBeenCalledWith(
-      expect.objectContaining({ images: [photo.imageUrl] }),
-    );
+    expect(stripe.product).not.toHaveBeenCalled();
     expect(records(schema.productAssetReferenceAttempts)).toEqual([]);
   });
   it('updates only the original contract fields and keeps pricing, file IDs and omitted categories', async () => {
@@ -2697,6 +2697,8 @@ describe('durable product attachments through Hono', () => {
     expect(records(schema.productsTable)[0]).toEqual({
       ...original,
       ...catalogPayload,
+      inPersonPrice: 725,
+      squareRevision: 1,
       imageGallery: '[]',
     });
     expect(records(schema.productsToCategories)).toEqual([
@@ -2743,9 +2745,13 @@ describe('durable product attachments through Hono', () => {
     beforeUpdate = table => {
       if (table === schema.productsTable) rejectUpdate = true;
     };
-    expect(await (await catalogRequest()).json()).toEqual({
-      error: 'Product update failed',
-    });
+    const linksBeforeConflict = structuredClone(
+      records(schema.productsToCategories),
+    );
+    const rejected = await catalogRequest({ categoryIds: [1] });
+    expect(rejected.status).toBe(409);
+    expect(await rejected.json()).toEqual({ error: 'catalog_changed_retry' });
+    expect(records(schema.productsToCategories)).toEqual(linksBeforeConflict);
     beforeUpdate = table => {
       if (table === schema.productsTable)
         throw new Error('Database unavailable');

@@ -7,6 +7,9 @@ import {
   productsToCategories,
 } from '../db/schema';
 import type { WorkerEnv } from '../factory';
+import { productPrices } from './catalogPublication';
+import { resolveDraftCategories } from './productCategoryResolution';
+import { productQuestions } from './productInterpretation';
 import { assetCleanupPending } from './productAssets';
 import { attachmentProjection } from './productAttachments';
 import {
@@ -23,6 +26,7 @@ type DraftRow = typeof productDrafts.$inferSelect;
 const owned = (id: string, ownerId: string) =>
   and(eq(productDrafts.id, id), eq(productDrafts.ownerId, ownerId));
 
+/** Load the target and public category identities without exposing persistence metadata. */
 export async function readProductDraftContext(
   db: Database,
   target: ProductDraftTarget,
@@ -39,7 +43,10 @@ export async function readProductDraftContext(
     .from(productsToCategories)
     .where(eq(productsToCategories.productId, product.id));
   const categories = await db
-    .select()
+    .select({
+      categoryId: categoryTable.categoryId,
+      categoryName: categoryTable.categoryName,
+    })
     .from(categoryTable)
     .where(
       or(
@@ -59,6 +66,10 @@ export async function readProductDraftContext(
       description: product.description,
       image: product.image,
       price: product.price,
+      inPersonPrice: productPrices({
+        ...product,
+        inPersonPrice: product.inPersonPrice ?? null,
+      }).inPersonPrice,
       filamentType: product.filamentType,
       color: product.color,
       skuNumber: product.skuNumber,
@@ -68,15 +79,55 @@ export async function readProductDraftContext(
   };
 }
 
+/** Project current attachments and questions without treating saved history as authority. */
 export async function productDraftResponse(db: Database, row: DraftRow) {
-  return productDraftResponseSchema.parse({
+  const draft = productDraftResponseSchema.parse({
     ...(await summary(db, row)),
     state: row.state,
     context: await readProductDraftContext(db, row.target),
     attachments: attachmentProjection(row),
   });
+  if (draft.state.interpretation) {
+    const categories = await db
+      .select({
+        categoryId: categoryTable.categoryId,
+        categoryName: categoryTable.categoryName,
+      })
+      .from(categoryTable)
+      .all();
+    const categoryQuestions = resolveDraftCategories(draft.state, categories);
+    draft.state.pendingQuestions = [
+      ...productQuestions(draft),
+      ...draft.state.pendingQuestions.filter(
+        question => question.id === 'clarification',
+      ),
+      ...categoryQuestions,
+    ];
+  }
+  draft.state.pendingQuestions = Array.from(
+    new Map(
+      draft.state.pendingQuestions.map(question => [
+        `${question.id}:${question.prompt}`,
+        question,
+      ]),
+    ).values(),
+  );
+  return draft;
 }
-async function summary(db: Database, row: Omit<DraftRow, 'ownerId' | 'state'>) {
+/** Project durable draft identity and recoverable attachment cleanup status. */
+async function summary(
+  db: Database,
+  row: Pick<
+    DraftRow,
+    | 'id'
+    | 'target'
+    | 'revision'
+    | 'createdAt'
+    | 'updatedAt'
+    | 'status'
+    | 'attachments'
+  >,
+) {
   let cleanupPending = Boolean(
     row.attachments?.cleanup.some(item => item.status === 'pending') ||
       row.attachments?.transfers.some(

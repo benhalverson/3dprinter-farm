@@ -35,6 +35,7 @@ import {
 } from '../utils/authMiddleware';
 import { logProductDraftError } from '../utils/productDraftError';
 import attachmentsRouter from './productAttachments';
+import interpretationRouter from './productInterpretation';
 
 const errors = Object.fromEntries(
   [
@@ -132,6 +133,7 @@ const router = factory
       onError: c => c.json({ error: 'Draft exceeds 256 KiB' }, 400),
     }),
   )
+  .route('/', interpretationRouter)
   .post(
     '/',
     describeRoute({

@@ -345,3 +345,20 @@ test('concurrent permanent invalidation wins over a pending validation', async (
     status: 'stale',
   });
 });
+
+test('In-Person Price and Square publication changes cannot reprice an Online quote', async () => {
+  const created = await quote();
+  await db
+    .update(schema.productsTable)
+    .set({ inPersonPrice: 9999, squareRevision: 1 })
+    .where(eq(schema.productsTable.id, 1));
+  expect(await (await request(created.id)).json()).toEqual(created);
+  await db
+    .update(schema.productsTable)
+    .set({ price: 1.99, squareRevision: 2 })
+    .where(eq(schema.productsTable.id, 1));
+  expect(await (await request(created.id)).json()).toEqual({
+    ...created,
+    status: 'stale',
+  });
+});

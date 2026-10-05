@@ -97,7 +97,7 @@ const create = async (ip = crypto.randomUUID()) => {
     testEnv(),
   );
   expect(res.status).toBe(201);
-  expect(res.headers.get('cache-control')).toBe('no-store');
+  expect(res.headers.get('cache-control')).toBe('private, no-store');
   return sessionSchema.parse(await res.json());
 };
 const start = (session: Session, runId = crypto.randomUUID(), uiRevision = 7) =>
@@ -266,7 +266,7 @@ describe('anonymous shopping transport with mocked persistence', () => {
     expect(cors.headers.get('access-control-allow-origin')).toBe(
       'https://luluspeedworks.com',
     );
-    expect(cors.headers.get('access-control-allow-headers')).toContain(
+    expect(cors.headers.get('access-control-allow-headers')?.toLowerCase()).toContain(
       'authorization',
     );
     const blocked = await app.request(

@@ -57,10 +57,11 @@ describe('POST /cart/create diagnostics', () => {
     const response = await request(authenticated);
 
     expect(response.status).toBe(201);
-    expect(response.headers.get('Cache-Control')).toBe('no-store');
+    expect(response.headers.get('Cache-Control')).toBe('private, no-store');
     expect(await response.json()).toEqual({
       cartId: expect.stringMatching(uuidPattern),
       message: 'Cart created successfully',
+      ownerId: authenticated ? 'user_123' : null,
       ...(!authenticated
         ? { guestToken: expect.stringMatching(uuidPattern) }
         : {}),
