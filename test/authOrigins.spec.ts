@@ -25,4 +25,27 @@ describe('Better Auth origin enforcement', () => {
     expect(response.status).toBe(200);
     expect(response.headers.get('set-cookie')).toContain('Max-Age=0');
   });
+  test.each([
+    ['https://luluspeedworks.com', 'https://api.luluspeedworks.com'],
+    ['https://rc-store.benhalverson.dev', 'https://api.benhalverson.dev'],
+  ])('accepts %s signout at %s with the Lulu auth base and RC passkey configuration', async (origin, apiOrigin) => {
+    const env = mockEnv();
+    const auth = createAuth(env.DB, {
+      ...env,
+      AUTH_BASE_URL: 'https://api.luluspeedworks.com',
+      RP_ID: 'rc-store.benhalverson.dev',
+      PASSKEY_ORIGIN: 'https://rc-store.benhalverson.dev',
+    });
+    const response = await auth.handler(new Request(`${apiOrigin}/api/auth/sign-out`, {
+      method: 'POST', headers: { origin },
+    }));
+    expect(response.status).toBe(200);
+    const cookie = response.headers.get('set-cookie');
+    expect(cookie).toContain('Max-Age=0');
+    expect(cookie).toContain('HttpOnly');
+    expect(cookie).toContain('Secure');
+    expect(cookie).toContain('SameSite=None');
+    expect(cookie).not.toMatch(/(?:^|;)\s*Domain=/i);
+  });
+
 });

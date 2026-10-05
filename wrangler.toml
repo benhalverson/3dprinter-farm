@@ -50,7 +50,9 @@ preview_id = "c7d43c86ba9c4f5c9419970c12bb2fca"
 AGENT_ENABLED = "false"
 AGENT_PRICE_VERSION = "glm-5.3-flash-2026-09-21"
 DOMAIN = "https://rc-store.benhalverson.dev"
-AUTH_BASE_URL = "https://api.benhalverson.dev"
+# Lulu password sessions use a same-site API host; provision routing separately.
+# Keep the RC storefront and passkey relying party below unchanged.
+AUTH_BASE_URL = "https://api.luluspeedworks.com"
 RP_ID = "rc-store.benhalverson.dev"
 PASSKEY_ORIGIN = "https://rc-store.benhalverson.dev"
 R2_PUBLIC_BASE_URL = "https://uploads.benhalverson.dev"

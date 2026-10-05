@@ -7,6 +7,7 @@ export const BROWSER_ORIGINS = [
   'https://rc-store.benhalverson.dev',
   'https://rc-admin.pages.dev',
   'https://api.benhalverson.dev',
+  'https://api.luluspeedworks.com',
   'https://race-forge.com',
   'https://luluspeedworks.com',
 ] as const;

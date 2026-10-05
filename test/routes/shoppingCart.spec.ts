@@ -36,19 +36,24 @@ vi.mock('../../src/modules/cartConfiguration', () => ({
 const mockStripeCheckoutCreate = vi.fn();
 const mockPaymentIntentsCreate = vi.fn();
 vi.mock('stripe', () => ({
-  default: vi.fn().mockImplementation(() => ({
-    checkout: {
-      sessions: {
-        create: mockStripeCheckoutCreate,
-      },
+  default: vi.fn(
+    /** Builds the Stripe stub when production code calls its constructor. */
+    function StripeMock() {
+      return {
+        checkout: {
+          sessions: {
+            create: mockStripeCheckoutCreate,
+          },
+        },
+        paymentIntents: {
+          create: mockPaymentIntentsCreate,
+        },
+        webhooks: {
+          constructEventAsync: vi.fn(),
+        },
+      };
     },
-    paymentIntents: {
-      create: mockPaymentIntentsCreate,
-    },
-    webhooks: {
-      constructEventAsync: vi.fn(),
-    },
-  })),
+  ),
 }));
 
 // Mock the profile crypto utilities

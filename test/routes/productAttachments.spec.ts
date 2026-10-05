@@ -20,10 +20,15 @@ import { mockEnv } from '../mocks/env';
 
 const stripe = vi.hoisted(() => ({ product: vi.fn(), price: vi.fn() }));
 vi.mock('stripe', () => ({
-  default: vi.fn(() => ({
-    products: { create: stripe.product },
-    prices: { create: stripe.price },
-  })),
+  default: vi.fn(
+    /** Builds the Stripe stub when production code calls its constructor. */
+    function StripeMock() {
+      return {
+        products: { create: stripe.product },
+        prices: { create: stripe.price },
+      };
+    },
+  ),
 }));
 
 const id = '4a1a372c-cbd7-4bac-bc73-6c29d2a9e292';
