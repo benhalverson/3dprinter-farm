@@ -1,19 +1,22 @@
 import { zValidator } from '@hono/zod-validator';
 import { count, eq, inArray, like, or } from 'drizzle-orm';
+import type { ContentfulStatusCode } from 'hono/utils/http-status';
 import { describeRoute } from 'hono-openapi';
 import { resolver } from 'hono-openapi/zod';
 import Stripe from 'stripe';
 import { ZodError, z } from 'zod';
+import { reserveCatalogAssets } from '../modules/productAssets';
 
 type OpenAPISchema = Record<string, unknown>;
 
-import { BASE_URL, BASE_URL_V2 } from '../constants';
-import { isAllowedStlUrl } from '../utils/validateStlUrl';
+import { BASE_URL } from '../constants';
 import {
   addCategorySchema,
   addProductSchema,
+  addProductV2Schema,
   categoryDataSchema,
   categoryTable,
+  DEFAULT_PLA_BLACK_FILAMENT_ID,
   idSchema,
   productsTable,
   productsToCategories,
@@ -21,11 +24,26 @@ import {
 } from '../db/schema';
 import factory from '../factory';
 import {
+  estimateSlant3DFile,
+  getSlant3DFile,
+  type Slant3DEstimateData,
+  Slant3DFileApiError,
+} from '../lib/slant3d-v2-files';
+import {
+  catalogReadinessResponseSchema,
+  evaluateCatalogReadiness,
+} from '../modules/catalogReadiness';
+import type { Bindings } from '../types';
+import {
   authMiddleware,
   requireCatalogMutationRole,
 } from '../utils/authMiddleware';
 import { calculateMarkupPrice } from '../utils/calculateMarkupPrice';
 import { generateSkuNumber } from '../utils/generateSkuNumber';
+
+function upstreamErrorStatus(status: number): ContentfulStatusCode {
+  return status >= 400 && status < 600 ? (status as ContentfulStatusCode) : 500;
+}
 
 // Helper function to safely parse imageGallery JSON
 function parseImageGallery(imageGallery: string | null): string[] {
@@ -36,6 +54,68 @@ function parseImageGallery(imageGallery: string | null): string[] {
   } catch {
     return [];
   }
+}
+
+type HydratableProduct = {
+  stl?: string | null;
+  publicFileServiceId?: string | null;
+};
+
+function formatHydrationError(error: unknown): unknown {
+  if (error instanceof Slant3DFileApiError) {
+    return {
+      message: error.message,
+      status: error.status,
+      details: error.details,
+    };
+  }
+
+  return error instanceof Error ? error.message : String(error);
+}
+
+async function hydrateProductStlUrls<T extends HydratableProduct>(
+  env: Bindings,
+  products: T[],
+): Promise<T[]> {
+  const freshUrlByFileId = new Map<string, Promise<string | null>>();
+
+  const getFreshUrl = (publicFileServiceId: string) => {
+    const cached = freshUrlByFileId.get(publicFileServiceId);
+    if (cached) return cached;
+
+    const request = getSlant3DFile(env, publicFileServiceId)
+      .then(file => {
+        if (file.fileURL) return file.fileURL;
+
+        console.error('Slant3D file hydration returned no fileURL:', {
+          publicFileServiceId,
+        });
+        return null;
+      })
+      .catch((error: unknown) => {
+        console.error('Failed to hydrate Slant3D file URL:', {
+          publicFileServiceId,
+          error: formatHydrationError(error),
+        });
+        return null;
+      });
+
+    freshUrlByFileId.set(publicFileServiceId, request);
+    return request;
+  };
+
+  return Promise.all(
+    products.map(async product => {
+      const publicFileServiceId =
+        typeof product.publicFileServiceId === 'string'
+          ? product.publicFileServiceId.trim()
+          : '';
+      if (!publicFileServiceId) return product;
+
+      const freshStlUrl = await getFreshUrl(publicFileServiceId);
+      return freshStlUrl ? { ...product, stl: freshStlUrl } : product;
+    }),
+  );
 }
 
 const product = factory
@@ -65,7 +145,12 @@ const product = factory
                           type: 'array',
                           items: { type: 'string' },
                         },
-                        stl: { type: 'string' },
+                        stl: {
+                          type: 'string',
+                          description:
+                            'Deprecated compatibility field. Product reads return a fresh Slant3D fileURL when publicFileServiceId is present; do not persist this value.',
+                        },
+                        publicFileServiceId: { type: 'string' },
                         price: { type: 'number' },
                         filamentType: { type: 'string' },
                         skuNumber: { type: 'string' },
@@ -123,6 +208,7 @@ const product = factory
               image: productsTable.image,
               imageGallery: productsTable.imageGallery,
               stl: productsTable.stl,
+              publicFileServiceId: productsTable.publicFileServiceId,
               price: productsTable.price,
               filamentType: productsTable.filamentType,
               skuNumber: productsTable.skuNumber,
@@ -133,10 +219,11 @@ const product = factory
             .all();
 
           // Parse imageGallery safely
-          const products = rawProducts.map(product => ({
+          const parsedProducts = rawProducts.map(product => ({
             ...product,
             imageGallery: parseImageGallery(product.imageGallery),
           }));
+          const products = await hydrateProductStlUrls(c.env, parsedProducts);
 
           return c.json(products);
         }
@@ -176,9 +263,11 @@ const product = factory
             image: productsTable.image,
             imageGallery: productsTable.imageGallery,
             stl: productsTable.stl,
+            publicFileServiceId: productsTable.publicFileServiceId,
             price: productsTable.price,
             filamentType: productsTable.filamentType,
             skuNumber: productsTable.skuNumber,
+            categoryId: productsTable.categoryId,
             color: productsTable.color,
           })
           .from(productsTable)
@@ -187,10 +276,11 @@ const product = factory
           .all();
 
         // Parse imageGallery safely
-        const products = rawProducts.map(product => ({
+        const parsedProducts = rawProducts.map(product => ({
           ...product,
           imageGallery: parseImageGallery(product.imageGallery),
         }));
+        const products = await hydrateProductStlUrls(c.env, parsedProducts);
 
         const pagination = {
           page,
@@ -236,7 +326,12 @@ const product = factory
                           type: 'array',
                           items: { type: 'string' },
                         },
-                        stl: { type: 'string' },
+                        stl: {
+                          type: 'string',
+                          description:
+                            'Deprecated compatibility field. Product reads return a fresh Slant3D fileURL when publicFileServiceId is present; do not persist this value.',
+                        },
+                        publicFileServiceId: { type: 'string' },
                         price: { type: 'number' },
                         filamentType: { type: 'string' },
                         skuNumber: { type: 'string' },
@@ -335,6 +430,7 @@ const product = factory
             image: productsTable.image,
             imageGallery: productsTable.imageGallery,
             stl: productsTable.stl,
+            publicFileServiceId: productsTable.publicFileServiceId,
             price: productsTable.price,
             filamentType: productsTable.filamentType,
             skuNumber: productsTable.skuNumber,
@@ -347,10 +443,11 @@ const product = factory
           .all();
 
         // Parse imageGallery safely
-        const products = rawProducts.map(product => ({
+        const parsedProducts = rawProducts.map(product => ({
           ...product,
           imageGallery: parseImageGallery(product.imageGallery),
         }));
+        const products = await hydrateProductStlUrls(c.env, parsedProducts);
 
         const pagination = {
           page,
@@ -369,6 +466,64 @@ const product = factory
         console.error('Error searching products:', error);
         return c.json({ error: 'Failed to search products' }, 500);
       }
+    },
+  )
+  .get(
+    '/admin/catalog/readiness',
+    authMiddleware,
+    requireCatalogMutationRole,
+    describeRoute({
+      description:
+        'List product checkout readiness diagnostics for admins. The response identifies missing Stripe prices, missing Slant3D file IDs, and default filament availability problems before customers reach checkout.',
+      tags: ['Products', 'Admin Catalog'],
+      responses: {
+        200: {
+          content: {
+            'application/json': {
+              schema: resolver(
+                catalogReadinessResponseSchema,
+              ) as unknown as OpenAPISchema,
+            },
+          },
+          description: 'Catalog readiness diagnostics',
+        },
+        401: {
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                properties: { error: { type: 'string' } },
+              },
+            },
+          },
+          description: 'Unauthorized',
+        },
+        403: {
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                properties: { error: { type: 'string' } },
+              },
+            },
+          },
+          description: 'Forbidden',
+        },
+      },
+    }),
+    async c => {
+      const products = await c.var.db
+        .select({
+          id: productsTable.id,
+          skuNumber: productsTable.skuNumber,
+          name: productsTable.name,
+          stripePriceId: productsTable.stripePriceId,
+          publicFileServiceId: productsTable.publicFileServiceId,
+        })
+        .from(productsTable)
+        .all();
+
+      return c.json(await evaluateCatalogReadiness(c.env, products));
     },
   )
   .post(
@@ -410,7 +565,9 @@ const product = factory
       const stripe = new Stripe(c.env.STRIPE_SECRET_KEY, {
         telemetry: false,
       });
-      const user = c.get('jwtPayload') as { id: string; email: string } | undefined;
+      const user = c.get('jwtPayload') as
+        | { id: string; email: string }
+        | undefined;
       if (!user) return c.json({ error: 'Unauthorized' }, 401);
       const data = await c.req.valid('json');
       const {
@@ -551,12 +708,13 @@ const product = factory
     authMiddleware,
     requireCatalogMutationRole,
     describeRoute({
-      description: 'Add a new product using Slant3D V2 API',
+      description:
+        'Add a new product using Slant3D V2 API. The STL must already be uploaded by calling /v2/presigned-upload, uploading the file to the returned presignedUrl from the browser, then calling /v2/confirm. Submit publicFileServiceId from /v2/confirm as the durable print file reference; stl is optional and deprecated.',
       tags: ['Products'],
       requestBody: {
         content: {
           'application/json': {
-            schema: resolver(addProductSchema) as unknown as OpenAPISchema,
+            schema: resolver(addProductV2Schema) as unknown as OpenAPISchema,
           },
         },
         required: true,
@@ -616,13 +774,16 @@ const product = factory
         },
       },
     }),
-    zValidator('json', addProductSchema),
+    zValidator('json', addProductV2Schema),
+    reserveCatalogAssets,
     async c => {
       try {
         const stripe = new Stripe(c.env.STRIPE_SECRET_KEY, {
           telemetry: false,
         });
-        const user = c.get('jwtPayload') as { id: string; email: string } | undefined;
+        const user = c.get('jwtPayload') as
+          | { id: string; email: string }
+          | undefined;
         if (!user) return c.json({ error: 'Unauthorized' }, 401);
 
         const data = await c.req.valid('json');
@@ -632,6 +793,8 @@ const product = factory
           imageGallery,
           price: legacyMarkupPercentage,
           markupPercentage,
+          publicFileServiceId,
+          stl: _deprecatedStl,
           ...productFields
         } = data;
         const requestedMarkupPercentage =
@@ -661,230 +824,52 @@ const product = factory
 
         const skuNumber = generateSkuNumber(data.name);
 
-        // Step 1: Create Stripe product
-        const stripeProduct = await stripe.products.create({
-          name: data.name,
-          description: data.description,
-          images: [data.image],
-          shippable: true,
-          metadata: {
-            sku_number: skuNumber,
-          },
-        });
-
-        // Step 2: Get presigned URL from Slant3D V2 API
-        const presignedRequest = {
-          name: data.name.replace(/\.stl$/i, ''),
-          platformId: c.env.SLANT_PLATFORM_ID,
-          ownerId: user.id.toString(),
-        };
-
-        console.log('Getting presigned URL:', presignedRequest);
-
-        const presignedResponse = await fetch(
-          `${BASE_URL_V2}files/direct-upload`,
-          {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              Authorization: `Bearer ${c.env.SLANT_API_V2}`,
-            },
-            body: JSON.stringify(presignedRequest),
-          },
-        );
-
-        if (!presignedResponse.ok) {
-          const errorText = await presignedResponse.text();
-          console.error('V2 presigned error:', errorText);
-          return c.json(
-            {
-              error: 'Failed to get presigned URL from Slant3D V2 API',
-              details: errorText,
-            },
-            500,
-          );
-        }
-
-        const presignedData = (await presignedResponse.json()) as {
-          data: {
-            presignedUrl: string;
-            filePlaceholder: {
-              publicFileServiceId: string;
-              name: string;
-              ownerId: string;
-              platformId: string;
-              type: string;
-              createdAt: string;
-              updatedAt: string;
-            };
-          };
-        };
-
-        const { presignedUrl, filePlaceholder } = presignedData.data;
-        console.log('Got presigned URL, uploading file...');
-
-        // Step 3: Download the file from R2 and upload to presigned URL
-        if (!isAllowedStlUrl(data.stl, c.env.R2_PUBLIC_BASE_URL)) {
-          return c.json(
-            {
-              error: 'Invalid STL URL',
-              details:
-                'The stl field must use https and point to the trusted storage origin.',
-            },
-            400,
-          );
-        }
-
-        let fileBuffer: Buffer;
-        try {
-          const fileResponse = await fetch(data.stl);
-          if (!fileResponse.ok) {
-            throw new Error(
-              `Failed to fetch file from R2: ${fileResponse.statusText}`,
-            );
-          }
-          fileBuffer = Buffer.from(await fileResponse.arrayBuffer());
-        } catch (err: unknown) {
-          console.error('Failed to fetch file:', err);
-          return c.json(
-            {
-              error: 'Failed to fetch STL file from storage',
-              details: err instanceof Error ? err.message : 'Unknown error',
-            },
-            500,
-          );
-        }
-
-        // Upload to presigned URL
-        try {
-          const uploadResponse = await fetch(presignedUrl, {
-            method: 'PUT',
-            headers: {
-              'Content-Type': 'application/octet-stream',
-            },
-            body: fileBuffer,
-          });
-          if (!uploadResponse.ok) {
-            throw new Error(`Upload failed: ${uploadResponse.statusText}`);
-          }
-          console.log('File uploaded to presigned URL');
-        } catch (err: unknown) {
-          console.error('Failed to upload to presigned URL:', err);
-          return c.json(
-            {
-              error: 'Failed to upload file to Slant3D',
-              details: err instanceof Error ? err.message : 'Unknown error',
-            },
-            500,
-          );
-        }
-
-        // Step 4: Confirm the upload
-        console.log('Confirming upload...');
-        const confirmResponse = await fetch(
-          `${BASE_URL_V2}files/confirm-upload`,
-          {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              Authorization: `Bearer ${c.env.SLANT_API_V2}`,
-            },
-            body: JSON.stringify({ filePlaceholder }),
-          },
-        );
-
-        if (!confirmResponse.ok) {
-          const errorText = await confirmResponse.text();
-          console.error('V2 confirm error:', errorText);
-          return c.json(
-            {
-              error: 'Failed to confirm upload with Slant3D V2 API',
-              details: errorText,
-            },
-            500,
-          );
-        }
-
-        const confirmData = (await confirmResponse.json()) as {
-          data: {
-            publicFileServiceId: string;
-            STLMetrics?: {
-              x: number;
-              y: number;
-              z: number;
-            };
-          };
-        };
-
-        const publicFileServiceId = confirmData.data.publicFileServiceId;
-
-        // Step 5: Get estimate from Slant3D V2 API using the confirmed file ID
-        const DEFAULT_BLACK_FILAMENT_ID =
-          '76fe1f79-3f1e-43e4-b8f4-61159de5b93c';
-        const estimateOptions = {
-          options: {
-            filamentId: DEFAULT_BLACK_FILAMENT_ID,
-            quantity: 1,
-          },
-        };
-
+        // The browser has already uploaded and confirmed the STL with Slant3D.
+        // Product creation only estimates the confirmed file and persists the id.
         console.log('Requesting estimate for:', publicFileServiceId);
 
-        const estimateResponse = await fetch(
-          `${BASE_URL_V2}files/${publicFileServiceId}/estimate`,
-          {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              Authorization: `Bearer ${c.env.SLANT_API_V2}`,
-            },
-            body: JSON.stringify(estimateOptions),
-          },
-        );
+        let estimateData: Slant3DEstimateData;
+        try {
+          estimateData = await estimateSlant3DFile(c.env, publicFileServiceId, {
+            filamentId: DEFAULT_PLA_BLACK_FILAMENT_ID,
+            quantity: 1,
+          });
+        } catch (error: unknown) {
+          if (!(error instanceof Slant3DFileApiError)) {
+            throw error;
+          }
 
-        if (!estimateResponse.ok) {
-          const errorText = await estimateResponse.text();
-          console.error('V2 estimate error:', errorText);
+          console.error('V2 estimate error:', error.details);
           return c.json(
             {
-              error: 'Failed to get price estimate from Slant3D V2 API',
-              details: errorText,
+              error: error.message,
+              details: error.details,
+              status: error.status,
             },
-            500,
+            upstreamErrorStatus(error.status),
           );
         }
 
-        const estimateDataRaw = (await estimateResponse.json()) as Record<
-          string,
-          unknown
-        >;
-        console.log(
-          'Slant3D estimate raw response:',
-          JSON.stringify(estimateDataRaw),
-        );
+        console.log('Slant3D estimate response:', JSON.stringify(estimateData));
 
-        const estimateData = z
-          .object({
-            data: z
-              .object({
-                total: z.number(),
-              })
-              .passthrough(),
-          })
-          .safeParse(estimateDataRaw);
-
-        const basePrice = estimateData.success
-          ? estimateData.data.data.total
-          : undefined;
+        const basePrice = [
+          estimateData.total,
+          estimateData.estimatedCost,
+          estimateData.pricePerUnit,
+          estimateData.subtotal,
+        ].find(value => typeof value === 'number');
 
         console.log('Slant3D estimated base price:', basePrice);
-        console.log('Markup percentage from request:', requestedMarkupPercentage);
+        console.log(
+          'Markup percentage from request:',
+          requestedMarkupPercentage,
+        );
 
         if (!basePrice || basePrice <= 0) {
           return c.json(
             {
               error: 'Invalid price estimate from Slant3D',
-              details: `Expected positive price but got: ${basePrice}. Full response: ${JSON.stringify(estimateDataRaw)}`,
+              details: `Expected positive price but got: ${basePrice}. Full response: ${JSON.stringify(estimateData)}`,
             },
             500,
           );
@@ -912,7 +897,17 @@ const product = factory
 
         console.log('Final markup price:', markupPrice);
 
-        // Step 6: Create Stripe price
+        // Create Stripe product and price after Slant3D succeeds
+        const stripeProduct = await stripe.products.create({
+          name: data.name,
+          description: data.description,
+          images: [data.image],
+          shippable: true,
+          metadata: {
+            sku_number: skuNumber,
+          },
+        });
+
         let stripePriceId = null;
         if (markupPrice && markupPrice > 0) {
           const price = await stripe.prices.create({
@@ -923,7 +918,7 @@ const product = factory
           stripePriceId = price.id;
         }
 
-        // Step 7: Insert into database
+        // Insert into database
         const primaryCategoryId =
           normalizedCategoryIds && normalizedCategoryIds.length > 0
             ? normalizedCategoryIds[0]
@@ -937,7 +932,8 @@ const product = factory
           stripePriceId: stripePriceId,
           imageGallery: JSON.stringify(imageGallery || []),
           categoryId: primaryCategoryId,
-          publicFileServiceId: publicFileServiceId,
+          stl: publicFileServiceId,
+          publicFileServiceId,
         };
 
         console.log('Product data to insert:', productDataToInsert);
@@ -973,7 +969,7 @@ const product = factory
               name: created.name,
               price: created.price,
               skuNumber: created.skuNumber,
-              publicFileServiceId: publicFileServiceId,
+              publicFileServiceId,
             },
           },
           201,
@@ -1005,7 +1001,7 @@ const product = factory
         .from(productsTable)
         .where(eq(productsTable.id, parsedData.id))
         .all();
-      const rawProduct = response[0];
+      const [rawProduct] = await hydrateProductStlUrls(c.env, response);
 
       if (!rawProduct) {
         return c.json({ error: 'Product not found' }, 404);

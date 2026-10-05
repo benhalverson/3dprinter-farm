@@ -45,7 +45,8 @@ export const listModelsDoc = {
 
 // Upload file documentation
 export const uploadFileDoc = {
-  description: 'Upload a file to the bucket',
+  description:
+    'Upload a public JPEG, PNG, or WebP photo (decoded bytes, maximum 5,000,000 bytes) or an STL file. Photos receive unique keys and detected MIME metadata. Requires a configured public URL for the selected bucket.',
   tags: ['Printer'],
   requestBody: {
     content: {
@@ -85,7 +86,25 @@ export const uploadFileDoc = {
           },
         },
       },
-      description: 'No file uploaded',
+      description:
+        'Missing file, malformed form, invalid photo bytes, or oversized photo',
+    },
+    415: {
+      description: 'Unsupported file format',
+      content: {
+        'application/json': {
+          schema: resolver(ErrorSchema) as unknown as OpenAPISchema,
+        },
+      },
+    },
+    503: {
+      description:
+        'Public URL for the selected storage bucket is not configured',
+      content: {
+        'application/json': {
+          schema: resolver(ErrorSchema) as unknown as OpenAPISchema,
+        },
+      },
     },
     500: {
       content: {

@@ -12,7 +12,7 @@
  * Keep this list in sync with the required (non-optional) fields of the
  * `Bindings` type in `src/types.ts` and the bindings declared in
  * `wrangler.toml` / `worker-configuration.d.ts`.
- * Optional bindings (`DB_PREVIEW`, `PASSKEY_ORIGIN`) are intentionally omitted.
+ * Optional bindings (`DB_PREVIEW`, `PASSKEY_ORIGIN`) are omitted.
  */
 const REQUIRED_BINDINGS = [
   'DB',
@@ -30,12 +30,6 @@ const REQUIRED_BINDINGS = [
   'SLANT_PLATFORM_ID',
   'STRIPE_SECRET_KEY',
   'STRIPE_WEBHOOK_SECRET',
-  'MAILJET_API_KEY',
-  'MAILJET_API_SECRET',
-  'MAILJET_CONTACT_LIST_ID',
-  'MAILJET_TEMPLATE_ID',
-  'MAILJET_SENDER_EMAIL',
-  'MAILJET_SENDER_NAME',
   'ENCRYPTION_PASSPHRASE',
   'R2_PUBLIC_BASE_URL',
   'R2_PHOTO_BASE_URL',

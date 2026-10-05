@@ -1,184 +1,156 @@
-import { eq } from 'drizzle-orm';
-import type { Context } from 'hono';
+import { and, desc, eq, inArray, isNotNull } from 'drizzle-orm';
 import { describeRoute } from 'hono-openapi';
+import { resolver } from 'hono-openapi/zod';
 import { z } from 'zod';
-import { notificationAttempts } from '../db/schema';
+import { orderNotificationAttemptsTable as attempts } from '../db/schema';
 import factory from '../factory';
+import { deliverNotification } from '../lib/notifications';
 import {
-  getFailedNotifications,
-  getNotificationsByOrderId,
-  resendNotification,
-} from '../lib/notifications';
-import { authMiddleware, requireCatalogMutationRole } from '../utils/authMiddleware';
+  authMiddleware,
+  requireCatalogMutationRole,
+} from '../utils/authMiddleware';
 
-const notificationsRouter = factory
-  .createApp()
-  .use('/notifications/*', authMiddleware)
-  .use('/notifications/*', requireCatalogMutationRole)
-  .get(
-    '/notifications/order/:orderId',
-    describeRoute({
-      description:
-        'Get all notification attempts for a specific order. Requires admin role.',
-      tags: ['Notifications'],
-      responses: {
-        200: {
-          description: 'List of notification attempts for the order',
-          content: {
-            'application/json': {
-              schema: {
-                type: 'object',
-                properties: {
-                  notifications: {
-                    type: 'array',
-                    items: {
-                      type: 'object',
-                      properties: {
-                        id: { type: 'number' },
-                        orderId: { type: 'string' },
-                        notificationType: { type: 'string' },
-                        recipientEmail: { type: 'string' },
-                        status: { type: 'string' },
-                        providerMessageId: { type: 'string', nullable: true },
-                        errorMessage: { type: 'string', nullable: true },
-                        createdAt: { type: 'string' },
-                        sentAt: { type: 'string', nullable: true },
-                      },
-                    },
-                  },
-                },
-              },
-            },
-          },
-        },
-        401: {
-          description: 'Unauthorized',
-          content: {
-            'application/json': {
-              schema: {
-                type: 'object',
-                properties: { error: { type: 'string' } },
-              },
-            },
+const rowSchema = z.object({
+  id: z.number(),
+  orderId: z.number().nullable(),
+  notificationType: z.string(),
+  status: z.string(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+const errorSchema = z.object({ error: z.string() });
+const deliverySchema = z.object({
+  id: z.number(),
+  status: z.string(),
+  providerMessageId: z.string().nullable(),
+});
+const summary = {
+  id: attempts.id,
+  orderId: attempts.orderId,
+  notificationType: attempts.notificationType,
+  status: attempts.status,
+  createdAt: attempts.createdAt,
+  updatedAt: attempts.updatedAt,
+};
+
+/** Accept whole positive safe integers, never partial numeric path values. */
+function parseId(value: string) {
+  const id = Number(value);
+  return /^[1-9]\d*$/.test(value) && Number.isSafeInteger(id) ? id : null;
+}
+
+/** Describe bounded admin queries without disclosing email envelopes. */
+function listDocs(description: string) {
+  return describeRoute({
+    description,
+    tags: ['Notifications'],
+    responses: {
+      200: {
+        description: 'Up to 100 newest attempts',
+        content: {
+          'application/json': {
+            schema: resolver(z.object({ notifications: z.array(rowSchema) })),
           },
         },
       },
-    }),
-    async (c: Context) => {
-      const orderId = c.req.param('orderId');
-      const db = c.var.db;
+      400: {
+        description: 'Invalid ID',
+        content: { 'application/json': { schema: resolver(errorSchema) } },
+      },
+      401: { description: 'Unauthorized' },
+      403: { description: 'Forbidden' },
+      500: { description: 'Notification query failed' },
+    },
+  });
+}
 
-      const notifications = await getNotificationsByOrderId(db, orderId);
-      return c.json({ notifications });
+const notifications = factory
+  .createApp()
+  .use(
+    '/notifications/*',
+    /** Prevent DB/provider error payloads reaching request logs. */ async (
+      c,
+      next,
+    ) => {
+      c.header('Cache-Control', 'no-store');
+      try {
+        await next();
+      } catch {
+        console.error('notification.request_failed');
+        return c.json({ error: 'Notification request failed' }, 500);
+      }
+    },
+  )
+  .use('/notifications/*', authMiddleware, requireCatalogMutationRole)
+  .get(
+    '/notifications/order/:orderId',
+    listDocs('List notification attempts for an order (admin/owner only)'),
+    /** Read a bounded status-only audit list. */ async c => {
+      const id = parseId(c.req.param('orderId'));
+      if (id === null) return c.json({ error: 'Invalid order ID' }, 400);
+      const rows = await c.var.db
+        .select(summary)
+        .from(attempts)
+        .where(eq(attempts.orderId, id))
+        .orderBy(desc(attempts.id))
+        .limit(100);
+      return c.json({ notifications: rows });
     },
   )
   .get(
     '/notifications/failed',
-    describeRoute({
-      description:
-        'Get all failed notification attempts. Requires admin role.',
-      tags: ['Notifications'],
-      responses: {
-        200: {
-          description: 'List of failed notification attempts',
-          content: {
-            'application/json': {
-              schema: {
-                type: 'object',
-                properties: {
-                  notifications: {
-                    type: 'array',
-                    items: {
-                      type: 'object',
-                      properties: {
-                        id: { type: 'number' },
-                        orderId: { type: 'string' },
-                        notificationType: { type: 'string' },
-                        recipientEmail: { type: 'string' },
-                        status: { type: 'string' },
-                        errorMessage: { type: 'string', nullable: true },
-                        createdAt: { type: 'string' },
-                      },
-                    },
-                  },
-                },
-              },
-            },
-          },
-        },
-      },
-    }),
-    async (c: Context) => {
-      const db = c.var.db;
-      const notifications = await getFailedNotifications(db);
-      return c.json({ notifications });
+    listDocs(
+      'List retryable and ambiguous deliveries (admin/owner only); sending/unknown require reconciliation',
+    ),
+    /** Include ambiguous claims without authorizing a resend. */ async c => {
+      const rows = await c.var.db
+        .select(summary)
+        .from(attempts)
+        .where(
+          and(
+            isNotNull(attempts.deliveryKey),
+            inArray(attempts.status, [
+              'pending',
+              'failed',
+              'sending',
+              'unknown',
+            ]),
+          ),
+        )
+        .orderBy(desc(attempts.id))
+        .limit(100);
+      return c.json({ notifications: rows });
     },
   )
   .post(
     '/notifications/resend/:id',
     describeRoute({
       description:
-        'Resend a failed or pending notification by ID. Requires admin role. Will not resend already-sent notifications.',
+        'Deliver a pending or pre-provider failed attempt using its original envelope (admin/owner only). Ambiguous and legacy attempts cannot be resent.',
       tags: ['Notifications'],
       responses: {
         200: {
-          description: 'Notification resend result',
-          content: {
-            'application/json': {
-              schema: {
-                type: 'object',
-                properties: {
-                  success: { type: 'boolean' },
-                  status: { type: 'string' },
-                  providerMessageId: { type: 'string', nullable: true },
-                  error: { type: 'string', nullable: true },
-                  skipped: { type: 'boolean' },
-                },
-              },
-            },
-          },
+          description: 'Provider accepted (not proof of inbox delivery)',
+          content: { 'application/json': { schema: resolver(deliverySchema) } },
         },
-        400: {
-          description: 'Invalid notification ID',
-          content: {
-            'application/json': {
-              schema: {
-                type: 'object',
-                properties: { error: { type: 'string' } },
-              },
-            },
-          },
+        400: { description: 'Invalid ID' },
+        401: { description: 'Unauthorized' },
+        403: { description: 'Forbidden' },
+        404: { description: 'Attempt not found' },
+        409: {
+          description: 'Attempt requires reconciliation or configuration',
+          content: { 'application/json': { schema: resolver(deliverySchema) } },
         },
-        404: {
-          description: 'Notification not found',
-          content: {
-            'application/json': {
-              schema: {
-                type: 'object',
-                properties: { error: { type: 'string' } },
-              },
-            },
-          },
-        },
+        500: { description: 'Notification request failed' },
       },
     }),
-    async (c: Context) => {
-      const idParam = c.req.param('id');
-      const id = Number(idParam);
-
-      if (!id || Number.isNaN(id)) {
-        return c.json({ error: 'Invalid notification ID' }, 400);
-      }
-
-      const db = c.var.db;
-      const result = await resendNotification(db, c.env, id);
-
-      if (result.error === 'Notification not found') {
-        return c.json({ error: 'Notification not found' }, 404);
-      }
-
-      return c.json(result);
+    /** Retry only the persisted attempt; request bodies cannot change recipients/content. */ async c => {
+      const id = parseId(c.req.param('id'));
+      if (id === null) return c.json({ error: 'Invalid notification ID' }, 400);
+      const outcome = await deliverNotification(c.var.db, c.env, id);
+      if (!outcome) return c.json({ error: 'Notification not found' }, 404);
+      return c.json(outcome, outcome.status === 'sent' ? 200 : 409);
     },
   );
 
-export default notificationsRouter;
+export default notifications;

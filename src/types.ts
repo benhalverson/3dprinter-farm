@@ -19,25 +19,42 @@ import type { orderSchema } from './db/schema';
  *  - RATE_LIMIT_KV     – KV namespace used by the rate-limiting middleware
  *  - SLANT_API         – Slant3D v1 API key
  *  - SLANT_API_V2      – Slant3D v2 API bearer token
+ *  - SLANT_API_V2_BASE_URL – Optional override for the Slant3D v2 API origin
  *  - SLANT_PLATFORM_ID – Slant3D platform identifier
  *  - STRIPE_SECRET_KEY / STRIPE_WEBHOOK_SECRET – Stripe credentials
+ *  - SLANT_WEBHOOK_SECRET – Optional Slant3D platform webhook shared secret
  *  - DOMAIN            – Public base URL (e.g. https://rc-store.benhalverson.dev)
  *  - JWT_SECRET        – Secret for JWT signing
  *  - BETTER_AUTH_SECRET – Secret for Better Auth sessions (≥ 32 chars)
  *  - RP_ID / RP_NAME   – WebAuthn Relying Party identity
  *  - PASSKEY_ORIGIN    – Allowed passkey origin (optional; defaults to DOMAIN)
- *  - MAILJET_*         – Mailjet transactional email credentials
  *  - ENCRYPTION_PASSPHRASE – Passphrase for profile field encryption
  *  - R2_PUBLIC_BASE_URL / R2_PHOTO_BASE_URL – CDN base URLs for R2 assets
  */
 export type Bindings = {
+  AUTH_EMAIL: Env['AUTH_EMAIL'];
+  ORDER_EMAIL?: Env['ORDER_EMAIL'];
+  ORDER_ADMIN_EMAIL?: string;
+  AUTH_BASE_URL: string;
+  SHOPPING_AGENT: DurableObjectNamespace<
+    import('./shopping/agent').ShoppingAgent
+  >;
+  SHOPPING_LEDGER: DurableObjectNamespace<
+    import('./shopping/ledger').ShoppingLedger
+  >;
+  AI: Ai;
+  AGENT_ENABLED: string;
+  AGENT_PRICE_VERSION: string;
+  AGENT_NETWORK_SECRET?: string;
   /** R2 bucket for STL/upload files (wrangler binding: BUCKET) */
   BUCKET: R2Bucket;
   /** R2 bucket for product photos (wrangler binding: PHOTO_BUCKET) */
   PHOTO_BUCKET: R2Bucket;
   SLANT_API: string;
   SLANT_API_V2: string;
+  SLANT_API_V2_BASE_URL?: string;
   SLANT_PLATFORM_ID: string;
+  SLANT_WEBHOOK_SECRET?: string;
   STRIPE_SECRET_KEY: string;
   STRIPE_WEBHOOK_SECRET: string;
   DOMAIN: string;
@@ -57,12 +74,6 @@ export type Bindings = {
   PASSKEY_ORIGIN?: string;
   /** KV namespace used by the rate-limiting middleware (binding: RATE_LIMIT_KV) */
   RATE_LIMIT_KV: KVNamespace;
-  MAILJET_API_KEY: string;
-  MAILJET_API_SECRET: string;
-  MAILJET_CONTACT_LIST_ID: string;
-  MAILJET_TEMPLATE_ID: string;
-  MAILJET_SENDER_EMAIL: string;
-  MAILJET_SENDER_NAME: string;
   ENCRYPTION_PASSPHRASE: string;
   R2_PUBLIC_BASE_URL: string;
   R2_PHOTO_BASE_URL: string;
@@ -133,11 +144,13 @@ export interface STLMetrics {
 }
 
 export interface Slant3DFile {
+  /** Durable Slant3D file reference for estimates, orders, and URL refreshes. */
   publicFileServiceId: string;
   name: string;
   ownerId?: string;
   platformId: string;
   type: 'stl';
+  /** Presigned Slant3D download URL. This is temporary and must not be stored as the print-file reference. */
   fileURL: string;
   STLMetrics?: STLMetrics;
   createdAt: string;

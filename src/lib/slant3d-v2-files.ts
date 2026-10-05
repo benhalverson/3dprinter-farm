@@ -1,4 +1,4 @@
-import { BASE_URL_V2 } from '../constants';
+import { slantV2Url } from '../constants';
 import type { Bindings } from '../types';
 
 export type Slant3DFilePlaceholder = {
@@ -34,6 +34,18 @@ export type Slant3DConfirmUploadData = {
   STLMetrics?: Slant3DSTLMetrics;
 };
 
+export type Slant3DFileData = {
+  publicFileServiceId: string;
+  name: string;
+  ownerId?: string;
+  platformId: string;
+  type: string;
+  fileURL: string;
+  STLMetrics?: Slant3DSTLMetrics;
+  createdAt?: string;
+  updatedAt?: string;
+};
+
 export type Slant3DEstimateData = {
   publicFileServiceId: string;
   estimatedCost?: number;
@@ -58,9 +70,7 @@ export class Slant3DFileApiError extends Error {
 }
 
 async function parseResponseDetails(response: Response): Promise<unknown> {
-  try {
-    return await response.json();
-  } catch {
+  if (typeof response.text === 'function') {
     try {
       const text = await response.text();
       if (!text) return {};
@@ -70,29 +80,59 @@ async function parseResponseDetails(response: Response): Promise<unknown> {
         return text;
       }
     } catch {
+      // Fall through to json() for lightweight test doubles that only mock json().
+    }
+  }
+
+  if (typeof response.json === 'function') {
+    try {
+      return await response.json();
+    } catch {
       return {};
     }
   }
+
+  return {};
+}
+
+function formatErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 async function slant3DFileRequest<T>(
   env: Bindings,
   path: string,
-  body: unknown,
   errorMessage: string,
+  options: {
+    method?: 'GET' | 'POST' | 'DELETE';
+    body?: unknown;
+  },
 ): Promise<T> {
   if (!env.SLANT_API_V2) {
-    throw new Slant3DFileApiError('Missing SLANT_API_V2 environment variable.', 500);
+    throw new Slant3DFileApiError(
+      'Missing SLANT_API_V2 environment variable.',
+      500,
+    );
   }
 
-  const response = await fetch(`${BASE_URL_V2}${path}`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: 'Bearer ' + env.SLANT_API_V2,
-    },
-    body: JSON.stringify(body),
-  });
+  const url = slantV2Url(env, path);
+  const method = options.method ?? 'POST';
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      method,
+      headers: {
+        ...(method === 'POST' ? { 'Content-Type': 'application/json' } : {}),
+        Authorization: `Bearer ${env.SLANT_API_V2}`,
+      },
+      ...(method === 'POST' ? { body: JSON.stringify(options.body) } : {}),
+    });
+  } catch (error: unknown) {
+    throw new Slant3DFileApiError(errorMessage, 502, {
+      url,
+      cause: formatErrorMessage(error),
+    });
+  }
 
   if (!response.ok) {
     throw new Slant3DFileApiError(
@@ -102,7 +142,13 @@ async function slant3DFileRequest<T>(
     );
   }
 
-  const data = (await response.json()) as { data: T };
+  const data = (await response.json()) as { data: T; success?: boolean };
+  if (
+    method === 'DELETE' &&
+    (response.status !== 200 || data?.success !== true)
+  ) {
+    throw new Slant3DFileApiError(errorMessage, 502);
+  }
   return data.data;
 }
 
@@ -126,12 +172,14 @@ export async function createSlant3DDirectUpload(
   return slant3DFileRequest<Slant3DDirectUploadData>(
     env,
     'files/direct-upload',
-    {
-      name,
-      platformId: env.SLANT_PLATFORM_ID,
-      ownerId,
-    },
     'Failed to generate presigned URL from Slant3D V2 API',
+    {
+      body: {
+        name,
+        platformId: env.SLANT_PLATFORM_ID,
+        ownerId,
+      },
+    },
   );
 }
 
@@ -142,8 +190,8 @@ export async function confirmSlant3DUpload(
   return slant3DFileRequest<Slant3DConfirmUploadData>(
     env,
     'files/confirm-upload',
-    { filePlaceholder },
     'Failed to confirm upload with Slant3D V2 API',
+    { body: { filePlaceholder } },
   );
 }
 
@@ -159,13 +207,69 @@ export async function estimateSlant3DFile(
   return slant3DFileRequest<Slant3DEstimateData>(
     env,
     `files/${publicFileServiceId}/estimate`,
+    'Failed to estimate file price from Slant3D V2 API',
     {
-      options: {
-        filamentId: options.filamentId,
-        quantity: options.quantity,
-        ...(options.slicer && { slicer: options.slicer }),
+      body: {
+        options: {
+          filamentId: options.filamentId,
+          quantity: options.quantity,
+          ...(options.slicer && { slicer: options.slicer }),
+        },
       },
     },
-    'Failed to estimate file price from Slant3D V2 API',
   );
+}
+
+export async function getSlant3DFile(
+  env: Bindings,
+  publicFileServiceId: string,
+): Promise<Slant3DFileData> {
+  return slant3DFileRequest<Slant3DFileData>(
+    env,
+    `files/${encodeURIComponent(publicFileServiceId)}`,
+    'Failed to retrieve file from Slant3D V2 API',
+    { method: 'GET' },
+  );
+}
+
+export async function batchGetSlant3DFiles(
+  env: Bindings,
+  publicFileServiceIds: string[],
+): Promise<Slant3DFileData[]> {
+  return slant3DFileRequest<Slant3DFileData[]>(
+    env,
+    'files/batch',
+    'Failed to retrieve files from Slant3D V2 API',
+    { body: { publicFileServiceIds } },
+  );
+}
+
+export async function deleteSlant3DFile(
+  env: Bindings,
+  publicFileServiceId: string,
+): Promise<void> {
+  try {
+    await slant3DFileRequest<void>(
+      env,
+      `files/${encodeURIComponent(publicFileServiceId)}`,
+      'Failed to delete file from Slant3D V2 API',
+      { method: 'DELETE' },
+    );
+  } catch (error) {
+    if (!(error instanceof Slant3DFileApiError) || error.status !== 404)
+      throw error;
+    // DELETE does not document a missing-file response. After an interrupted
+    // deletion, confirm absence through GET's documented file-not-found result.
+    try {
+      await getSlant3DFile(env, publicFileServiceId);
+    } catch (lookupError) {
+      if (
+        lookupError instanceof Slant3DFileApiError &&
+        lookupError.status === 404
+      )
+        return;
+      throw lookupError;
+    }
+    throw error;
+  }
 }

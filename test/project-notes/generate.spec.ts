@@ -59,7 +59,6 @@ Ownership checks need to be centralized or they drift when endpoint count grows.
     'node',
     [
       '--disable-warning=ExperimentalWarning',
-      '--experimental-default-type=module',
       '--experimental-strip-types',
       'tools/project-notes/generate-project-notes.ts',
       '--config',
