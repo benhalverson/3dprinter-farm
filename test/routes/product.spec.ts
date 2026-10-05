@@ -15,23 +15,28 @@ import { mockEnv } from '../mocks/env';
 // Mock Stripe to prevent network calls
 vi.mock('stripe', () => {
   return {
-    default: vi.fn().mockImplementation(() => ({
-      products: {
-        create: vi.fn().mockResolvedValue({
-          id: 'prod_test123',
-          name: 'Test Product',
-          description: 'Test Description',
-        }),
+    default: vi.fn(
+      /** Builds the Stripe stub when production code calls its constructor. */
+      function StripeMock() {
+        return {
+          products: {
+            create: vi.fn().mockResolvedValue({
+              id: 'prod_test123',
+              name: 'Test Product',
+              description: 'Test Description',
+            }),
+          },
+          prices: {
+            create: vi.fn().mockResolvedValue({
+              id: 'price_test123',
+              product: 'prod_test123',
+              unit_amount: 1000,
+              currency: 'usd',
+            }),
+          },
+        };
       },
-      prices: {
-        create: vi.fn().mockResolvedValue({
-          id: 'price_test123',
-          product: 'prod_test123',
-          unit_amount: 1000,
-          currency: 'usd',
-        }),
-      },
-    })),
+    ),
   };
 });
 
