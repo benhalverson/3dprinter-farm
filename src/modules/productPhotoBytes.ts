@@ -27,15 +27,21 @@ export async function boundedBytes(stream: ReadableStream<Uint8Array> | null) {
   }
   return bytes;
 }
-export async function detectPhoto(bytes: Uint8Array) {
+/** Identify supported image signatures without trusting a filename or MIME claim. */
+export function photoContentType(bytes: Uint8Array) {
   const header = String.fromCharCode(...bytes.subarray(0, 12));
-  const contentType = header.startsWith('\x89PNG\r\n\x1a\n')
+  return header.startsWith('\x89PNG\r\n\x1a\n')
     ? 'image/png'
     : header.startsWith('\xff\xd8\xff')
       ? 'image/jpeg'
       : header.startsWith('RIFF') && header.endsWith('WEBP')
         ? 'image/webp'
         : null;
+}
+
+/** Decode supported photo bytes and release the decoder before returning their MIME. */
+export async function detectPhoto(bytes: Uint8Array) {
+  const contentType = photoContentType(bytes);
   if (!contentType)
     throw new AttachmentError(400, 'Select a JPEG, PNG, or WebP image');
   try {

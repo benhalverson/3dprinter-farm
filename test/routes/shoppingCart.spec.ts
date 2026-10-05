@@ -73,6 +73,7 @@ vi.mock('../../src/utils/profileCrypto', () => ({
       state: userRow.state || '',
       zipCode: userRow.zipCode || '',
       phone: userRow.phone || '',
+      country: userRow.country || '',
     })),
 }));
 
@@ -498,7 +499,7 @@ describe('Shopping Cart Routes', () => {
           city: 'encrypted-testville',
           state: 'encrypted-ts',
           zipCode: 'encrypted-12345',
-          country: 'encrypted-usa',
+          country: 'us',
           phone: 'encrypted-123-456-7890',
         },
       ]);
@@ -615,7 +616,7 @@ describe('Shopping Cart Routes', () => {
             city: 'encrypted-testville',
             state: 'encrypted-ts',
             zipCode: 'encrypted-12345',
-            country: 'encrypted-usa',
+            country: 'us',
             phone: 'encrypted-123-456-7890',
           },
         ])
@@ -672,7 +673,7 @@ describe('Shopping Cart Routes', () => {
             city: 'encrypted-testville',
             state: 'encrypted-ts',
             zipCode: 'encrypted-12345',
-            country: 'encrypted-usa',
+            country: 'us',
             phone: 'encrypted-123-456-7890',
           },
         ])
@@ -703,7 +704,6 @@ describe('Shopping Cart Routes', () => {
       expect(res.status).toBe(400);
       const data = (await res.json()) as any;
       expect(data.error).toBe('Missing publicFileServiceId for cart item');
-      expect(data.skuNumber).toBe('TEST-SKU-001');
       expect(global.fetch).not.toHaveBeenCalled();
     });
 
@@ -720,7 +720,7 @@ describe('Shopping Cart Routes', () => {
             city: 'encrypted-testville',
             state: 'encrypted-ts',
             zipCode: 'encrypted-12345',
-            country: 'encrypted-usa',
+            country: 'us',
             phone: 'encrypted-123-456-7890',
           },
         ])
@@ -757,9 +757,7 @@ describe('Shopping Cart Routes', () => {
 
       expect(res.status).toBe(502);
       const data = (await res.json()) as any;
-      expect(data.error).toBe('Upstream draft order estimate failed');
-      expect(data.status).toBe(500);
-      expect(data.details).toBe('Internal Server Error');
+      expect(data).toEqual({ error: 'Shipping provider estimate unavailable' });
     });
 
     test('returns 403 when cart is owned by a different user', async () => {

@@ -19,7 +19,12 @@ import { validateBindings } from './utils/validateBindings';
 
 const app = factory
   .createApp()
+  /** Preserves route-specific JSON failures without hiding mounted OpenAPI metadata. */
   .onError((error, c) => {
+    if (c.req.path === '/cart/shipping') {
+      c.header('Cache-Control', 'no-store');
+      return c.json({ error: 'Failed to retrieve shipping estimate' }, 500);
+    }
     // Draft middleware owns the structured log and JSON response. Keep the
     // handler on the parent so mounted OpenAPI metadata remains discoverable.
     if (/^\/admin\/product-drafts(?:\/|$)/.test(c.req.path))
