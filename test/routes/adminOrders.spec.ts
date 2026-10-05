@@ -15,11 +15,16 @@ import { mockGlobalFetch } from '../mocks/fetch';
 const mockStripeRefundCreate = vi.hoisted(() => vi.fn());
 
 vi.mock('stripe', () => ({
-  default: vi.fn().mockImplementation(() => ({
-    refunds: {
-      create: mockStripeRefundCreate,
+  default: vi.fn(
+    /** Builds the Stripe stub when production code calls its constructor. */
+    function StripeMock() {
+      return {
+        refunds: {
+          create: mockStripeRefundCreate,
+        },
+      };
     },
-  })),
+  ),
 }));
 
 mockAuth();

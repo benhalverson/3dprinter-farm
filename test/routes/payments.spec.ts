@@ -25,14 +25,19 @@ const mockStripeWebhooks = {
 
 vi.mock('stripe', () => {
   return {
-    default: vi.fn().mockImplementation(() => ({
-      checkout: {
-        sessions: {
-          create: mockStripeCreate,
-        },
+    default: vi.fn(
+      /** Builds the Stripe stub when production code calls its constructor. */
+      function StripeMock() {
+        return {
+          checkout: {
+            sessions: {
+              create: mockStripeCreate,
+            },
+          },
+          webhooks: mockStripeWebhooks,
+        };
       },
-      webhooks: mockStripeWebhooks,
-    })),
+    ),
   };
 });
 
