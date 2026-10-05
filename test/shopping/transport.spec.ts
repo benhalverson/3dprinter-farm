@@ -4,7 +4,7 @@ import { z } from 'zod';
 import app from '../../src/app';
 import { BudgetLedger } from '../../src/shopping/budget';
 import { IDLE_MS, LIFE_MS } from '../../src/shopping/contracts';
-import { PRICE } from '../../src/shopping/pricing';
+import { MONTHLY_CAP, PRICE, RESERVATION } from '../../src/shopping/pricing';
 import { SessionHandler } from '../../src/shopping/session';
 import { mockEnv } from '../mocks/env';
 import { catalog, completion } from './fixtures';
@@ -16,11 +16,19 @@ vi.mock('agents', () => ({
   }),
 }));
 
-type Mode = 'valid' | 'disabled' | 'malformed' | 'outage' | 'wait';
+type Mode =
+  | 'valid'
+  | 'disabled'
+  | 'malformed'
+  | 'outage'
+  | 'wait'
+  | 'accounting'
+  | 'missing_usage';
 let budgetStorage: MemoryBudgetStorage;
 let budget: BudgetLedger;
 const sessions = new Map<string, ReturnType<typeof createFixture>>();
 const pending = new Set<Promise<void>>();
+/** Wire the real Hono/session boundary to controlled storage and provider behavior. */
 function createFixture() {
   const storage = new MemorySessionStorage();
   const controls = { mode: 'valid' as Mode, invocations: 0 };
@@ -29,10 +37,16 @@ function createFixture() {
     priceVersion: PRICE.version,
     ledger: () => ({
       admit: async (...args) => budget.admit(...args),
-      reserve: async (...args) => budget.reserve(...args),
+      /** Simulate an accounting outage before any provider call is admitted. */
+      reserve: async (...args) => {
+        if (controls.mode === 'accounting')
+          throw new Error('accounting unavailable');
+        return budget.reserve(...args);
+      },
       settle: async (...args) => budget.settle(...args),
     }),
     read: async () => catalog,
+    /** Return controlled provider results without spending inference budget externally. */
     infer: async (_payload, signal) => {
       controls.invocations++;
       if (controls.mode === 'outage')
@@ -41,7 +55,12 @@ function createFixture() {
         await new Promise<void>(resolve => {
           signal.addEventListener('abort', () => resolve(), { once: true });
         });
-      return completion(controls.mode === 'malformed' ? '{' : undefined);
+      const result = completion(
+        controls.mode === 'malformed' ? '{' : undefined,
+      );
+      return controls.mode === 'missing_usage'
+        ? { ...result, usage: undefined }
+        : result;
     },
     waitUntil: task => {
       pending.add(task);
@@ -402,4 +421,46 @@ describe('anonymous shopping transport with mocked persistence', () => {
     ).toBe('timeout');
     expect(output.some(event => event.name === 'lulu.a2ui.v1')).toBe(false);
   });
+});
+
+it('enforces remaining capacity across concurrent Hono runs with missing usage and keeps browsing available', async () => {
+  const seeded = budget.reserve(
+    { sessionId: 'prior', runId: 'liability', invocation: 0 },
+    PRICE.version,
+  );
+  budgetStorage.updateReservation(seeded.id, {
+    charged: MONTHLY_CAP - 2 * RESERVATION,
+  });
+  const visitors = await Promise.all(Array.from({ length: 5 }, () => create()));
+  await Promise.all(visitors.map(visitor => mode(visitor, 'missing_usage')));
+  const outcomes = await Promise.all(
+    visitors.map(async visitor => events(await start(visitor))),
+  );
+  expect(
+    (await Promise.all(visitors.map(calls))).reduce(
+      (sum, count) => sum + count,
+      0,
+    ),
+  ).toBe(2);
+  expect(
+    outcomes.filter(output =>
+      output.some(event => event.value?.reason === 'budget_exhausted'),
+    ),
+  ).toHaveLength(3);
+  expect(budgetStorage.totalCharged(new Date().toISOString().slice(0, 7))).toBe(
+    MONTHLY_CAP,
+  );
+  expect(budgetStorage.alerts.size).toBe(3);
+  expect((await app.request('/categories', {}, testEnv())).status).toBe(200);
+});
+
+it('fails closed on accounting outage at the Hono boundary without interrupting catalog reads', async () => {
+  const session = await create();
+  await mode(session, 'accounting');
+  const output = await events(await start(session));
+  expect(
+    output.some(event => event.value?.reason === 'accounting_unavailable'),
+  ).toBe(true);
+  expect(await calls(session)).toBe(0);
+  expect((await app.request('/categories', {}, testEnv())).status).toBe(200);
 });

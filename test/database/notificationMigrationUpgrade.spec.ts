@@ -101,7 +101,9 @@ test('exact published0023 preserves main0022 data and legacy attempts across upg
     const baseline = JSON.parse(
       await readFile('drizzle/migrations/meta/0022_snapshot.json', 'utf8'),
     ) as DrizzleSQLiteSnapshotJSON;
-    const current = await generateSQLiteDrizzleJson(schema);
+    const current = JSON.parse(
+      await readFile('drizzle/migrations/meta/0023_snapshot.json', 'utf8'),
+    ) as DrizzleSQLiteSnapshotJSON;
     const db = drizzle(await worker.getD1Database('DB'), { schema });
     await migrate(db, {
       migrationsFolder: await migrationFolder(
@@ -126,32 +128,28 @@ test('exact published0023 preserves main0022 data and legacy attempts across upg
         idempotencyKey: 'duplicate-legacy-key',
       })),
     );
-    await db
-      .insert(legacyOrders)
-      .values({
-        id: 700,
-        userId: 'retained',
-        orderNumber: 'RETAINED',
-        fileURL: 'private-file',
-        shipToName: 'Owner',
-        shipToStreet1: 'Test street',
-        shipToCity: 'Test city',
-        shipToState: 'CA',
-        shipToZip: '90000',
-        shipToCountryISO: 'US',
-        squarePaymentId: 'retained-payment',
-        paymentStatus: 'paid',
-        slantStatus: 'SHIPPED',
-      });
-    await db
-      .insert(schema.orderEventsTable)
-      .values({
-        orderId: 700,
-        type: 'square_payment_verified',
-        dedupeKey: 'retained-event',
-        source: 'square',
-        actor: 'square',
-      });
+    await db.insert(legacyOrders).values({
+      id: 700,
+      userId: 'retained',
+      orderNumber: 'RETAINED',
+      fileURL: 'private-file',
+      shipToName: 'Owner',
+      shipToStreet1: 'Test street',
+      shipToCity: 'Test city',
+      shipToState: 'CA',
+      shipToZip: '90000',
+      shipToCountryISO: 'US',
+      squarePaymentId: 'retained-payment',
+      paymentStatus: 'paid',
+      slantStatus: 'SHIPPED',
+    });
+    await db.insert(schema.orderEventsTable).values({
+      orderId: 700,
+      type: 'square_payment_verified',
+      dedupeKey: 'retained-event',
+      source: 'square',
+      actor: 'square',
+    });
     const published = JSON.parse(
       await readFile('drizzle/migrations/meta/0023_snapshot.json', 'utf8'),
     ) as DrizzleSQLiteSnapshotJSON;

@@ -1,9 +1,10 @@
-import type { reservations, starts } from './ledger-schema';
+import type { budgetAlerts, reservations, starts } from './ledger-schema';
 import type { runs, visits } from './visit-schema';
 
 export type Visit = typeof visits.$inferSelect;
 export type Run = typeof runs.$inferSelect;
 export type Reservation = typeof reservations.$inferSelect;
+export type BudgetAlert = typeof budgetAlerts.$inferSelect;
 export type Start = typeof starts.$inferSelect;
 
 export interface SessionStorage {
@@ -17,6 +18,7 @@ export interface SessionStorage {
 }
 
 export interface BudgetStorage {
+  insertAlert(alert: BudgetAlert): void;
   getStart(id: string): Start | undefined;
   deleteStartsThrough(at: number): void;
   countStarts(visitor: string, after?: number): number;
@@ -25,4 +27,15 @@ export interface BudgetStorage {
   totalCharged(month: string): number;
   insertReservation(reservation: Reservation): void;
   updateReservation(id: string, changes: Partial<Reservation>): void;
+}
+
+/** Synchronous operations; claim and acceptance are transaction-owned by the adapter. */
+export interface AlertStorage {
+  claim(
+    now: number,
+    sender: string | null,
+    recipient: string | null,
+  ): BudgetAlert | undefined;
+  accept(id: string, lease: string, messageId: string): void;
+  nextAttempt(): number | undefined;
 }

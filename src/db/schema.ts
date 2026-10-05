@@ -834,7 +834,11 @@ export const uploadedFilesTable = sqliteTable('uploaded_files', {
     .notNull()
     .$defaultFn(() => new Date()),
 });
-export { reservations, starts } from '../shopping/storage/ledger-schema';
+export {
+  budgetAlerts,
+  reservations,
+  starts,
+} from '../shopping/storage/ledger-schema';
 export { runs, visits } from '../shopping/storage/visit-schema';
 
 /** Immutable checkout evidence; only invalidated may transition after creation. */

@@ -112,7 +112,10 @@ describe('bounded read-only inference', () => {
       const deps = dependencies();
       deps.infer = vi.fn(async () => ({ ...completion(), usage }));
       await runInference(input(), 'session', deps);
-      expect(deps.accounting.settle).not.toHaveBeenCalled();
+      expect(deps.accounting.settle).toHaveBeenCalledWith(
+        expect.any(String),
+        null,
+      );
     }
   });
 
@@ -235,4 +238,43 @@ describe('bounded read-only inference', () => {
       'catalog_detail',
     ]);
   });
+});
+
+it('logs only accounted cost/status, never private request or provider metadata', async () => {
+  const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+  const deps = dependencies();
+  deps.infer = vi.fn(async () => ({
+    ...completion(),
+    secret: 'provider-credential-marker',
+  }));
+  await runInference(
+    { ...input(), message: 'private-prompt-marker' },
+    'session',
+    deps,
+  );
+  const entries = log.mock.calls.map(([value]) => JSON.parse(String(value)));
+  expect(entries).toEqual([
+    {
+      event: 'shopping_usage',
+      invocation: 0,
+      chargedNanodollars: 1,
+      usageStatus: 'reported',
+    },
+  ]);
+  expect(JSON.stringify(log.mock.calls)).not.toMatch(
+    /private-prompt|provider-credential/,
+  );
+});
+
+it('fails closed when missing usage reconciliation cannot confirm persistence', async () => {
+  const deps = dependencies();
+  deps.infer = vi.fn(async () => ({ ...completion(), usage: undefined }));
+  deps.accounting.settle = vi.fn(async () => {
+    throw new Error('ledger outage');
+  });
+  await expect(runInference(input(), 'session', deps)).rejects.toThrow(
+    'accounting_unavailable',
+  );
+  expect(deps.infer).toHaveBeenCalledTimes(1);
+  expect(deps.accounting.reserve).toHaveBeenCalledTimes(1);
 });

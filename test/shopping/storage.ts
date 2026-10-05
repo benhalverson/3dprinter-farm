@@ -1,11 +1,14 @@
 import type {
   BudgetStorage,
+  BudgetAlert,
+  AlertStorage,
   Reservation,
   Run,
   SessionStorage,
   Start,
   Visit,
 } from '../../src/shopping/storage/contracts';
+import { claimAlert } from '../../src/shopping/budget-alerts';
 
 /** Storage operations only. These fixtures do not emulate SQLite or durability. */
 export class MemorySessionStorage implements SessionStorage {
@@ -42,7 +45,36 @@ export class MemorySessionStorage implements SessionStorage {
   }
 }
 
-export class MemoryBudgetStorage implements BudgetStorage {
+export class MemoryBudgetStorage implements BudgetStorage, AlertStorage {
+  readonly alerts = new Map<string, BudgetAlert>();
+  /** Preserve first crossing and its delivery state. */
+  insertAlert(alert: BudgetAlert) {
+    if (!this.alerts.has(alert.id)) this.alerts.set(alert.id, { ...alert });
+  }
+  /** Synchronously claim a due attempt, as the production transaction does. */
+  claim(now: number, sender: string | null, recipient: string | null) {
+    const row = [...this.alerts.values()]
+      .filter(row => !row.messageId && row.nextAttempt <= now)
+      .sort(
+        (a, b) => a.nextAttempt - b.nextAttempt || a.id.localeCompare(b.id),
+      )[0];
+    if (!row) return undefined;
+    const claimed = claimAlert(row, now, sender, recipient);
+    this.alerts.set(row.id, claimed);
+    return { ...claimed };
+  }
+  /** A late acknowledgement cannot complete a newer attempt. */
+  accept(id: string, lease: string, messageId: string) {
+    const row = this.alerts.get(id);
+    if (row?.lease === lease && !row.messageId)
+      Object.assign(row, { messageId, lease: null });
+  }
+  /** Return the earliest unacknowledged retry deadline. */
+  nextAttempt() {
+    return [...this.alerts.values()]
+      .filter(row => !row.messageId)
+      .sort((a, b) => a.nextAttempt - b.nextAttempt)[0]?.nextAttempt;
+  }
   readonly starts = new Map<string, Start>();
   readonly reservations = new Map<string, Reservation>();
   getStart(id: string) {

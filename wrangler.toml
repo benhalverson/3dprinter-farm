@@ -18,6 +18,10 @@ remote = false
 name = "AUTH_EMAIL"
 remote = false
 
+[[send_email]]
+name = "BUDGET_EMAIL"
+remote = false
+
 [[kv_namespaces]]
 binding = "COLOR_CACHE"
 id = "546aedc37b4843489e0f8c4a1f3799f5"

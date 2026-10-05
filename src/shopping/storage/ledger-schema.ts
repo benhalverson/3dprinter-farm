@@ -29,3 +29,22 @@ export const starts = sqliteTable(
   },
   table => [index('visitor_starts').on(table.visitor, table.at)],
 );
+
+/** One durable logical notification per UTC month and threshold. */
+export const budgetAlerts = sqliteTable(
+  'budget_alerts',
+  {
+    id: text().primaryKey(),
+    month: text().notNull(),
+    threshold: integer().notNull(),
+    charged: integer().notNull(),
+    exhausted: integer({ mode: 'boolean' }).notNull(),
+    attempts: integer().notNull(),
+    nextAttempt: integer('next_attempt').notNull(),
+    lease: text(),
+    sender: text(),
+    recipient: text(),
+    messageId: text('message_id'),
+  },
+  table => [index('budget_alert_due').on(table.messageId, table.nextAttempt)],
+);
