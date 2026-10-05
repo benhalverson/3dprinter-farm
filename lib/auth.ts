@@ -224,6 +224,7 @@ export function createAuth(
       'http://localhost:8787',
       'https://rc-store.benhalverson.dev',
       'https://rc-admin.pages.dev',
+      'https://rc-admin.benhalverson.workers.dev',
       'https://api.benhalverson.dev',
       'https://race-forge.com',
       'https://luluspeedworks.com',
