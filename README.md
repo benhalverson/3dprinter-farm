@@ -113,149 +113,26 @@ Notes:
 
 ## Database Migrations
 
-This project uses Drizzle ORM for database schema management and migrations. Below are detailed instructions for running migrations both locally and on Cloudflare D1.
+Use Drizzle schemas and query APIs for all persistence, including database initialization and data corrections. Load the global [$drizzle-migrations](../../.codex/skills/drizzle-migrations/SKILL.md) skill for this workflow.
 
-### Local Development Migrations
+1. Change `src/db/schema.ts` (which also exports the Durable Object schemas).
+2. Run `pnpm run db:generate` and review the generated migration and metadata in `drizzle/migrations`.
+3. Apply locally with `pnpm run db:migrate:local`. Verify the database path in `drizzle.config.ts`; use a disposable copy when validating existing history.
+4. When remote migration is explicitly authorized, use `pnpm run db:migrate:remote`. This preserves the existing Wrangler application command and its migration tracking. Check the target environment and binding before running it. Deployment requires separate authorization.
 
-#### Prerequisites
-- Ensure you have the project dependencies installed: `pnpm install`
-- Make sure your local development environment is set up with `.dev.vars` file
+Do not hand-write SQL, use schema push, paste SQL into a dashboard, directly execute migration files, or create custom migration loaders. If Drizzle cannot support an operation, explain the limitation and ask before using another approach. Do not reset data or rewrite published migration history to hide replay failures.
 
-#### 1. Generate Migration Files
-When you make changes to the database schema in `src/db/schema.ts`, generate a migration file:
+`pnpm run check:sql` inspects authored TypeScript/JavaScript and permits SQL files only under the configured Drizzle migration directory. Placement does not prove generation: retain evidence of `db:generate`, inspect its output and metadata, and compare with the base history. Generated declarations and Drizzle introspection artifacts are excluded. This static check resolves known SQL APIs through TypeScript symbols; dynamic code and erased types still require review.
 
-```bash
-npx drizzle-kit generate
-```
+Timestamp defaults are supplied by Drizzle's `$defaultFn`: UTC text uses `YYYY-MM-DD HH:mm:ss`; integer timestamp columns retain their seconds/milliseconds modes and Date mappings. Explicit values and nullable columns remain supported. These defaults apply on insert only. After the generated migration removes database defaults, inserts outside Drizzle must supply timestamps. No automatic update timestamps are introduced.
 
-This will:
-- Create a new migration file in `drizzle/migrations/`
-- Generate the necessary SQL statements based on schema changes
-- Update the migration metadata in `drizzle/migrations/meta/`
+### Checks and diagnostics
 
-#### 2. Apply Migrations Locally
-To apply migrations to your local development database:
+Run `pnpm run check`, `pnpm run test:project-notes`, and `pnpm run test:ci`. Biome lint keeps existing severities and warnings; generated Worker declarations are excluded. CI uses the same checks, including branches and PR targets with slashes.
 
-```bash
-# Option 1: Apply all pending migrations
-npx drizzle-kit migrate
+For Worker failures, use the global [$worker-diagnostics](../../.codex/skills/worker-diagnostics/SKILL.md) skill. Identify the URL/environment, local revision and active deployment, bindings, request identifiers and structured errors. Treat mocked tests, local preview, and deployed observations as separate evidence.
 
-# Option 2: Push schema changes directly (development only)
-npx drizzle-kit push
-```
-
-**Note**: `drizzle-kit push` is faster for development but doesn't create migration files. Use `generate` + `migrate` for production-ready changes.
-
-#### 3. Verify Local Changes
-Start your development server to test the changes:
-
-```bash
-pnpm run dev
-```
-
-### Cloudflare D1 Remote Migrations
-
-#### Prerequisites
-- Ensure you're authenticated with Cloudflare: `npx wrangler auth login`
-- Have the correct database name configured in `wrangler.toml`
-
-#### Cloudflare Dashboard workflow
-
-If you prefer to apply changes from the Cloudflare dashboard instead of the CLI:
-
-1. Open your D1 database in the Cloudflare dashboard.
-2. Open the SQL editor for the target database.
-3. Open the migration file you want to apply from `drizzle/migrations/`.
-4. Copy the SQL from the migration file and paste it into the SQL editor.
-5. Run each migration in chronological order.
-6. Repeat for every environment you use separately, for example:
-	- local preview database
-	- remote production database
-	- remote preview/staging database
-
-For the Better Auth organization-role migration in this repository, make sure `drizzle/migrations/0001_jittery_peter_parker.sql` has been applied everywhere the app runs. That migration creates:
-
-- `organization`
-- `member`
-- `invitation`
-- `session.active_organization_id`
-
-#### 1. Apply Individual Migration Files
-For each migration file that needs to be applied to the remote database:
-
-```bash
-npx wrangler d1 execute DATABASE_NAME --remote --file=drizzle/migrations/MIGRATION_FILE.sql
-```
-
-**Example**:
-```bash
-npx wrangler d1 execute ecommerce --remote --file=drizzle/migrations/0002_uneven_glorian.sql
-```
-
-#### 2. Apply Multiple Migrations
-If you have multiple migration files to apply, run them in order:
-
-```bash
-# Apply migrations in chronological order
-npx wrangler d1 execute ecommerce --remote --file=drizzle/migrations/0001_initial.sql
-npx wrangler d1 execute ecommerce --remote --file=drizzle/migrations/0002_add_column.sql
-npx wrangler d1 execute ecommerce --remote --file=drizzle/migrations/0003_update_indexes.sql
-```
-
-#### 3. Execute Custom SQL Scripts
-For data cleanup or custom operations:
-
-```bash
-# Create a temporary SQL file
-echo "UPDATE products SET image_gallery = '[]' WHERE image_gallery IS NULL;" > cleanup.sql
-
-# Execute the script
-npx wrangler d1 execute ecommerce --remote --file=cleanup.sql
-
-# Clean up
-rm cleanup.sql
-```
-
-#### 4. Verify Remote Changes
-Check that your migrations were applied successfully:
-
-```bash
-# View database schema
-npx wrangler d1 execute ecommerce --remote --command="SELECT sql FROM sqlite_master WHERE type='table';"
-
-# Check specific table structure
-npx wrangler d1 execute ecommerce --remote --command="PRAGMA table_info(products);"
-```
-
-#### 5. Deploy Updated Code
-After applying database migrations, deploy your updated application:
-
-```bash
-pnpm run deploy
-```
-
-### Migration Best Practices
-
-#### Development Workflow
-1. **Make schema changes** in `src/db/schema.ts`
-2. **Generate migration** with `npx drizzle-kit generate`
-3. **Test locally** with `npx drizzle-kit migrate` or `npx drizzle-kit push`
-4. **Verify functionality** by running `pnpm run dev`
-5. **Commit changes** including both schema and migration files
-
-#### Production Deployment
-1. **Review migration files** before applying to production
-2. **Backup database** (if applicable) before running migrations
-3. **Apply migrations** to remote D1 database using `wrangler d1 execute`
-4. **Deploy application** with `pnpm run deploy`
-5. **Test endpoints** to ensure everything works correctly
-
-#### Important Notes
-- **Order matters**: Apply migrations in chronological order (0001, 0002, 0003, etc.)
-- **No rollbacks**: D1 doesn't support automatic rollbacks, plan migrations carefully
-- **Downtime**: Remote migrations may cause brief downtime during execution
-- **Testing**: Always test migrations locally before applying to production
-- **Backup**: Consider exporting data before major schema changes
+Migration inspection must be read-only. The installed Wrangler migration-list command initializes its tracking table, so do not use it for diagnostics. Use existing migration logs/history or Drizzle-based reads of existing tracking tables. Report missing or inaccessible applied/pending state as **unverified**; do not apply migrations to discover it.
 
 ## Better Auth Organization Setup
 
@@ -275,7 +152,7 @@ Catalog mutation routes check the caller's shared-organization role, not only th
 
 The admin promotion endpoint can promote other users, but the very first admin must exist first.
 
-If you are setting up a fresh environment from the Cloudflare dashboard, do these steps after applying the migrations:
+For an authorized first-admin bootstrap, use the existing Drizzle schema and query APIs after applying generated migrations:
 
 1. Find the target user's `id` in the `users` table.
 2. Ensure the shared organization row exists in `organization`.
@@ -328,50 +205,7 @@ If Better Auth organization endpoints fail, verify all of the following in the t
 
 ### Troubleshooting
 
-#### Common Issues
-
-**Migration file not found**:
-```bash
-# Check if migration files exist
-ls -la drizzle/migrations/
-
-# Ensure you're in the project root directory
-pwd
-```
-
-**Database connection errors**:
-```bash
-# Verify wrangler authentication
-npx wrangler auth whoami
-
-# Check database configuration
-npx wrangler d1 list
-```
-
-**Schema sync issues**:
-```bash
-# Force regenerate migration
-npx drizzle-kit generate --force
-
-# Check current schema state
-npx drizzle-kit introspect
-```
-
-### Database Commands Reference
-
-```bash
-# Development
-npx drizzle-kit generate              # Generate migration files
-npx drizzle-kit migrate               # Apply migrations locally
-npx drizzle-kit push                  # Push schema changes directly (dev only)
-npx drizzle-kit introspect           # Inspect current database schema
-
-# Production (Cloudflare D1)
-npx wrangler d1 list                                    # List databases
-npx wrangler d1 execute DB_NAME --remote --file=FILE    # Execute migration file
-npx wrangler d1 execute DB_NAME --remote --command=SQL  # Execute SQL command
-npx wrangler d1 export DB_NAME                         # Export database
-```
+Use [$worker-diagnostics](../../.codex/skills/worker-diagnostics/SKILL.md) to compare the requested environment, active deployment, bindings, and verified migration history. Check organization and membership records through Drizzle reads. Leave unavailable evidence unverified rather than forcing schema synchronization.
 
 ## Development Setup
 
@@ -384,7 +218,7 @@ npx wrangler d1 export DB_NAME                         # Export database
 		 - `DOMAIN=http://localhost:8787`
 		 - `RP_ID=localhost`
 		 - Optional when frontend runs on another origin (for example `http://localhost:3000`): `PASSKEY_ORIGIN=http://localhost:3000`
-5. Run migrations: `npx drizzle-kit push`
+5. Apply generated migrations: `pnpm run db:migrate:local`
 6. Start development server: `pnpm run dev`
 
 After the dev server starts, you can open:

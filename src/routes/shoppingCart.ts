@@ -1,28 +1,44 @@
 import { zValidator } from '@hono/zod-validator';
 import { and, eq } from 'drizzle-orm';
+import { HTTPException } from 'hono/http-exception';
 import { describeRoute } from 'hono-openapi';
 import Stripe from 'stripe';
 import { z } from 'zod';
-import { BASE_URL } from '../constants';
-import { addCartItemSchema, cart, productsTable, users } from '../db/schema';
-import factory from '../factory';
-import { authMiddleware, optionalAuthMiddleware } from '../utils/authMiddleware';
-import { generateOrderNumber } from '../utils/generateOrderNumber';
+import { createSchema } from 'zod-openapi';
+import { BASE_URL_V2 } from '../constants';
 import {
-  decryptStoredShippingProfile,
-} from '../utils/profileCrypto';
+  addCartItemSchema,
+  cart,
+  DEFAULT_PLA_BLACK_FILAMENT_ID,
+  productsTable,
+  users,
+} from '../db/schema';
+import factory from '../factory';
+import { validateCartConfiguration } from '../modules/cartConfiguration';
+import { cartLines, claimCart, createCart } from '../modules/cartOwnership';
+import {
+  readinessErrorResponse,
+  validateCartReadiness,
+} from '../modules/catalogReadiness';
+import {
+  authMiddleware,
+  optionalAuthMiddleware,
+} from '../utils/authMiddleware';
+import { cartAccessMiddleware } from '../utils/cartAccessMiddleware';
+import { decryptStoredShippingProfile } from '../utils/profileCrypto';
+import { serializeError as serializeCartCreateError } from '../utils/serializeError';
 
 // Schema for update cart item
 const updateCartItemSchema = z.object({
-  cartId: z.string(),
-  itemId: z.number(),
-  quantity: z.number().min(0),
+  cartId: z.string().uuid(),
+  itemId: z.number().int().positive(),
+  quantity: z.number().int().min(0).max(69),
 });
 
 // Schema for remove cart item
 const removeCartItemSchema = z.object({
-  cartId: z.string(),
-  itemId: z.number(),
+  cartId: z.string().uuid(),
+  itemId: z.number().int().positive(),
 });
 
 const cartIdParamSchema = z.object({
@@ -50,17 +66,95 @@ const createCheckoutSchema = z.object({
     .optional(),
 });
 
+const paymentIntentRequestSchema = z.object({
+  customerEmail: z.string().email().optional(),
+  shippingAddress: z
+    .object({
+      firstName: z.string(),
+      lastName: z.string(),
+      address: z.string(),
+      city: z.string(),
+      state: z.string(),
+      postalCode: z.string(),
+      country: z.string().length(2),
+    })
+    .optional(),
+});
+
+type DescribeRouteConfig = Parameters<typeof describeRoute>[0];
+type ResponseSchema = NonNullable<
+  NonNullable<
+    Extract<
+      NonNullable<DescribeRouteConfig['responses']>[string],
+      { content?: Record<string, { schema?: unknown }> }
+    >['content']
+  >[string]['schema']
+>;
+type RequestBodySchema = NonNullable<
+  NonNullable<
+    Extract<
+      NonNullable<DescribeRouteConfig['requestBody']>,
+      { content?: Record<string, { schema?: unknown }> }
+    >['content']
+  >[string]['schema']
+>;
+type OpenApiSchema = ResponseSchema & RequestBodySchema;
+
+function openApiSchema(
+  schema: z.ZodTypeAny,
+  schemaType: 'input' | 'output' = 'output',
+): OpenApiSchema {
+  return createSchema(schema, {
+    openapi: '3.1.0',
+    schemaType,
+  }).schema as unknown as OpenApiSchema;
+}
+
 /** Extracts the authenticated caller's user ID from Hono context, if present. */
-function getCallerUserId(c: { get: (key: string) => unknown }): string | undefined {
+function getCallerUserId(c: {
+  get: (key: string) => unknown;
+}): string | undefined {
   const payload = c.get('jwtPayload') as { id?: string } | undefined;
   return payload?.id ?? undefined;
 }
 
+function hasStripePriceId<T extends { stripePriceId?: string | null }>(
+  item: T,
+): item is T & { stripePriceId: string } {
+  return (
+    typeof item.stripePriceId === 'string' &&
+    item.stripePriceId.trim().length > 0
+  );
+}
+
 const shoppingCart = factory
   .createApp()
+  .use('/cart/*', optionalAuthMiddleware, async (c, next) => {
+    c.header('Cache-Control', 'no-store');
+    await next();
+  })
+  .post(
+    '/cart/:cartId/claim',
+    authMiddleware,
+    zValidator('param', cartIdParamSchema),
+    async c => {
+      try {
+        await claimCart(c.var.db, c.req.valid('param').cartId, {
+          userId: c.var.userId,
+          guestToken: c.req.header('X-Cart-Token'),
+        });
+        return c.json({ message: 'Cart claimed' });
+      } catch (error) {
+        if (error instanceof HTTPException)
+          return c.json({ error: error.message }, error.status);
+        throw error;
+      }
+    },
+  )
   .get(
     '/cart/shipping',
     authMiddleware,
+    cartAccessMiddleware,
     describeRoute({
       description: 'Get the shipping address for the logged-in user',
       tags: ['Shopping Cart'],
@@ -68,20 +162,22 @@ const shoppingCart = factory
         200: {
           content: {
             'application/json': {
-              schema: z.object({
-                address: z
-                  .object({
-                    firstName: z.string(),
-                    lastName: z.string(),
-                    shippingAddress: z.string(),
-                    city: z.string(),
-                    state: z.string(),
-                    zipCode: z.string(),
-                    country: z.string(),
-                    phone: z.string(),
-                  })
-                  .nullable(),
-              }),
+              schema: openApiSchema(
+                z.object({
+                  address: z
+                    .object({
+                      firstName: z.string(),
+                      lastName: z.string(),
+                      shippingAddress: z.string(),
+                      city: z.string(),
+                      state: z.string(),
+                      zipCode: z.string(),
+                      country: z.string(),
+                      phone: z.string(),
+                    })
+                    .nullable(),
+                }),
+              ),
             },
           },
           description: 'Shipping address retrieved successfully',
@@ -89,7 +185,7 @@ const shoppingCart = factory
         500: {
           content: {
             'application/json': {
-              schema: z.object({ error: z.string() }),
+              schema: openApiSchema(z.object({ error: z.string() })),
             },
           },
           description: 'Failed to retrieve shipping address',
@@ -126,18 +222,13 @@ const shoppingCart = factory
           city,
           state,
           zipCode,
-          phone: decryptedPhone,
+          country,
         } = await decryptStoredShippingProfile(userRow, passphrase);
         const decryptMs = performance.now() - decryptStart;
-        let phone = decryptedPhone;
-        // Sanitize phone - keep digits and leading +, enforce <=20 chars
-        phone = phone ? phone.replace(/[^+0-9]/g, '') : '';
-        if (phone.length > 20) phone = phone.slice(0, 20);
-        if (!phone) phone = '0000000000'; // fallback minimal placeholder if upstream requires
 
         // Pull cart contents and join products to enrich data.
         const cartQueryStart = performance.now();
-        const cartItems = await c.var.db
+        const cartItems = (await c.var.db
           .select({
             id: cart.id,
             cartUserId: cart.userId,
@@ -145,12 +236,13 @@ const shoppingCart = factory
             quantity: cart.quantity,
             color: cart.color,
             filamentType: cart.filamentType,
+            filamentId: cart.filamentId,
             productName: productsTable.name,
-            stl: productsTable.stl,
+            publicFileServiceId: productsTable.publicFileServiceId,
           })
           .from(cart)
           .leftJoin(productsTable, eq(cart.skuNumber, productsTable.skuNumber))
-          .where(eq(cart.cartId, cartId));
+          .where(cartLines(c.var.cartAccess))) as CartShippingItem[];
         const cartQueryMs = performance.now() - cartQueryStart;
 
         console.log('cartItems:', cartItems);
@@ -161,11 +253,30 @@ const shoppingCart = factory
 
         // Enforce cart ownership: reject if the cart is owned by a different user.
         // Use != null (loose) to treat both null and undefined as "no owner".
-        if (cartItems[0].cartUserId != null && cartItems[0].cartUserId !== userId) {
+        if (
+          cartItems[0].cartUserId != null &&
+          cartItems[0].cartUserId !== userId
+        ) {
           return c.json({ error: 'Forbidden' }, 403);
         }
 
-        // Build orderData array per API spec from each cart item.
+        const itemMissingFileId = cartItems.find(
+          item => !hasPublicFileServiceId(item),
+        );
+        if (itemMissingFileId) {
+          return c.json(
+            {
+              error: 'Missing publicFileServiceId for cart item',
+              skuNumber: itemMissingFileId.skuNumber,
+            },
+            400,
+          );
+        }
+        const printableCartItems = cartItems as Array<
+          (typeof cartItems)[number] & { publicFileServiceId: string }
+        >;
+
+        // Build Slant3D V2 draft-order payload from each cart item.
         // Normalize colors to allowed enumeration expected by upstream API.
         const allowedColors = new Set([
           'black',
@@ -232,61 +343,87 @@ const shoppingCart = factory
         };
 
         const payloadBuildStart = performance.now();
-        const orderDataArray = cartItems.map(cart => {
-          // Derive filename: use product STL last path segment or fallback.
-          const stlPath = cart.stl;
-          const filenameCandidate = stlPath?.split('/').pop();
-          const normalizedColor = normalizeColor(cart.color);
-          if (normalizedColor !== cart.color) {
-            console.log('Normalized color', {
-              original: cart.color,
-              normalized: normalizedColor,
-            });
-          }
-          return {
-            email,
-            phone,
-            name: `${firstName} ${lastName}`.trim(),
-            orderNumber: generateOrderNumber(),
-            filename: filenameCandidate,
-            fileURL: stlPath,
-            bill_to_street_1: shippingAddress,
-            bill_to_street_2: '',
-            bill_to_street_3: '',
-            bill_to_city: city,
-            bill_to_state: state,
-            bill_to_zip: zipCode,
-            bill_to_country_as_iso: 'US',
-            bill_to_is_US_residential: 'true',
-            ship_to_name: `${firstName} ${lastName}`.trim(),
-            ship_to_street_1: shippingAddress,
-            ship_to_street_2: '',
-            ship_to_street_3: '',
-            ship_to_city: city,
-            ship_to_state: state,
-            ship_to_zip: zipCode,
-            ship_to_country_as_iso: 'US',
-            ship_to_is_US_residential: 'true',
-            order_item_name: cart.productName,
-            order_quantity: String(cart.quantity),
-            order_image_url: '',
-            order_sku: cart.skuNumber,
-            order_item_color: normalizedColor,
-            profile: cart.filamentType,
-          };
-        });
+        if (!c.env.SLANT_PLATFORM_ID) {
+          return c.json(
+            { error: 'Missing SLANT_PLATFORM_ID environment variable.' },
+            500,
+          );
+        }
+        const countryCode = normalizeCountryCode(country);
+        const recipientName = `${firstName} ${lastName}`.trim() || email;
+        const address = {
+          name: recipientName,
+          line1: shippingAddress,
+          line2: '',
+          city,
+          state,
+          zip: zipCode,
+          country: countryCode,
+        };
+        const draftOrderPayload = {
+          platformId: c.env.SLANT_PLATFORM_ID,
+          ownerId: userId,
+          customer: {
+            details: {
+              email,
+              address,
+            },
+          },
+          items: printableCartItems.map(cartItem => {
+            const filamentId =
+              typeof cartItem.filamentId === 'string' &&
+              cartItem.filamentId.trim()
+                ? cartItem.filamentId
+                : DEFAULT_PLA_BLACK_FILAMENT_ID;
+            const normalizedColor = normalizeColor(cartItem.color);
+            if (normalizedColor !== cartItem.color) {
+              console.log('Normalized color', {
+                original: cartItem.color,
+                normalized: normalizedColor,
+              });
+            }
+            return {
+              type: 'PRINT',
+              publicFileServiceId: cartItem.publicFileServiceId,
+              filamentId,
+              quantity: cartItem.quantity,
+            };
+          }),
+        };
         const payloadBuildMs = performance.now() - payloadBuildStart;
 
-        // API expects an array of orderData objects
+        // Draft and estimate the order with Slant3D V2.
         const upstreamStart = performance.now();
-        const response = await fetch(`${BASE_URL}order/estimate`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'api-key': c.env.SLANT_API,
-          },
-          body: JSON.stringify(orderDataArray),
+        const upstreamUrl = `${BASE_URL_V2}orders`;
+        const upstreamHost = new URL(upstreamUrl).host;
+        console.log('cart/shipping upstream request', {
+          url: upstreamUrl,
+          host: upstreamHost,
+          hasSlantApiV2: Boolean(c.env.SLANT_API_V2),
+          cartId,
+          userId,
+          ...summarizeDraftOrderPayload(draftOrderPayload),
         });
+
+        let response: Response;
+        try {
+          response = await fetch(upstreamUrl, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: 'Bearer '.concat(c.env.SLANT_API_V2),
+            },
+            body: JSON.stringify(draftOrderPayload),
+          });
+        } catch (error) {
+          console.error('cart/shipping upstream fetch failed before response', {
+            url: upstreamUrl,
+            host: upstreamHost,
+            upstreamMs: Number((performance.now() - upstreamStart).toFixed(2)),
+            error: serializeError(error),
+          });
+          throw error;
+        }
         const upstreamMs = performance.now() - upstreamStart;
 
         const totalMs = Number((performance.now() - requestStart).toFixed(2));
@@ -300,8 +437,11 @@ const shoppingCart = factory
         };
 
         // Gate timing log on hot path to reduce overhead/log volume.
-        const sampleEnv = (c.env as any)?.CART_SHIPPING_TIMING_SAMPLE_RATE;
-        const sampleRate = typeof sampleEnv === 'string' ? Number(sampleEnv) : NaN;
+        const sampleEnv = (
+          c.env as { CART_SHIPPING_TIMING_SAMPLE_RATE?: unknown }
+        ).CART_SHIPPING_TIMING_SAMPLE_RATE;
+        const sampleRate =
+          typeof sampleEnv === 'string' ? Number(sampleEnv) : NaN;
         const isValidSampleRate =
           Number.isFinite(sampleRate) && sampleRate > 0 && sampleRate <= 1;
 
@@ -313,19 +453,51 @@ const shoppingCart = factory
           console.log('cart/shipping timing', timings);
         }
         if (!response.ok) {
+          const errorText = await response.text();
+          const errorDetails = parseUpstreamErrorDetails(errorText);
           console.error(
-            'Upstream estimate error:',
+            'Upstream draft order estimate error:',
             response.status,
-            await response.text(),
+            {
+              url: upstreamUrl,
+              host: upstreamHost,
+              timings,
+            },
+            errorDetails,
           );
           return c.json(
-            { error: 'Upstream estimate failed', status: response.status },
+            {
+              error: 'Upstream draft order estimate failed',
+              status: response.status,
+              details: errorDetails,
+            },
             502,
           );
         }
 
-        const data = (await response.json()) as ShippingResponse;
-        return c.json({ shippingCost: data.shippingCost });
+        const data = (await response.json()) as DraftOrderResponse;
+        const shippingCost = extractShippingCost(data);
+
+        if (shippingCost === undefined) {
+          console.error(
+            'cart/shipping upstream response missing shipping cost',
+            {
+              url: upstreamUrl,
+              host: upstreamHost,
+              timings,
+              response: data,
+            },
+          );
+          return c.json(
+            {
+              error:
+                'Upstream draft order estimate response missing shipping cost',
+            },
+            502,
+          );
+        }
+
+        return c.json({ shippingCost });
       } catch (err) {
         console.log('Error fetching shipping estimate:', err);
         return c.json(
@@ -348,10 +520,13 @@ const shoppingCart = factory
         201: {
           content: {
             'application/json': {
-              schema: z.object({
-                cartId: z.string().uuid(),
-                message: z.string(),
-              }),
+              schema: openApiSchema(
+                z.object({
+                  cartId: z.string().uuid(),
+                  guestToken: z.string().uuid().optional(),
+                  message: z.string(),
+                }),
+              ),
             },
           },
           description: 'Cart created successfully',
@@ -359,22 +534,34 @@ const shoppingCart = factory
       },
     }),
     async c => {
+      const requestStart = performance.now();
       try {
-        const cartId = crypto.randomUUID();
+        const { cartId, guestToken } = await createCart(c.var.db, c.var.userId);
         return c.json(
           {
             cartId,
+            guestToken,
             message: 'Cart created successfully',
           },
           201,
         );
-      } catch (_error) {
+      } catch (error) {
+        console.error({
+          event: 'cart.create.failed',
+          route: 'POST /cart/create',
+          origin: c.req.header('Origin') ?? null,
+          rayId: c.req.header('CF-Ray') ?? null,
+          elapsedMs: performance.now() - requestStart,
+          authenticated: Boolean(c.var.userId),
+          error: serializeCartCreateError(error),
+        });
         return c.json({ error: 'Failed to create cart' }, 500);
       }
     },
   )
   .get(
     '/cart/:cartId',
+    cartAccessMiddleware,
     describeRoute({
       description: 'Get shopping cart items',
       tags: ['Shopping Cart'],
@@ -382,21 +569,24 @@ const shoppingCart = factory
         200: {
           content: {
             'application/json': {
-              schema: z.object({
-                items: z.array(
-                  z.object({
-                    id: z.number(),
-                    productId: z.string(),
-                    quantity: z.number(),
-                    color: z.string(),
-                    filamentType: z.string(),
-                    name: z.string(),
-                    price: z.number(),
-                    stripePriceId: z.string().optional(),
-                  }),
-                ),
-                total: z.number(),
-              }),
+              schema: openApiSchema(
+                z.object({
+                  items: z.array(
+                    z.object({
+                      id: z.number(),
+                      productId: z.string(),
+                      quantity: z.number(),
+                      color: z.string(),
+                      filamentType: z.string(),
+                      filamentId: z.string().uuid(),
+                      name: z.string(),
+                      price: z.number(),
+                      stripePriceId: z.string().optional(),
+                    }),
+                  ),
+                  total: z.number(),
+                }),
+              ),
             },
           },
           description: 'Cart items retrieved successfully',
@@ -404,9 +594,11 @@ const shoppingCart = factory
         404: {
           content: {
             'application/json': {
-              schema: z.object({
-                error: z.string(),
-              }),
+              schema: openApiSchema(
+                z.object({
+                  error: z.string(),
+                }),
+              ),
             },
           },
           description: 'Cart not found',
@@ -426,13 +618,14 @@ const shoppingCart = factory
             quantity: cart.quantity,
             color: cart.color,
             filamentType: cart.filamentType,
+            filamentId: cart.filamentId,
             name: productsTable.name,
             price: productsTable.price,
             stripePriceId: productsTable.stripePriceId,
           })
           .from(cart)
           .leftJoin(productsTable, eq(cart.skuNumber, productsTable.skuNumber))
-          .where(eq(cart.cartId, cartId));
+          .where(cartLines(c.var.cartAccess));
 
         const total = items.reduce(
           (sum, item) => sum + item.quantity * (item.price || 0),
@@ -446,6 +639,7 @@ const shoppingCart = factory
             quantity: item.quantity,
             color: item.color,
             filamentType: item.filamentType,
+            filamentId: item.filamentId ?? DEFAULT_PLA_BLACK_FILAMENT_ID,
             name: item.name,
             price: item.price,
             stripePriceId: item.stripePriceId,
@@ -466,9 +660,11 @@ const shoppingCart = factory
         200: {
           content: {
             'application/json': {
-              schema: z.object({
-                message: z.string(),
-              }),
+              schema: openApiSchema(
+                z.object({
+                  message: z.string(),
+                }),
+              ),
             },
           },
           description: 'Item added successfully',
@@ -476,59 +672,95 @@ const shoppingCart = factory
         500: {
           content: {
             'application/json': {
-              schema: z.object({
-                error: z.string(),
-              }),
+              schema: openApiSchema(
+                z.object({
+                  error: z.string(),
+                }),
+              ),
             },
           },
           description: 'Failed to add item',
         },
       },
     }),
-    optionalAuthMiddleware,
     zValidator('json', addCartItemSchema),
+    cartAccessMiddleware,
     async c => {
-      const { cartId, skuNumber, quantity, color, filamentType } =
+      const { cartId, skuNumber, quantity, color, filamentType, filamentId } =
         c.req.valid('json');
+      console.log('POST /cart/add called with', {
+        cartId,
+        skuNumber,
+        quantity,
+        color,
+        filamentType,
+        filamentId,
+      });
 
-      // Bind the cart item to the authenticated user when a session is present.
-      const userId: string | null = getCallerUserId(c) ?? null;
+      // Guest lines remain unowned until the entire cart is claimed.
+      const userId = c.var.cartAccess.userId;
 
       try {
+        await validateCartConfiguration(c.var.db, c.env, c.req.valid('json'));
         const existing = await c.var.db.query.cart.findFirst({
           where: and(
-            eq(cart.cartId, cartId),
+            cartLines(c.var.cartAccess),
             eq(cart.skuNumber, skuNumber),
-            eq(cart.color, color),
-            eq(cart.filamentType, filamentType),
+            eq(cart.filamentId, filamentId),
           ),
         });
 
         if (existing) {
           // Enforce ownership: if the existing item has an owner, it must match the caller.
           // Use != null (loose) to treat both null and undefined as "no owner".
-          if (existing.userId != null && userId !== null && existing.userId !== userId) {
+          if (
+            existing.userId != null &&
+            userId !== null &&
+            existing.userId !== userId
+          ) {
             return c.json({ error: 'Forbidden' }, 403);
           }
-          await c.var.db
+          if (existing.quantity + quantity > 69)
+            return c.json({ error: 'Maximum quantity is 69' }, 400);
+          const updated = await c.var.db
             .update(cart)
             .set({
               quantity: existing.quantity + quantity,
+              filamentId,
             })
-            .where(eq(cart.id, existing.id));
+            .where(
+              and(
+                eq(cart.id, existing.id),
+                eq(cart.quantity, existing.quantity),
+                cartLines(c.var.cartAccess),
+              ),
+            )
+            .returning({ id: cart.id });
+          if (updated.length === 0)
+            return c.json(
+              { error: 'Cart changed; reload before retrying' },
+              409,
+            );
         } else {
           await c.var.db.insert(cart).values({
             cartId,
+            accessVersion: c.var.cartAccess.accessVersion,
             userId,
             skuNumber: skuNumber,
             quantity,
             color,
             filamentType,
+            filamentId,
           });
         }
 
         return c.json({ message: 'Item added to cart successfully' });
-      } catch (_error) {
+      } catch (error) {
+        if (error instanceof HTTPException)
+          return c.json({ error: error.message }, error.status);
+        if (error instanceof Error && /constraint/i.test(error.message))
+          return c.json({ error: 'Cart changed; reload before retrying' }, 409);
+        console.error('POST /cart/add failed:', error);
         return c.json({ error: 'Failed to add item to cart' }, 500);
       }
     },
@@ -542,9 +774,11 @@ const shoppingCart = factory
         200: {
           content: {
             'application/json': {
-              schema: z.object({
-                message: z.string(),
-              }),
+              schema: openApiSchema(
+                z.object({
+                  message: z.string(),
+                }),
+              ),
             },
           },
           description: 'Cart item updated successfully',
@@ -552,24 +786,26 @@ const shoppingCart = factory
         400: {
           content: {
             'application/json': {
-              schema: z.object({
-                error: z.string(),
-              }),
+              schema: openApiSchema(
+                z.object({
+                  error: z.string(),
+                }),
+              ),
             },
           },
           description: 'Invalid request',
         },
       },
     }),
-    optionalAuthMiddleware,
     zValidator('json', updateCartItemSchema),
+    cartAccessMiddleware,
     async c => {
       const { cartId, itemId, quantity } = c.req.valid('json');
 
       try {
         // First, let's see what items exist in this cart
         const existingItems = await c.var.db.query.cart.findMany({
-          where: eq(cart.cartId, cartId),
+          where: cartLines(c.var.cartAccess),
         });
 
         // Enforce ownership: if any item in the cart has an owner, require the caller to match.
@@ -587,23 +823,26 @@ const shoppingCart = factory
         if (quantity === 0) {
           const _deleteResult = await c.var.db
             .delete(cart)
-            .where(and(eq(cart.id, itemId), eq(cart.cartId, cartId)));
+            .where(and(eq(cart.id, itemId), cartLines(c.var.cartAccess)));
           return c.json({ message: 'Cart item removed successfully' });
         } else {
           const updateResult = await c.var.db
             .update(cart)
             .set({ quantity })
-            .where(and(eq(cart.id, itemId), eq(cart.cartId, cartId)));
+            .where(and(eq(cart.id, itemId), cartLines(c.var.cartAccess)));
 
-          // Check if any rows were affected
-          if (updateResult.changes === 0) {
+          const updateChanges =
+            'changes' in updateResult
+              ? updateResult.changes
+              : updateResult.meta.changes;
+
+          if (updateChanges === 0) {
             return c.json(
               {
                 error: 'No cart item found with that ID',
                 debug: {
                   itemId,
                   cartId,
-                  existingItems,
                 },
               },
               404,
@@ -627,9 +866,11 @@ const shoppingCart = factory
         200: {
           content: {
             'application/json': {
-              schema: z.object({
-                message: z.string(),
-              }),
+              schema: openApiSchema(
+                z.object({
+                  message: z.string(),
+                }),
+              ),
             },
           },
           description: 'Item removed from cart successfully',
@@ -637,17 +878,19 @@ const shoppingCart = factory
         400: {
           content: {
             'application/json': {
-              schema: z.object({
-                error: z.string(),
-              }),
+              schema: openApiSchema(
+                z.object({
+                  error: z.string(),
+                }),
+              ),
             },
           },
           description: 'Invalid request',
         },
       },
     }),
-    optionalAuthMiddleware,
     zValidator('json', removeCartItemSchema),
+    cartAccessMiddleware,
     async c => {
       const { cartId, itemId } = c.req.valid('json');
 
@@ -657,7 +900,7 @@ const shoppingCart = factory
         const [existingItem] = await c.var.db
           .select({ userId: cart.userId })
           .from(cart)
-          .where(and(eq(cart.id, itemId), eq(cart.cartId, cartId)));
+          .where(and(eq(cart.id, itemId), cartLines(c.var.cartAccess)));
 
         if (existingItem?.userId != null) {
           const callerId = getCallerUserId(c);
@@ -671,7 +914,7 @@ const shoppingCart = factory
 
         await c.var.db
           .delete(cart)
-          .where(and(eq(cart.id, itemId), eq(cart.cartId, cartId)));
+          .where(and(eq(cart.id, itemId), cartLines(c.var.cartAccess)));
 
         return c.json({ message: 'Item removed from cart successfully' });
       } catch (_error) {
@@ -689,7 +932,7 @@ const shoppingCart = factory
           name: 'cartId',
           in: 'path',
           required: true,
-          schema: z.string().uuid(),
+          schema: openApiSchema(z.string().uuid()),
           description: 'Cart identifier',
         },
       ],
@@ -697,14 +940,16 @@ const shoppingCart = factory
         200: {
           content: {
             'application/json': {
-              schema: z.object({
-                line_items: z.array(
-                  z.object({
-                    price: z.string(),
-                    quantity: z.number(),
-                  }),
-                ),
-              }),
+              schema: openApiSchema(
+                z.object({
+                  line_items: z.array(
+                    z.object({
+                      price: z.string(),
+                      quantity: z.number(),
+                    }),
+                  ),
+                }),
+              ),
             },
           },
           description: 'Stripe line items retrieved successfully',
@@ -712,9 +957,11 @@ const shoppingCart = factory
         404: {
           content: {
             'application/json': {
-              schema: z.object({
-                error: z.string(),
-              }),
+              schema: openApiSchema(
+                z.object({
+                  error: z.string(),
+                }),
+              ),
             },
           },
           description: 'Cart not found or no Stripe price IDs available',
@@ -722,6 +969,7 @@ const shoppingCart = factory
       },
     }),
     zValidator('param', cartIdParamSchema),
+    cartAccessMiddleware,
     async c => {
       const cartId = c.req.param('cartId');
 
@@ -734,15 +982,13 @@ const shoppingCart = factory
           })
           .from(cart)
           .leftJoin(productsTable, eq(cart.skuNumber, productsTable.skuNumber))
-          .where(eq(cart.cartId, cartId));
+          .where(cartLines(c.var.cartAccess));
 
         // Filter items that have Stripe price IDs
-        const stripeItems = items
-          .filter(item => item.stripePriceId)
-          .map(item => ({
-            price: item.stripePriceId!,
-            quantity: item.quantity,
-          }));
+        const stripeItems = items.filter(hasStripePriceId).map(item => ({
+          price: item.stripePriceId,
+          quantity: item.quantity,
+        }));
 
         if (stripeItems.length === 0) {
           return c.json({ error: 'No items with Stripe price IDs found' }, 404);
@@ -764,14 +1010,14 @@ const shoppingCart = factory
           name: 'cartId',
           in: 'path',
           required: true,
-          schema: z.string().uuid(),
+          schema: openApiSchema(z.string().uuid()),
           description: 'Cart identifier',
         },
       ],
       requestBody: {
         content: {
           'application/json': {
-            schema: createCheckoutSchema,
+            schema: openApiSchema(createCheckoutSchema, 'input'),
           },
         },
         required: true,
@@ -780,10 +1026,12 @@ const shoppingCart = factory
         200: {
           content: {
             'application/json': {
-              schema: z.object({
-                url: z.string().url(),
-                id: z.string(),
-              }),
+              schema: openApiSchema(
+                z.object({
+                  url: z.string().url(),
+                  id: z.string(),
+                }),
+              ),
             },
           },
           description: 'Checkout session created successfully',
@@ -791,20 +1039,43 @@ const shoppingCart = factory
         404: {
           content: {
             'application/json': {
-              schema: z.object({
-                error: z.string(),
-              }),
+              schema: openApiSchema(
+                z.object({
+                  error: z.string(),
+                }),
+              ),
             },
           },
           description: 'Cart not found or no Stripe price IDs available',
         },
+        409: {
+          content: {
+            'application/json': {
+              schema: openApiSchema(
+                z.object({
+                  error: z.string(),
+                  items: z.array(
+                    z.object({
+                      cartItemId: z.number(),
+                      skuNumber: z.string().nullable(),
+                      reasons: z.array(z.string()),
+                    }),
+                  ),
+                }),
+              ),
+            },
+          },
+          description: 'Cart contains items that are not checkout-ready',
+        },
         500: {
           content: {
             'application/json': {
-              schema: z.object({
-                error: z.string(),
-                details: z.any().optional(),
-              }),
+              schema: openApiSchema(
+                z.object({
+                  error: z.string(),
+                  details: z.any().optional(),
+                }),
+              ),
             },
           },
           description: 'Failed to create Stripe checkout session',
@@ -814,13 +1085,20 @@ const shoppingCart = factory
     authMiddleware,
     zValidator('param', cartIdParamSchema),
     zValidator('json', createCheckoutSchema),
+    cartAccessMiddleware,
     async c => {
       const cartId = c.req.param('cartId');
-      const { successUrl, cancelUrl, customerEmail: bodyEmail, shippingAddress } =
-        c.req.valid('json');
+      const {
+        successUrl,
+        cancelUrl,
+        customerEmail: bodyEmail,
+        shippingAddress,
+      } = c.req.valid('json');
 
       // Extract userId and customerEmail from the authenticated session
-      const jwtPayload = c.get('jwtPayload') as { id?: string; email?: string } | undefined;
+      const jwtPayload = c.get('jwtPayload') as
+        | { id?: string; email?: string }
+        | undefined;
       const userId = jwtPayload?.id ? String(jwtPayload.id) : undefined;
       const customerEmail = bodyEmail ?? jwtPayload?.email;
 
@@ -831,23 +1109,37 @@ const shoppingCart = factory
       try {
         const items = await c.var.db
           .select({
+            cartItemId: cart.id,
+            cartUserId: cart.userId,
+            skuNumber: cart.skuNumber,
+            filamentType: cart.filamentType,
+            filamentId: cart.filamentId,
+            productSkuNumber: productsTable.skuNumber,
             stripePriceId: productsTable.stripePriceId,
+            publicFileServiceId: productsTable.publicFileServiceId,
             quantity: cart.quantity,
           })
           .from(cart)
           .leftJoin(productsTable, eq(cart.skuNumber, productsTable.skuNumber))
-          .where(eq(cart.cartId, cartId));
+          .where(cartLines(c.var.cartAccess));
 
-        const stripeLineItems = items
-          .filter(item => item.stripePriceId)
-          .map(item => ({
-            price: item.stripePriceId!,
-            quantity: item.quantity,
-          }));
-
-        if (stripeLineItems.length === 0) {
-          return c.json({ error: 'No items with Stripe price IDs found' }, 404);
+        if (items.length === 0) {
+          return c.json({ error: 'Cart is empty' }, 404);
         }
+
+        if (items[0].cartUserId != null && items[0].cartUserId !== userId) {
+          return c.json({ error: 'Forbidden' }, 403);
+        }
+
+        const readinessErrors = await validateCartReadiness(c.env, items);
+        if (readinessErrors.length > 0) {
+          return c.json(readinessErrorResponse(readinessErrors), 409);
+        }
+
+        const stripeLineItems = items.map(item => ({
+          price: item.stripePriceId ?? '',
+          quantity: item.quantity,
+        }));
 
         const stripe = new Stripe(c.env.STRIPE_SECRET_KEY, {
           telemetry: false,
@@ -868,20 +1160,25 @@ const shoppingCart = factory
         // Add shipping address if provided
         if (shippingAddress) {
           sessionParams.shipping_address_collection = {
-            allowed_countries: [shippingAddress.country],
+            allowed_countries: [
+              shippingAddress.country as Stripe.Checkout.SessionCreateParams.ShippingAddressCollection.AllowedCountry,
+            ],
           };
           sessionParams.billing_address_collection = 'required';
         }
 
         const session = await stripe.checkout.sessions.create(sessionParams);
+        if (!session.url) {
+          return c.json({ error: 'Stripe checkout session missing URL' }, 500);
+        }
 
-        return c.json({ url: session.url!, id: session.id });
-      } catch (error: any) {
+        return c.json({ url: session.url, id: session.id });
+      } catch (error: unknown) {
         console.error('Stripe checkout error:', error);
         return c.json(
           {
             error: 'Failed to create checkout session',
-            details: error?.message,
+            details: error instanceof Error ? error.message : String(error),
           },
           500,
         );
@@ -898,27 +1195,14 @@ const shoppingCart = factory
           name: 'cartId',
           in: 'path',
           required: true,
-          schema: z.string().uuid(),
+          schema: openApiSchema(z.string().uuid()),
           description: 'Cart identifier',
         },
       ],
       requestBody: {
         content: {
           'application/json': {
-            schema: z.object({
-              customerEmail: z.string().email().optional(),
-              shippingAddress: z
-                .object({
-                  firstName: z.string(),
-                  lastName: z.string(),
-                  address: z.string(),
-                  city: z.string(),
-                  state: z.string(),
-                  postalCode: z.string(),
-                  country: z.string().length(2),
-                })
-                .optional(),
-            }),
+            schema: openApiSchema(paymentIntentRequestSchema, 'input'),
           },
         },
       },
@@ -926,11 +1210,13 @@ const shoppingCart = factory
         200: {
           content: {
             'application/json': {
-              schema: z.object({
-                clientSecret: z.string(),
-                amount: z.number(),
-                currency: z.string(),
-              }),
+              schema: openApiSchema(
+                z.object({
+                  clientSecret: z.string(),
+                  amount: z.number(),
+                  currency: z.string(),
+                }),
+              ),
             },
           },
           description: 'Payment Intent created successfully',
@@ -938,20 +1224,43 @@ const shoppingCart = factory
         404: {
           content: {
             'application/json': {
-              schema: z.object({
-                error: z.string(),
-              }),
+              schema: openApiSchema(
+                z.object({
+                  error: z.string(),
+                }),
+              ),
             },
           },
           description: 'Cart not found or empty',
         },
+        409: {
+          content: {
+            'application/json': {
+              schema: openApiSchema(
+                z.object({
+                  error: z.string(),
+                  items: z.array(
+                    z.object({
+                      cartItemId: z.number(),
+                      skuNumber: z.string().nullable(),
+                      reasons: z.array(z.string()),
+                    }),
+                  ),
+                }),
+              ),
+            },
+          },
+          description: 'Cart contains items that are not checkout-ready',
+        },
         500: {
           content: {
             'application/json': {
-              schema: z.object({
-                error: z.string(),
-                details: z.any().optional(),
-              }),
+              schema: openApiSchema(
+                z.object({
+                  error: z.string(),
+                  details: z.any().optional(),
+                }),
+              ),
             },
           },
           description: 'Failed to create Payment Intent',
@@ -960,11 +1269,15 @@ const shoppingCart = factory
     }),
     authMiddleware,
     zValidator('param', cartIdParamSchema),
+    cartAccessMiddleware,
     async c => {
       const cartId = c.req.param('cartId');
-      let body: any = {};
+      let body: z.infer<typeof paymentIntentRequestSchema> = {};
       try {
-        body = await c.req.json();
+        const parsedBody = paymentIntentRequestSchema.safeParse(
+          await c.req.json(),
+        );
+        body = parsedBody.success ? parsedBody.data : {};
       } catch {
         body = {};
       }
@@ -975,7 +1288,9 @@ const shoppingCart = factory
       if (!userId) {
         return c.json({ error: 'Unauthorized' }, 401);
       }
-      const jwtPayload = c.get('jwtPayload') as { id?: string; email?: string } | undefined;
+      const jwtPayload = c.get('jwtPayload') as
+        | { id?: string; email?: string }
+        | undefined;
       if (!customerEmail) {
         customerEmail = jwtPayload?.email;
       }
@@ -990,15 +1305,21 @@ const shoppingCart = factory
         // Get cart items with prices; include userId for ownership verification.
         const items = await c.var.db
           .select({
+            cartItemId: cart.id,
             cartUserId: cart.userId,
+            skuNumber: cart.skuNumber,
+            filamentType: cart.filamentType,
+            filamentId: cart.filamentId,
+            productSkuNumber: productsTable.skuNumber,
             stripePriceId: productsTable.stripePriceId,
+            publicFileServiceId: productsTable.publicFileServiceId,
             quantity: cart.quantity,
             price: productsTable.price,
             name: productsTable.name,
           })
           .from(cart)
           .leftJoin(productsTable, eq(cart.skuNumber, productsTable.skuNumber))
-          .where(eq(cart.cartId, cartId));
+          .where(cartLines(c.var.cartAccess));
 
         if (items.length === 0) {
           return c.json({ error: 'Cart is empty' }, 404);
@@ -1008,6 +1329,11 @@ const shoppingCart = factory
         // Use != null (loose) to treat both null and undefined as "no owner".
         if (items[0].cartUserId != null && items[0].cartUserId !== userId) {
           return c.json({ error: 'Forbidden' }, 403);
+        }
+
+        const readinessErrors = await validateCartReadiness(c.env, items);
+        if (readinessErrors.length > 0) {
+          return c.json(readinessErrorResponse(readinessErrors), 409);
         }
 
         // Calculate total amount (in cents)
@@ -1055,18 +1381,24 @@ const shoppingCart = factory
 
         const paymentIntent =
           await stripe.paymentIntents.create(paymentIntentParams);
+        if (!paymentIntent.client_secret) {
+          return c.json(
+            { error: 'Stripe Payment Intent missing client secret' },
+            500,
+          );
+        }
 
         return c.json({
-          clientSecret: paymentIntent.client_secret!,
+          clientSecret: paymentIntent.client_secret,
           amount: totalAmount,
           currency: 'usd',
         });
-      } catch (error: any) {
+      } catch (error: unknown) {
         console.error('Payment Intent creation error:', error);
         return c.json(
           {
             error: 'Failed to create Payment Intent',
-            details: error?.message,
+            details: error instanceof Error ? error.message : String(error),
           },
           500,
         );
@@ -1075,7 +1407,178 @@ const shoppingCart = factory
   );
 export default shoppingCart;
 
-interface ShippingResponse {
-  shippingCost: number;
-  currencyCode: string;
+interface DraftOrderResponse {
+  shippingCost?: number | string;
+  shipping_cost?: number | string;
+  estimatedShippingCost?: number | string;
+  data?: Record<string, unknown>;
+}
+
+interface CartShippingItem {
+  id: number;
+  cartUserId: string | null;
+  skuNumber: string;
+  quantity: number;
+  color: string | null;
+  filamentType: string;
+  filamentId: string | null | undefined;
+  productName: string | null;
+  publicFileServiceId?: string | null;
+}
+
+function hasPublicFileServiceId<
+  T extends { publicFileServiceId?: string | null },
+>(item: T): item is T & { publicFileServiceId: string } {
+  return (
+    typeof item.publicFileServiceId === 'string' &&
+    item.publicFileServiceId.trim().length > 0
+  );
+}
+
+function normalizeCountryCode(country: string | null | undefined): string {
+  const trimmed = country?.trim();
+  return trimmed && /^[A-Za-z]{2}$/.test(trimmed)
+    ? trimmed.toUpperCase()
+    : 'US';
+}
+
+function extractShippingCost(response: DraftOrderResponse): number | undefined {
+  // Slant3D has returned shipping totals in more than one nested shape during the V1/V2 transition,
+  // so keep a small set of known fallbacks while normalizing the route response to { shippingCost }.
+  const candidates = [
+    ['shippingCost'],
+    ['shipping_cost'],
+    ['estimatedShippingCost'],
+    ['deliveryCost'],
+    ['data', 'shippingCost'],
+    ['data', 'shipping_cost'],
+    ['data', 'estimatedShippingCost'],
+    ['data', 'deliveryCost'],
+    ['data', 'shipping', 'shippingCost'],
+    ['data', 'shipping', 'shipping_cost'],
+    ['data', 'estimate', 'shippingCost'],
+    ['data', 'estimate', 'shipping_cost'],
+    ['data', 'estimatedCosts', 'shippingCost'],
+    ['data', 'estimatedCosts', 'shipping_cost'],
+    ['data', 'order', 'deliveryCost'],
+  ];
+
+  for (const path of candidates) {
+    const shippingCost = toFiniteNumber(getNestedValue(response, path));
+    if (shippingCost !== undefined) {
+      return shippingCost;
+    }
+  }
+
+  return undefined;
+}
+
+function getNestedValue(source: unknown, path: string[]): unknown {
+  let current = source;
+
+  for (const key of path) {
+    if (!current || typeof current !== 'object' || !(key in current)) {
+      return undefined;
+    }
+    current = (current as Record<string, unknown>)[key];
+  }
+
+  return current;
+}
+
+function toFiniteNumber(value: unknown): number | undefined {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value;
+  }
+
+  if (typeof value === 'string' && value.trim()) {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) {
+      return parsed;
+    }
+  }
+
+  return undefined;
+}
+
+function summarizeDraftOrderPayload(payload: {
+  platformId: string;
+  ownerId: string;
+  customer: {
+    details: {
+      email: string;
+      address: {
+        line1: string;
+        city: string;
+        state: string;
+        zip: string;
+        country: string;
+      };
+    };
+  };
+  items: Array<{
+    type: string;
+    publicFileServiceId: string;
+    filamentId: string;
+    quantity: number;
+  }>;
+}) {
+  return {
+    platformId: payload.platformId,
+    ownerId: payload.ownerId,
+    customer: {
+      hasEmail: payload.customer.details.email.length > 0,
+    },
+    shippingAddress: {
+      hasLine1: payload.customer.details.address.line1.length > 0,
+      cityPresent: payload.customer.details.address.city.length > 0,
+      state: payload.customer.details.address.state,
+      zip: payload.customer.details.address.zip,
+      country: payload.customer.details.address.country,
+    },
+    itemCount: payload.items.length,
+    items: payload.items.map(item => ({
+      type: item.type,
+      publicFileServiceId: item.publicFileServiceId,
+      filamentId: item.filamentId,
+      quantity: item.quantity,
+    })),
+  };
+}
+
+function serializeError(error: unknown): Record<string, unknown> {
+  if (error instanceof Error) {
+    const errorRecord = error as Error & {
+      cause?: unknown;
+      remote?: unknown;
+    };
+    return {
+      name: error.name,
+      message: error.message,
+      stack: error.stack,
+      cause: errorRecord.cause,
+      remote: errorRecord.remote,
+    };
+  }
+
+  return { value: String(error) };
+}
+
+function parseUpstreamErrorDetails(
+  errorText: string,
+): string | Record<string, unknown> {
+  if (!errorText) {
+    return '';
+  }
+
+  try {
+    const parsed = JSON.parse(errorText) as unknown;
+    return parsed !== null &&
+      typeof parsed === 'object' &&
+      !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : errorText;
+  } catch {
+    return errorText;
+  }
 }

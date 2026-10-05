@@ -88,10 +88,13 @@ export const EstimateResponseSchema = z.object({
   message: z.string(),
   data: z.object({
     publicFileServiceId: z.string(),
+    total: z.number().describe('Slant3D total estimate in USD'),
     estimatedCost: z.number().describe('Estimated cost in USD'),
+    pricePerUnit: z.number().optional(),
+    subtotal: z.number().optional(),
     quantity: z.number(),
     filamentId: z.string(),
-    slicer: z.object({}).optional(),
+    slicer: z.record(z.string(), z.unknown()).optional(),
   }),
 });
 

@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
-import app from '../../src/index';
-import type { Bindings } from '../../src/types';
+import app from '../../src/app';
+import type { Bindings, FilamentV2Response } from '../../src/types';
 import { mockEnv } from '../mocks/env';
 
 describe('Printer V2 Routes', () => {
@@ -20,7 +20,9 @@ describe('Printer V2 Routes', () => {
       const mockEstimateResponse = {
         data: {
           publicFileServiceId: validPublicFileServiceId,
-          estimatedCost: 25.5,
+          total: 25.5,
+          pricePerUnit: 12.75,
+          subtotal: 25.5,
           quantity: 2,
           filamentId: validFilamentId,
           slicer: { support_enabled: true },
@@ -53,6 +55,7 @@ describe('Printer V2 Routes', () => {
       expect(data.success).toBe(true);
       expect(data.message).toBe('File price estimated successfully');
       expect(data.data.publicFileServiceId).toBe(validPublicFileServiceId);
+      expect(data.data.total).toBe(25.5);
       expect(data.data.estimatedCost).toBe(25.5);
       expect(data.data.quantity).toBe(2);
       expect(data.data.filamentId).toBe(validFilamentId);
@@ -75,7 +78,7 @@ describe('Printer V2 Routes', () => {
       const mockEstimateResponse = {
         data: {
           publicFileServiceId: validPublicFileServiceId,
-          estimatedCost: 15.0,
+          total: 15.0,
           quantity: 1,
           filamentId: defaultBlackFilamentId,
         },
@@ -113,7 +116,7 @@ describe('Printer V2 Routes', () => {
       const mockEstimateResponse = {
         data: {
           publicFileServiceId: validPublicFileServiceId,
-          estimatedCost: 12.0,
+          total: 12.0,
           quantity: 1,
           filamentId: validFilamentId,
         },
@@ -177,7 +180,7 @@ describe('Printer V2 Routes', () => {
         const mockEstimateResponse = {
           data: {
             publicFileServiceId: validPublicFileServiceId,
-            estimatedCost: 12.0 * quantity,
+            total: 12.0 * quantity,
             quantity,
             filamentId: validFilamentId,
           },
@@ -297,13 +300,51 @@ describe('Printer V2 Routes', () => {
       const response = await app.fetch(request, env);
       const data = await response.json();
 
-      expect(response.status).toBe(500);
+      expect(response.status).toBe(502);
       expect(data.success).toBe(false);
-      expect(data.error).toBe('Failed to estimate file price');
-      expect(data.details).toBe('Network error');
+      expect(data.error).toBe(
+        'Failed to estimate file price from Slant3D V2 API',
+      );
+      expect(data.details).toEqual({
+        url: `https://slant3dapi.com/v2/api/files/${validPublicFileServiceId}/estimate`,
+        cause: 'Network error',
+      });
+      expect(data.status).toBe(502);
     });
 
     test('should handle malformed response from Slant3D API', async () => {
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          data: {
+            quantity: 1,
+          },
+        }),
+      } as Response);
+
+      const request = new Request('http://localhost/v2/estimate', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          publicFileServiceId: validPublicFileServiceId,
+          filamentId: validFilamentId,
+        }),
+      });
+
+      const response = await app.fetch(request, env);
+      const data = await response.json();
+
+      expect(response.status).toBe(500);
+      expect(data.success).toBe(false);
+      expect(data.error).toBe(
+        'Malformed estimate response from Slant3D V2 API',
+      );
+    });
+
+    test('should handle malformed error response from Slant3D API', async () => {
       global.fetch = vi.fn().mockResolvedValue({
         ok: false,
         status: 500,
@@ -340,7 +381,7 @@ describe('Printer V2 Routes', () => {
       const mockEstimateResponse = {
         data: {
           publicFileServiceId: validPublicFileServiceId,
-          estimatedCost: 20.0,
+          total: 20.0,
           quantity: 1,
           filamentId: validFilamentId,
           slicer: slicerOptions,
@@ -381,7 +422,7 @@ describe('Printer V2 Routes', () => {
       const mockEstimateResponse = {
         data: {
           publicFileServiceId: validPublicFileServiceId,
-          estimatedCost: 20.0,
+          total: 20.0,
           quantity: 1,
           filamentId: validFilamentId,
         },
@@ -418,8 +459,32 @@ describe('Printer V2 Routes', () => {
   });
 
   describe('GET /v2/colors', () => {
-    test('should be implemented', () => {
-      expect(true).toBe(true);
+    test.each([true, false])('only returns Slant 3D colors (cache hit: %s)', async cached => {
+      const upstream: FilamentV2Response = {
+        success: true,
+        message: 'Filaments retrieved successfully',
+        data: ['Slant 3D', 'Esun', 'Elegoo'].map((provider, index) => ({
+          publicId: `filament-${index}`,
+          name: `${provider} BLACK`,
+          provider,
+          profile: 'PLA',
+          color: 'black',
+          hexValue: '#000000',
+          public: true,
+          available: true,
+        })),
+        count: 3,
+        lastUpdated: '2026-09-21T05:54:16.385Z',
+      };
+      env.COLOR_CACHE.get = vi.fn().mockResolvedValue(cached ? JSON.stringify(upstream) : null);
+      env.COLOR_CACHE.put = vi.fn().mockResolvedValue(undefined);
+      const fetchMock = vi.fn().mockResolvedValue(Response.json(upstream));
+      global.fetch = fetchMock;
+
+      const response = await app.fetch(new Request('http://localhost/v2/colors'), env);
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ ...upstream, data: [upstream.data[0]], count: 1 });
+      expect(fetchMock).toHaveBeenCalledTimes(cached ? 0 : 1);
     });
   });
 });
@@ -429,7 +494,7 @@ describe('Printer V2 Routes', () => {
 // Uncomment and adapt when running in proper Cloudflare Workers test environment
 
 import { describe, expect, test, beforeEach, vi } from 'vitest';
-import app from '../../src/index';
+import app from '../../src/app';
 import { mockEnv } from '../mocks/env';
 import type { FilamentV2Response } from '../../src/types';
 

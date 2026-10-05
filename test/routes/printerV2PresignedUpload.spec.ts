@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
-import app from '../../src/index';
+import app from '../../src/app';
 import { mockEnv } from '../mocks/env';
 
 const authHeaders = {
@@ -296,7 +296,7 @@ describe('POST /v2/presigned-upload', () => {
     const response = await app.fetch(request, env);
     const data = await response.json();
 
-    expect(response.status).toBe(500);
+    expect(response.status).toBe(403);
     expect(data.success).toBe(false);
     expect(data.error).toBe(
       'Failed to generate presigned URL from Slant3D V2 API',
@@ -322,10 +322,16 @@ describe('POST /v2/presigned-upload', () => {
     const response = await app.fetch(request, env);
     const data = await response.json();
 
-    expect(response.status).toBe(500);
+    expect(response.status).toBe(502);
     expect(data.success).toBe(false);
-    expect(data.error).toBe('Failed to generate presigned URL');
-    expect(data.details).toBe('Network error');
+    expect(data.error).toBe(
+      'Failed to generate presigned URL from Slant3D V2 API',
+    );
+    expect(data.details).toEqual({
+      url: 'https://slant3dapi.com/v2/api/files/direct-upload',
+      cause: 'Network error',
+    });
+    expect(data.status).toBe(502);
   });
 
   test('should handle invalid JSON response from Slant3D API', async () => {
@@ -355,6 +361,45 @@ describe('POST /v2/presigned-upload', () => {
       'Failed to generate presigned URL from Slant3D V2 API',
     );
     expect(data.details).toBe('Internal Server Error');
+  });
+
+  test('should return 500 for malformed successful Slant3D direct upload response', async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        data: {
+          filePlaceholder: {
+            publicFileServiceId: 'f47ac10b-58cc-4372-a567-0e02b2c3d479',
+            name: 'test-file',
+            ownerId: 'user_123',
+            platformId: 'test-platform-id',
+            type: 'stl',
+            createdAt: '2025-12-09T07:00:00Z',
+            updatedAt: '2025-12-09T07:00:00Z',
+          },
+        },
+      }),
+    } as Response);
+
+    const request = new Request('http://localhost/v2/presigned-upload', {
+      method: 'POST',
+      headers: {
+        ...authHeaders,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        fileName: 'test-file.stl',
+      }),
+    });
+
+    const response = await app.fetch(request, env);
+    const data = await response.json();
+
+    expect(response.status).toBe(500);
+    expect(data.success).toBe(false);
+    expect(data.error).toBe(
+      'Malformed direct upload response from Slant3D V2 API',
+    );
   });
 
   test('should return 400 for invalid request body', async () => {
@@ -500,6 +545,18 @@ describe('POST /v2/confirm', () => {
       'f47ac10b-58cc-4372-a567-0e02b2c3d479',
     );
     expect(data.data.fileURL).toBe('https://slant3d.com/files/test-file.stl');
+
+    expect(global.fetch).toHaveBeenCalledWith(
+      expect.stringContaining('files/confirm-upload'),
+      expect.objectContaining({
+        method: 'POST',
+        headers: expect.objectContaining({
+          'Content-Type': 'application/json',
+          Authorization: expect.stringContaining('Bearer '),
+        }),
+        body: JSON.stringify({ filePlaceholder }),
+      }),
+    );
   });
 
   test('should return 400 when filePlaceholder is missing', async () => {
@@ -518,5 +575,83 @@ describe('POST /v2/confirm', () => {
     expect(response.status).toBe(400);
     expect(data.success).toBe(false);
     expect(data.error).toBe('filePlaceholder is required');
+  });
+
+  test('should return 500 when confirm upload fails in Slant3D', async () => {
+    const errorResponse = {
+      error: 'API Error',
+      details: { message: 'Upload not found' },
+    };
+
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      json: async () => errorResponse,
+    } as Response);
+
+    const request = new Request('http://localhost/v2/confirm', {
+      method: 'POST',
+      headers: {
+        ...authHeaders,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        filePlaceholder: {
+          publicFileServiceId: 'f47ac10b-58cc-4372-a567-0e02b2c3d479',
+          name: 'test-file',
+          ownerId: 'user_123',
+          platformId: 'test-platform-id',
+          type: 'stl',
+          createdAt: '2025-12-09T07:00:00Z',
+          updatedAt: '2025-12-09T07:00:00Z',
+        },
+      }),
+    });
+
+    const response = await app.fetch(request, env);
+    const data = await response.json();
+
+    expect(response.status).toBe(500);
+    expect(data.success).toBe(false);
+    expect(data.error).toBe('Failed to confirm upload with Slant3D V2 API');
+    expect(data.details).toEqual(errorResponse);
+  });
+
+  test('should return 500 for malformed successful Slant3D confirm response', async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        data: {
+          fileURL: 'https://slant3d.com/files/test-file.stl',
+        },
+      }),
+    } as Response);
+
+    const request = new Request('http://localhost/v2/confirm', {
+      method: 'POST',
+      headers: {
+        ...authHeaders,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        filePlaceholder: {
+          publicFileServiceId: 'f47ac10b-58cc-4372-a567-0e02b2c3d479',
+          name: 'test-file',
+          ownerId: 'user_123',
+          platformId: 'test-platform-id',
+          type: 'stl',
+          createdAt: '2025-12-09T07:00:00Z',
+          updatedAt: '2025-12-09T07:00:00Z',
+        },
+      }),
+    });
+
+    const response = await app.fetch(request, env);
+    const data = await response.json();
+
+    expect(response.status).toBe(500);
+    expect(data.success).toBe(false);
+    expect(data.error).toBe(
+      'Malformed confirm upload response from Slant3D V2 API',
+    );
   });
 });

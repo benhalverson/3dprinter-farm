@@ -3,12 +3,16 @@ import { configDefaults } from 'vitest/config';
 
 export default defineWorkersConfig({
   test: {
+    coverage: { provider: 'istanbul' },
     exclude: [...configDefaults.exclude, 'test/project-notes/**'],
     isolate: true,
     setupFiles: ['./test/setup.ts'],
     poolOptions: {
       workers: {
-        wrangler: { configPath: './wrangler.toml' },
+        miniflare: {
+          compatibilityDate: '2024-10-05',
+          compatibilityFlags: ['nodejs_compat'],
+        },
       },
     },
   },

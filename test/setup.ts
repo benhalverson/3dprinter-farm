@@ -165,12 +165,11 @@ function createDrizzleMocks(): DrizzleMocks {
   };
 }
 
-const mocks =
-  testGlobals.__testMocks ??
-  (testGlobals.__testMocks = {
-    betterAuth: createBetterAuthMocks(),
-    drizzle: createDrizzleMocks(),
-  });
+testGlobals.__testMocks ??= {
+  betterAuth: createBetterAuthMocks(),
+  drizzle: createDrizzleMocks(),
+};
+const mocks = testGlobals.__testMocks;
 
 vi.mock('../lib/auth', () => ({
   createAuth: vi.fn(() => ({
@@ -225,7 +224,7 @@ vi.mock('drizzle-orm/d1', () => {
         }),
       }),
       delete: () => ({
-        where: () => mocks.drizzle.mockDelete,
+        where: () => mocks.drizzle.mockDelete(),
       }),
       query: mocks.drizzle.mockQuery,
     })),

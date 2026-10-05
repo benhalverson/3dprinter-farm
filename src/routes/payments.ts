@@ -3,20 +3,18 @@ import type { Context } from 'hono';
 import { describeRoute } from 'hono-openapi';
 import Stripe from 'stripe';
 import { z } from 'zod';
-import { BASE_URL } from '../constants';
-import { cart, productsTable, users } from '../db/schema';
-import factory from '../factory';
-import type {
-  CartItemWithProduct,
-  PayPalOrderResponse,
-  Slant3DOrderData,
-  Slant3DOrderResponse,
-} from '../types';
-import { generateOrderNumber } from '../utils/generateOrderNumber';
-import { getPayPalAccessToken } from '../utils/payPalAccess';
 import {
-  decryptStoredShippingProfile,
-} from '../utils/profileCrypto';
+  cart,
+  productsTable,
+  stripeFulfillmentTable,
+  users,
+} from '../db/schema';
+import factory from '../factory';
+import {
+  createPaidOrderFulfillment,
+  type PaidOrderProfile,
+} from '../modules/paidOrderFulfillment';
+import { decryptStoredShippingProfile } from '../utils/profileCrypto';
 
 // Schemas
 const _stripeCheckoutSchema = z.object({
@@ -37,6 +35,169 @@ const _stripeWebhookSchema = z.object({
     }),
   }),
 });
+
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+type StripeWebhookMetadata = {
+  cartId?: string;
+  userId?: string;
+  customerEmail?: string;
+};
+
+type CartFulfillmentItem = {
+  id: number;
+  skuNumber: string | null;
+  quantity: number;
+  color: string | null;
+  filamentType: string | null;
+  filamentId: string | null;
+  productName: string | null;
+  productImage: string | null;
+  productPrice: number | null;
+  stl: string | null;
+  publicFileServiceId: string | null;
+};
+
+type StripeFulfillmentInput = {
+  cartId: string;
+  userId: string;
+  stripeEventId: string;
+  stripeObjectId: string;
+  stripeCheckoutSessionId?: string;
+  stripePaymentIntentId?: string;
+  idempotencyKey: string;
+  customerEmail?: string;
+};
+
+function isUuid(value: string) {
+  return UUID_PATTERN.test(value);
+}
+
+function extractMetadata(
+  event: Stripe.Event,
+): StripeWebhookMetadata | undefined {
+  if (event.type === 'checkout.session.completed') {
+    return (event.data.object as Stripe.Checkout.Session).metadata ?? undefined;
+  }
+  if (event.type === 'payment_intent.succeeded') {
+    return (event.data.object as Stripe.PaymentIntent).metadata ?? undefined;
+  }
+  return undefined;
+}
+
+function extractStripeFulfillmentInput(
+  event: Stripe.Event,
+): StripeFulfillmentInput | null {
+  const metadata = extractMetadata(event);
+
+  if (event.type === 'checkout.session.completed') {
+    const session = event.data.object as Stripe.Checkout.Session;
+    if (!metadata?.cartId || !metadata?.userId) {
+      return null;
+    }
+
+    const paymentIntentId =
+      typeof session.payment_intent === 'string'
+        ? session.payment_intent
+        : session.id;
+
+    return {
+      cartId: metadata.cartId,
+      userId: metadata.userId,
+      stripeEventId: event.id,
+      stripeObjectId: session.id,
+      stripeCheckoutSessionId: session.id,
+      stripePaymentIntentId: paymentIntentId,
+      idempotencyKey: paymentIntentId,
+      customerEmail: session.customer_details?.email ?? undefined,
+    };
+  }
+
+  if (event.type === 'payment_intent.succeeded') {
+    const paymentIntent = event.data.object as Stripe.PaymentIntent;
+    if (!metadata?.cartId || !metadata?.userId) {
+      return null;
+    }
+
+    return {
+      cartId: metadata.cartId,
+      userId: metadata.userId,
+      stripeEventId: event.id,
+      stripeObjectId: paymentIntent.id,
+      stripePaymentIntentId: paymentIntent.id,
+      idempotencyKey: paymentIntent.id,
+      customerEmail:
+        metadata.customerEmail ?? paymentIntent.receipt_email ?? undefined,
+    };
+  }
+
+  return null;
+}
+
+async function loadShippingProfile(c: Context, userId: string) {
+  const [userRow] = await c.var.db
+    .select()
+    .from(users)
+    .where(eq(users.id, userId));
+
+  if (!userRow) {
+    return { error: c.json({ error: 'User not found' }, 404) };
+  }
+
+  const passphrase = c.env.ENCRYPTION_PASSPHRASE;
+  if (!passphrase) {
+    return { error: c.json({ error: 'Server configuration error' }, 500) };
+  }
+
+  try {
+    const profile = await decryptStoredShippingProfile(userRow, passphrase);
+    return { profile };
+  } catch (error) {
+    console.error('Failed to decrypt user shipping profile:', error);
+    return { error: c.json({ error: 'Failed to decrypt user profile' }, 500) };
+  }
+}
+
+async function loadCartFulfillmentItems(c: Context, cartId: string) {
+  const items = (await c.var.db
+    .select({
+      id: cart.id,
+      skuNumber: cart.skuNumber,
+      quantity: cart.quantity,
+      color: cart.color,
+      filamentType: cart.filamentType,
+      filamentId: cart.filamentId,
+      productName: productsTable.name,
+      productImage: productsTable.image,
+      productPrice: productsTable.price,
+      stl: productsTable.stl,
+      publicFileServiceId: productsTable.publicFileServiceId,
+    })
+    .from(cart)
+    .leftJoin(productsTable, eq(cart.skuNumber, productsTable.skuNumber))
+    .where(eq(cart.cartId, cartId))) as CartFulfillmentItem[];
+
+  if (items.length === 0) {
+    return { error: c.json({ error: 'Cart not found' }, 404) };
+  }
+
+  const missingFile = items.find(item => !item.publicFileServiceId);
+  if (missingFile) {
+    return {
+      error: c.json({ error: 'Missing publicFileServiceId' }, 400),
+    };
+  }
+
+  const invalidFilament = items.find(
+    item => item.filamentId && !isUuid(item.filamentId),
+  );
+  if (invalidFilament) {
+    return { error: c.json({ error: 'Invalid filamentId' }, 400) };
+  }
+
+  return { items };
+}
 
 const paymentsRouter = factory
   .createApp()
@@ -93,75 +254,6 @@ const paymentsRouter = factory
     }),
     (c: Context) => {
       return c.json({ status: 'Cancelled' });
-    },
-  )
-  .post(
-    '/paypal',
-    describeRoute({
-      description:
-        'Create PayPal payment order. Legacy endpoint that creates a PayPal order with quantity-based pricing. Uses sandbox PayPal API.',
-      tags: ['Payments', 'PayPal'],
-      parameters: [
-        {
-          name: 'qty',
-          in: 'query',
-          required: false,
-          schema: { type: 'string', default: '1' },
-          description:
-            'Quantity multiplier for pricing (qty * 10 = total price)',
-        },
-      ],
-      responses: {
-        200: {
-          description: 'PayPal order created successfully',
-          content: {
-            'application/json': {
-              example: {
-                id: 'paypal_order_id',
-                status: 'CREATED',
-                links: [
-                  {
-                    href: 'https://api-m.sandbox.paypal.com/v2/checkout/orders/paypal_order_id',
-                    rel: 'self',
-                    method: 'GET',
-                  },
-                ],
-              },
-            },
-          },
-        },
-      },
-    }),
-    async (c: Context) => {
-      const qty = c.req.query('qty') || 1;
-      const accessToken = await getPayPalAccessToken(c);
-
-      const quantity = (+qty * 10).toFixed(2);
-
-      const response = await fetch(
-        'https://api-m.sandbox.paypal.com/v2/checkout/orders',
-        {
-          headers: {
-            Authorization: `Bearer ${accessToken}`,
-            'Content-Type': 'application/json',
-          },
-          method: 'POST',
-          body: JSON.stringify({
-            intent: 'CAPTURE',
-            purchase_units: [
-              {
-                amount: {
-                  currency_code: 'USD',
-                  value: quantity,
-                },
-              },
-            ],
-          }),
-        },
-      );
-
-      const data = (await response.json()) as PayPalOrderResponse;
-      return c.json(data);
     },
   )
   .post(
@@ -233,438 +325,94 @@ const paymentsRouter = factory
         );
 
         console.log('Received Stripe webhook event:', event.type);
+        if (
+          event.type !== 'checkout.session.completed' &&
+          event.type !== 'payment_intent.succeeded'
+        ) {
+          return c.json({ received: true });
+        }
 
-        // Handle Payment Intent succeeded (embedded checkout flow)
-        if (event.type === 'payment_intent.succeeded') {
-          const paymentIntent = event.data.object as Stripe.PaymentIntent;
-
-          // Extract metadata from payment intent
-          const cartId = paymentIntent.metadata?.cartId;
-          const userId = paymentIntent.metadata?.userId;
-          const customerEmail = paymentIntent.metadata?.customerEmail;
-          // If no cartId, this might be a Payment Intent not created by our system
-          // Just acknowledge receipt and return
-          if (!cartId) {
+        const input = extractStripeFulfillmentInput(event);
+        if (!input) {
+          if (event.type === 'payment_intent.succeeded') {
             return c.json({ received: true });
           }
 
-          // Get cart items
-          const db = c.var.db;
-          const cartItems = await db
-            .select({
-              id: cart.id,
-              skuNumber: cart.skuNumber,
-              quantity: cart.quantity,
-              color: cart.color,
-              filamentType: cart.filamentType,
-              productName: productsTable.name,
-              stl: productsTable.stl,
-            })
-            .from(cart)
-            .leftJoin(
-              productsTable,
-              eq(cart.skuNumber, productsTable.skuNumber),
-            )
-            .where(eq(cart.cartId, cartId));
-
-          if (cartItems.length === 0) {
-            console.error('No cart items found for cartId:', cartId);
-            return c.json({ error: 'Cart not found' }, 404);
-          }
-
-          const normalizePhone = (value: string) => {
-            const digits = (value || '').replace(/\D/g, '');
-            return digits.length >= 10 ? digits : '0000000000';
-          };
-
-          try {
-            const passphrase = c.env.ENCRYPTION_PASSPHRASE;
-            let userRow: typeof users.$inferSelect | undefined;
-
-            console.log('Attempting to load user profile. userId:', userId);
-
-            // Try to load user by userId first
-            if (userId) {
-              console.log('Looking up user by userId:', userId);
-              const [found] = await db
-                .select()
-                .from(users)
-                .where(eq(users.id, userId));
-              userRow = found;
-              if (userRow) {
-                console.log('✓ User found by userId:', userRow.id);
-              } else {
-                console.warn('✗ User not found for userId:', userId);
-              }
-            }
-
-            // If no user found by ID, try by email
-            if (!userRow) {
-              const emailToLookup =
-                customerEmail || paymentIntent.receipt_email;
-              if (emailToLookup) {
-                console.log('Looking up user by email (redacted)');
-                const [found] = await db
-                  .select()
-                  .from(users)
-                  .where(eq(users.email, emailToLookup));
-                userRow = found;
-                if (userRow) {
-                  console.log('✓ User found by email:', userRow.id);
-                } else {
-                  console.warn('✗ User not found for email (redacted)');
-                }
-              } else {
-                console.warn('✗ No email available for user lookup');
-              }
-            }
-
-            // Initialize defaults
-            let firstName = 'Guest';
-            let lastName = '';
-            let shippingAddress = 'Address Required';
-            let city = 'City';
-            let state = 'CA';
-            let zipCode = '00000';
-            let phone = '0000000000';
-            let email =
-              customerEmail ||
-              paymentIntent.receipt_email ||
-              'guest@example.com';
-
-            // Decrypt and load user profile if found
-            if (userRow) {
-              try {
-                const decryptedProfile = await decryptStoredShippingProfile(
-                  userRow,
-                  passphrase,
-                );
-
-                email = decryptedProfile.email || email;
-                firstName = decryptedProfile.firstName || firstName;
-                lastName = decryptedProfile.lastName || lastName;
-                shippingAddress =
-                  decryptedProfile.shippingAddress || shippingAddress;
-                city = decryptedProfile.city || city;
-                state = decryptedProfile.state || state;
-                zipCode = decryptedProfile.zipCode || zipCode;
-                const decryptedPhone = decryptedProfile.phone;
-                phone = normalizePhone(decryptedPhone || phone);
-              } catch (e) {
-                console.error('Error decrypting user profile:', e);
-                // Use defaults if decryption fails
-              }
-            }
-
-            // Normalize color function
-            const allowedColors = new Set([
-              'black',
-              'white',
-              'gray',
-              'grey',
-              'yellow',
-              'red',
-              'gold',
-              'purple',
-              'blue',
-              'orange',
-              'green',
-              'pink',
-              'matteBlack',
-              'lunarRegolith',
-              'petgBlack',
-            ]);
-
-            const normalizeColor = (raw: string | null | undefined): string => {
-              if (!raw) return 'black';
-              const trimmed = raw.trim();
-              if (allowedColors.has(trimmed)) return trimmed;
-              const lower = trimmed.toLowerCase();
-              for (const c of allowedColors) {
-                if (c.toLowerCase() === lower) return c;
-              }
-              return 'black';
-            };
-
-            // Build Slant3D order data
-            const orderDataArray: Slant3DOrderData[] = cartItems.map(
-              (item: CartItemWithProduct): Slant3DOrderData => {
-                const stlPath = item.stl;
-                const filenameCandidate = stlPath?.split('/').pop();
-                const normalizedColor = normalizeColor(item.color);
-
-                return {
-                  email,
-                  phone,
-                  name: `${firstName} ${lastName}`.trim() || email,
-                  orderNumber: generateOrderNumber(),
-                  filename: filenameCandidate,
-                  fileURL: stlPath,
-                  bill_to_street_1: shippingAddress,
-                  bill_to_street_2: '',
-                  bill_to_street_3: '',
-                  bill_to_city: city,
-                  bill_to_state: state,
-                  bill_to_zip: zipCode,
-                  bill_to_country_as_iso: 'US',
-                  bill_to_is_US_residential: 'true',
-                  ship_to_name: `${firstName} ${lastName}`.trim() || email,
-                  ship_to_street_1: shippingAddress,
-                  ship_to_street_2: '',
-                  ship_to_street_3: '',
-                  ship_to_city: city,
-                  ship_to_state: state,
-                  ship_to_zip: zipCode,
-                  ship_to_country_as_iso: 'US',
-                  ship_to_is_US_residential: 'true',
-                  order_item_name: item.productName,
-                  order_quantity: String(item.quantity),
-                  order_image_url: '',
-                  order_sku: item.skuNumber,
-                  order_item_color: normalizedColor,
-                  profile: item.filamentType,
-                };
-              },
-            );
-
-            console.log('Creating Slant3D order for cartId:', cartId);
-
-            // Create order with Slant3D (using /estimate for testing since V1 has no test API)
-            // TODO: Change to ${BASE_URL}order when ready for production
-            const response = await fetch(`${BASE_URL}order/estimate`, {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                'api-key': c.env.SLANT_API,
-              },
-              body: JSON.stringify(orderDataArray),
-            });
-
-            console.log('Slant3D estimate response status:', response.status);
-
-            if (!response.ok) {
-              const errorText = await response.text();
-              console.error(
-                'Slant3D order creation failed:',
-                response.status,
-              );
-              return c.json({ error: 'Order creation failed' }, 502);
-            }
-
-            const orderResponse =
-              (await response.json()) as Slant3DOrderResponse;
-            console.log('Slant3D order created successfully. orderId:', orderResponse.orderId);
-
-            // Clear the cart after successful order
-            await db.delete(cart).where(eq(cart.cartId, cartId));
-            console.log('Cart cleared for cartId:', cartId);
-
-            return c.json({
-              success: true,
-              orderId: orderResponse.orderId || 'created',
-            });
-          } catch (error) {
-            console.error('Error processing payment_intent.succeeded:', error);
-            return c.json({ error: 'Order processing failed' }, 500);
-          }
+          console.error('Missing required metadata:', extractMetadata(event));
+          return c.json({ error: 'Missing required metadata' }, 400);
         }
 
-        // Handle Checkout Session completed (redirect checkout flow)
-        if (event.type === 'checkout.session.completed') {
-          const session = event.data.object as Stripe.Checkout.Session;
-
-          // Extract metadata from session (cartId, userId)
-          const cartId = session.metadata?.cartId;
-          const userId = session.metadata?.userId;
-
-          if (!cartId || !userId) {
-            console.error(
-              'Missing metadata in Stripe session:',
-              session.metadata,
-            );
-            return c.json({ error: 'Missing required metadata' }, 400);
-          }
-
-          // Get cart items and user information
-          const db = c.var.db;
-          const cartItems = await db
-            .select({
-              id: cart.id,
-              skuNumber: cart.skuNumber,
-              quantity: cart.quantity,
-              color: cart.color,
-              filamentType: cart.filamentType,
-              productName: productsTable.name,
-              stl: productsTable.stl,
-            })
-            .from(cart)
-            .leftJoin(
-              productsTable,
-              eq(cart.skuNumber, productsTable.skuNumber),
-            )
-            .where(eq(cart.cartId, cartId));
-
-          if (cartItems.length === 0) {
-            console.error('No cart items found for cartId:', cartId);
-            return c.json({ error: 'Cart not found' }, 404);
-          }
-
-          // Get user information
-          const [userRow] = await db
-            .select()
-            .from(users)
-            .where(eq(users.id, userId));
-
-          if (!userRow) {
-            console.error('User not found for userId:', userId);
-            return c.json({ error: 'User not found' }, 404);
-          }
-
-          // Decrypt user information
-          const passphrase = c.env.ENCRYPTION_PASSPHRASE;
-          if (!passphrase) {
-            console.error('ENCRYPTION_PASSPHRASE is not configured');
-            return c.json({ error: 'Server configuration error' }, 500);
-          }
-
-          let decryptedProfile: Awaited<
-            ReturnType<typeof decryptStoredShippingProfile>
-          >;
-          try {
-            decryptedProfile = await decryptStoredShippingProfile(
-              userRow,
-              passphrase,
-            );
-          } catch (e) {
-            console.error('Failed to decrypt user shipping profile:', e);
-            return c.json({ error: 'Failed to decrypt user profile' }, 500);
-          }
-
-          const {
-            email,
-            firstName,
-            lastName,
-            shippingAddress,
-            city,
-            state,
-            zipCode,
-            phone,
-          } = decryptedProfile;
-
-          // Create order data for Slant3D API (using the same logic from shipping endpoint)
-          const allowedColors = new Set([
-            'black',
-            'white',
-            'gray',
-            'grey',
-            'yellow',
-            'red',
-            'gold',
-            'purple',
-            'blue',
-            'orange',
-            'green',
-            'pink',
-            'matteBlack',
-            'lunarRegolith',
-            'petgBlack',
-          ]);
-
-          const normalizeColor = (raw: string | null | undefined): string => {
-            if (!raw) return 'black';
-            const trimmed = raw.trim();
-            if (allowedColors.has(trimmed)) return trimmed;
-            const lower = trimmed.toLowerCase();
-            for (const c of allowedColors) {
-              if (c.toLowerCase() === lower) return c;
-            }
-            return 'black';
-          };
-
-          const orderDataArray: Slant3DOrderData[] = cartItems.map(
-            (item: CartItemWithProduct): Slant3DOrderData => {
-              const stlPath = item.stl;
-              const filenameCandidate = stlPath?.split('/').pop();
-              const normalizedColor = normalizeColor(item.color);
-
-              return {
-                email,
-                phone,
-                name: `${firstName} ${lastName}`.trim(),
-                orderNumber: generateOrderNumber(),
-                filename: filenameCandidate,
-                fileURL: stlPath,
-                bill_to_street_1: shippingAddress,
-                bill_to_street_2: '',
-                bill_to_street_3: '',
-                bill_to_city: city,
-                bill_to_state: state,
-                bill_to_zip: zipCode,
-                bill_to_country_as_iso: 'US',
-                bill_to_is_US_residential: 'true',
-                ship_to_name: `${firstName} ${lastName}`.trim(),
-                ship_to_street_1: shippingAddress,
-                ship_to_street_2: '',
-                ship_to_street_3: '',
-                ship_to_city: city,
-                ship_to_state: state,
-                ship_to_zip: zipCode,
-                ship_to_country_as_iso: 'US',
-                ship_to_is_US_residential: 'true',
-                order_item_name: item.productName,
-                order_quantity: String(item.quantity),
-                order_image_url: '',
-                order_sku: item.skuNumber,
-                order_item_color: normalizedColor,
-                profile: item.filamentType,
-              };
-            },
+        const [existingFulfillment] = await c.var.db
+          .select()
+          .from(stripeFulfillmentTable)
+          .where(
+            eq(stripeFulfillmentTable.idempotencyKey, input.idempotencyKey),
           );
 
-          console.log('Creating Slant3D order for cartId:', cartId);
-
-          // Create order with Slant3D (using /estimate for testing since V1 has no test API)
-          // TODO: Change to ${BASE_URL}order when ready for production
-          try {
-            const response = await fetch(`${BASE_URL}order/estimate`, {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                'api-key': c.env.SLANT_API,
-              },
-              body: JSON.stringify(orderDataArray),
-            });
-
-            if (!response.ok) {
-              console.error(
-                'Slant3D order creation failed:',
-                response.status,
-              );
-              return c.json({ error: 'Order creation failed' }, 502);
-            }
-
-            const orderResponse =
-              (await response.json()) as Slant3DOrderResponse;
-            console.log('Slant3D order created successfully. orderId:', orderResponse.orderId);
-
-            // Clear the cart after successful order
-            await db.delete(cart).where(eq(cart.cartId, cartId));
-
-            // TODO: Store order record in your database for tracking
-            // TODO: Send confirmation email to customer
-
-            return c.json({
-              success: true,
-              orderId: orderResponse.orderId || 'created',
-            });
-          } catch (error) {
-            console.error('Error creating Slant3D order:', error);
-            return c.json({ error: 'Order creation failed' }, 500);
-          }
+        if (existingFulfillment?.status === 'processed') {
+          return c.json({
+            success: true,
+            orderId: existingFulfillment.slantOrderId || 'processed',
+          });
         }
 
-        // Acknowledge receipt of event
-        return c.json({ received: true });
+        const cartLoad = await loadCartFulfillmentItems(c, input.cartId);
+        if (cartLoad.error) {
+          return cartLoad.error;
+        }
+
+        const shippingProfile = await loadShippingProfile(c, input.userId);
+        if (shippingProfile.error) {
+          return shippingProfile.error;
+        }
+        const items = cartLoad.items;
+        const profile = shippingProfile.profile;
+        if (!items || !profile) {
+          return c.json({ error: 'Order processing failed' }, 500);
+        }
+
+        const fulfillment = createPaidOrderFulfillment({
+          db: c.var.db,
+          env: c.env,
+        });
+        let completed: Awaited<ReturnType<typeof fulfillment.fulfillPaidOrder>>;
+        try {
+          completed = await fulfillment.fulfillPaidOrder({
+            fulfillment: input,
+            profile: profile as PaidOrderProfile,
+            items,
+          });
+        } catch (error) {
+          const stage =
+            error instanceof Error && 'stage' in error
+              ? (error as { stage: 'draft' | 'process' }).stage
+              : 'draft';
+          return c.json(
+            {
+              error:
+                stage === 'draft'
+                  ? 'Order draft failed'
+                  : 'Order process failed',
+            },
+            502,
+          );
+        }
+
+        await c.var.db.insert(stripeFulfillmentTable).values({
+          idempotencyKey: input.idempotencyKey,
+          stripeEventId: input.stripeEventId,
+          stripeObjectId: input.stripeObjectId,
+          cartId: input.cartId,
+          status: 'processed',
+          slantOrderId: completed.publicOrderId,
+        });
+
+        await c.var.db.delete(cart).where(eq(cart.cartId, input.cartId));
+
+        return c.json({
+          success: true,
+          orderId: completed.publicOrderId,
+        });
       } catch (err) {
         console.error('Webhook signature verification failed:', err);
         return c.json({ error: 'Webhook signature verification failed' }, 400);

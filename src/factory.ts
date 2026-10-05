@@ -2,14 +2,16 @@ import { type DrizzleD1Database, drizzle } from 'drizzle-orm/d1';
 import { createFactory } from 'hono/factory';
 
 import * as schema from './db/schema';
+import type { Bindings } from './types';
 
 // —————————————————————————————————————————————————————————————————————————————
 // Environment
 
 export type WorkerEnv = {
-  Bindings: Env;
+  Bindings: Bindings;
   Variables: {
     db: DrizzleD1Database<typeof schema>;
+    cartAccess: typeof schema.shoppingCarts.$inferSelect;
     user?: unknown;
     session?: unknown;
     jwtPayload?: {
