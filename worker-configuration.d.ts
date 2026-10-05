@@ -10,6 +10,7 @@ interface __BaseEnv_Env {
 	DB_PREVIEW: D1Database;
 	ORDER_EMAIL: SendEmail;
 	AUTH_EMAIL: SendEmail;
+	BUDGET_EMAIL: SendEmail;
 	AI: Ai;
 	ORDER_NOTIFICATIONS_ENABLED: "false";
 	AGENT_ENABLED: "false";

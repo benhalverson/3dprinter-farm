@@ -18,3 +18,7 @@ SQUARE_ENVIRONMENT=sandbox
 SQUARE_ACCESS_TOKEN=
 SQUARE_MERCHANT_ID=
 SQUARE_LOCATION_ID=
+
+# Budget alerts: verified sender and authorized owner recipient.
+AGENT_BUDGET_FROM=
+AGENT_BUDGET_TO=

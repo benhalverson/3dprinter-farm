@@ -169,6 +169,13 @@
       "when": 1791199278624,
       "tag": "0023_order_email_lifecycle",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "6",
+      "when": 1791199925896,
+      "tag": "0024_budget_alerts",
+      "breakpoints": true
     }
   ]
 }
