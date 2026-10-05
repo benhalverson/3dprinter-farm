@@ -1,4 +1,5 @@
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { mkdirSync, readFileSync, readdirSync, rmdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -7,6 +8,23 @@ const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const config = join(root, 'wrangler.toml');
 const database = '8ea08f02-696c-4410-a690-2bf1fa0333dc';
 const migrationArgs = ['d1', 'migrations'];
+
+// Ben specifically approved removing obsolete Stripe data: "i dont have any data
+// with stripe get rid of it". Bind that approval to this published migration only.
+const approvedStripeMigration = {
+  name: '0018_square_catalog.sql',
+  sha256: 'b8f0199cbc1991afd193897f916cdfa9b75684a4919da16d6851af34b8d38ca2',
+};
+
+/** Match the specifically approved Stripe migration, normalizing checkout line endings. */
+export function hasSpecificMigrationApproval(name, contents) {
+  return (
+    name === approvedStripeMigration.name &&
+    createHash('sha256')
+      .update(contents.replace(/\r\n/g, '\n'))
+      .digest('hex') === approvedStripeMigration.sha256
+  );
+}
 
 /** Conservatively detect destructive statements in Drizzle-generated migrations. */
 export function requiresMigrationApproval(contents) {
@@ -116,7 +134,11 @@ export function deploy({
     }
     // Generated migrations may delete existing data. Never infer approval from deploy.
     for (const name of pending) {
-      if (requiresMigrationApproval(readMigration(name))) {
+      const contents = readMigration(name);
+      if (
+        requiresMigrationApproval(contents) &&
+        !hasSpecificMigrationApproval(name, contents)
+      ) {
         throw new Error(
           `Destructive migration ${name} requires specific approval and a separately reviewed migration plan; Worker release blocked.`,
         );

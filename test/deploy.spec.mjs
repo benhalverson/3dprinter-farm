@@ -5,6 +5,7 @@ import {
   deploy as productionDeploy,
   pendingMigrations,
   requiresMigrationApproval,
+  hasSpecificMigrationApproval,
 } from '../tools/deploy.mjs';
 
 /** Exercise deploy control flow with simulated non-destructive migration contents. */
@@ -105,11 +106,46 @@ test('remaining pending migrations block release', () => {
   assert.equal(calls.length, 3);
 });
 
-test('published catalog migration is destructive and never auto-applies', () => {
+test('exact approved catalog migration applies before release', () => {
+  const calls = [];
+  productionDeploy({
+    run: args => {
+      calls.push(args);
+      return calls.length === 1 ? pending : none;
+    },
+  });
+  assert.deepEqual(
+    calls.map(args => (args[0] === 'deploy' ? 'deploy' : args[2])),
+    ['list', 'apply', 'list', 'deploy'],
+  );
+});
+
+test('specific approval rejects changed contents and unrelated migrations', () => {
+  const contents = readFileSync(
+    'drizzle/migrations/0018_square_catalog.sql',
+    'utf8',
+  );
+  assert.equal(
+    hasSpecificMigrationApproval('0018_square_catalog.sql', contents),
+    true,
+  );
+  assert.equal(
+    hasSpecificMigrationApproval(
+      '0018_square_catalog.sql',
+      contents.replace(/\r?\n/g, '\r\n'),
+    ),
+    true,
+  );
+  assert.equal(hasSpecificMigrationApproval('0019_other.sql', contents), false);
+  assert.equal(
+    hasSpecificMigrationApproval('0018_square_catalog.sql', `${contents}\n`),
+    false,
+  );
   const calls = [];
   assert.throws(
     () =>
       productionDeploy({
+        readMigration: () => `${contents}\n`,
         run: args => {
           calls.push(args);
           return pending;
