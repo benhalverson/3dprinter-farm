@@ -127,7 +127,7 @@ Notes:
 
 ## Database Migrations
 
-Use Drizzle schemas and query APIs for all persistence, including database initialization and data corrections. Generate and apply migrations with the repository Drizzle commands below.
+Use Drizzle schemas and query APIs for all persistence, including database initialization and data corrections. Generate migrations with the Drizzle commands below; do not author SQL or use raw SQL escape hatches.
 
 1. Change `src/db/schema.ts` (which also exports the Durable Object schemas).
 2. Run `pnpm run db:generate` and review the generated migration and metadata in `drizzle/migrations`.

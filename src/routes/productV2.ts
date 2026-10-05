@@ -1,3 +1,8 @@
+import {
+  isPublicationFailure,
+  priceToCents,
+  saveCatalogItem,
+} from '../modules/catalogPublication';
 import { zValidator } from '@hono/zod-validator';
 import { eq, inArray } from 'drizzle-orm';
 import { describeRoute } from 'hono-openapi';
@@ -80,6 +85,7 @@ const productV2 = factory.createApp().put(
   }),
   zValidator('json', updateProductSchema),
   reserveCatalogAssets,
+  /** Saves channel prices against the observed revision while preserving protected attachment identities. */
   async c => {
     try {
       const parsedData = c.req.valid('json');
@@ -142,6 +148,7 @@ const productV2 = factory.createApp().put(
         name: string;
         description: string;
         price: number;
+        inPersonPrice: number;
         filamentType: string;
         color: string;
         image: string;
@@ -151,6 +158,7 @@ const productV2 = factory.createApp().put(
         name: parsedData.name,
         description: parsedData.description,
         price: parsedData.price,
+        inPersonPrice: priceToCents(parsedData.inPersonPrice),
         filamentType: parsedData.filamentType,
         color: parsedData.color,
         image: parsedData.image,
@@ -160,7 +168,10 @@ const productV2 = factory.createApp().put(
       // Only set categoryId if categories are provided and not empty
       if (normalizedCategoryIds) {
         updateData.categoryId = normalizedCategoryIds[0];
+      }
+      await saveCatalogItem(c.var.db, existingProduct, updateData);
 
+      if (normalizedCategoryIds) {
         // Delete existing category associations in join table
         await c.var.db
           .delete(productsToCategories)
@@ -176,22 +187,10 @@ const productV2 = factory.createApp().put(
         );
       }
 
-      // Update the product
-      const updateResult = await c.var.db
-        .update(productsTable)
-        .set(updateData)
-        .where(eq(productsTable.id, parsedData.id))
-        .returning({ id: productsTable.id });
-
-      if (updateResult.length) {
-        return c.json({
-          success: true,
-          message: 'Product updated successfully',
-        });
-      } else {
-        return c.json({ error: 'Product update failed' }, 500);
-      }
+      return c.json({ success: true, message: 'Product updated successfully' });
     } catch (error) {
+      if (isPublicationFailure(error))
+        return c.json({ error: error.code }, error.status);
       if (error instanceof ZodError) {
         console.log('error', error);
         return c.json(

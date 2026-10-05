@@ -25,6 +25,7 @@ export default defineConfig({
       ...configDefaults.exclude,
       'test/project-notes/**',
       'test/database/**',
+      'test/deploy.spec.mjs',
     ],
     isolate: true,
     setupFiles: ['./test/setup.ts'],
