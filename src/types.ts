@@ -21,7 +21,6 @@ import type { orderSchema } from './db/schema';
  *  - SLANT_API_V2      – Slant3D v2 API bearer token
  *  - SLANT_API_V2_BASE_URL – Optional override for the Slant3D v2 API origin
  *  - SLANT_PLATFORM_ID – Slant3D platform identifier
- *  - STRIPE_SECRET_KEY / STRIPE_WEBHOOK_SECRET – Stripe credentials
  *  - SLANT_WEBHOOK_SECRET – Optional Slant3D platform webhook shared secret
  *  - DOMAIN            – Public base URL (e.g. https://rc-store.benhalverson.dev)
  *  - JWT_SECRET        – Secret for JWT signing
@@ -59,8 +58,6 @@ export type Bindings = {
   SQUARE_LOCATION_ID?: string;
   SQUARE_WEBHOOK_SIGNATURE_KEY?: string;
   SQUARE_WEBHOOK_NOTIFICATION_URL?: string;
-  STRIPE_SECRET_KEY: string;
-  STRIPE_WEBHOOK_SECRET: string;
   DOMAIN: string;
   /** Primary D1 SQLite database */
   DB: D1Database;

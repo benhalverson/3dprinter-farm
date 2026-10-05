@@ -332,7 +332,7 @@ const shoppingCart = factory
     }),
     async c => {
       try {
-        // Join cart with products to get pricing, name, and Stripe information
+        // Join cart with products to get pricing and name
         const items = await c.var.db
           .select({
             id: cart.id,

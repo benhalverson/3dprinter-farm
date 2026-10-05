@@ -17,8 +17,6 @@ export function mockEnv(): Bindings {
     SQUARE_LOCATION_ID: 'location',
     SQUARE_WEBHOOK_SIGNATURE_KEY: 'signature',
     SQUARE_WEBHOOK_NOTIFICATION_URL: 'https://api.example/webhook/square',
-    STRIPE_SECRET_KEY: 'sk_test_123',
-    STRIPE_WEBHOOK_SECRET: 'whsec_123',
     DOMAIN: 'example.com',
     COLOR_CACHE: {} as KVNamespace,
     RP_ID: 'example.com',

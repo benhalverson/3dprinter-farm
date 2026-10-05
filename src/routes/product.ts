@@ -266,7 +266,7 @@ const product = factory
         const totalItems = totalCountResult.count;
         const totalPages = Math.ceil(totalItems / limit);
 
-        // Get paginated results without Stripe fields
+        // Get paginated results with public catalog fields
         const rawProducts = await c.var.db
           .select({
             id: productsTable.id,
@@ -493,7 +493,7 @@ const product = factory
     requireCatalogMutationRole,
     describeRoute({
       description:
-        'List product checkout readiness diagnostics for admins. The response identifies missing Stripe prices, missing Slant3D file IDs, and default filament availability problems before customers reach checkout.',
+        'List product checkout readiness diagnostics for admins. The response identifies missing Slant3D file IDs, and default filament availability problems before customers reach checkout.',
       tags: ['Products', 'Admin Catalog'],
       responses: {
         200: {
@@ -536,7 +536,6 @@ const product = factory
           id: productsTable.id,
           skuNumber: productsTable.skuNumber,
           name: productsTable.name,
-          stripePriceId: productsTable.stripePriceId,
           publicFileServiceId: productsTable.publicFileServiceId,
         })
         .from(productsTable)

@@ -7,6 +7,7 @@ import {
   mockDelete,
   mockDrizzle,
   mockInsert,
+  mockUpdate,
   mockWhere,
 } from '../mocks/drizzle';
 import { mockEnv } from '../mocks/env';
@@ -115,8 +116,9 @@ function mockCancelableOrder(overrides: Record<string, unknown> = {}) {
     status: 'processing',
     slantStatus: 'PROCESSING',
     slantPublicOrderId: 'slant-order-123',
-    stripePaymentIntentId: 'pi_123',
-    stripeCheckoutSessionId: 'cs_123',
+    squarePaymentId: 'square-payment-123',
+    paymentStatus: 'paid',
+    squareOrderId: 'square-order-123',
     customerEmail: 'customer@example.com',
     createdAt: '2026-07-01T00:00:00.000Z',
     updatedAt: '2026-07-01T00:00:00.000Z',
@@ -127,18 +129,12 @@ function mockCancelableOrder(overrides: Record<string, unknown> = {}) {
 function mockReconciliationOrder(overrides: Record<string, unknown> = {}) {
   return mockCancelableOrder({
     cartId: 'cart-123',
+    squarePaymentId: null,
+    squareOrderId: null,
     itemSnapshot: JSON.stringify([{ skuNumber: 'SKU-001', quantity: 1 }]),
     customerSnapshot: JSON.stringify({ email: 'customer@example.com' }),
     ...overrides,
   });
-}
-
-function mockSlantDeleteResponse(ok = true, status = 200, body = '{}') {
-  (globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
-    ok,
-    status,
-    text: vi.fn().mockResolvedValue(body),
-  } as unknown as Response);
 }
 
 function mockSlantGetResponse(ok = true, status = 200, body = '{}') {
@@ -341,8 +337,9 @@ describe('Admin Orders API', () => {
         status: 'pending',
         slantStatus: null,
         slantPublicOrderId: null,
-        stripeCheckoutSessionId: 'cs_123',
-        stripePaymentIntentId: 'pi_123',
+        squareOrderId: 'square-order-123',
+        squarePaymentId: 'square-payment-123',
+        paymentStatus: 'paid',
         customerEmail: 'customer@example.com',
         shipToName: 'John Doe',
         shipToStreet1: '123 Main St',
@@ -392,7 +389,7 @@ describe('Admin Orders API', () => {
       const body = await res.json();
       expect(body.orderNumber).toBe('ORD-001');
       expect(body.events).toEqual(mockEvents);
-      expect(body.stripeCheckoutSessionId).toBe('cs_123');
+      expect(body.squareOrderId).toBe('square-order-123');
     });
   });
 
@@ -588,269 +585,27 @@ describe('Admin Orders API', () => {
       expect(res.status).toBe(403);
     });
 
-    test('cancels Slant order before refunding Stripe', async () => {
+    test('retires cancellation without provider calls or order writes, even with override', async () => {
       mockAdminUser();
-      mockWhere
-        .mockReturnValueOnce({
-          get: vi.fn().mockResolvedValue(mockCancelableOrder()),
-        })
-        .mockReturnValueOnce({
-          all: vi.fn().mockResolvedValue([]),
-        });
-      mockSlantDeleteResponse(true, 200, JSON.stringify({ ok: true }));
-      mockStripeRefundCreate.mockResolvedValueOnce({
-        id: 're_123',
-        status: 'succeeded',
-      });
-
+      const before = capturedInserts.length;
       const res = await app.fetch(
         new Request('http://localhost/admin/orders/1/cancel-refund', {
           method: 'POST',
-          headers: {
-            Cookie: 'better-auth.session_token=mock-session-token',
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({ reason: 'Customer request' }),
+          headers: { Cookie: 'better-auth.session_token=mock-session-token' },
+          body: JSON.stringify({ override: true, reason: 'Customer request' }),
         }),
         env,
       );
-
-      expect(res.status).toBe(200);
-      expect(await res.json()).toMatchObject({
-        success: true,
-        orderId: 1,
-        status: 'canceled',
-        slantStatus: 'CANCELED',
-        stripeRefundId: 're_123',
-        stripeRefundStatus: 'succeeded',
-      });
-      expect(globalThis.fetch).toHaveBeenCalledWith(
-        'https://slant3dapi.com/v2/api/orders/slant-order-123',
-        expect.objectContaining({ method: 'DELETE' }),
-      );
-      expect(mockStripeRefundCreate).toHaveBeenCalledWith(
-        expect.objectContaining({ payment_intent: 'pi_123' }),
-        expect.objectContaining({
-          idempotencyKey: 'order-1-cancel-refund',
-        }),
-      );
-      expect(capturedInserts).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({
-            orderId: 1,
-            finalStatus: 'canceled_refunded',
-            stripeRefundId: 're_123',
-          }),
-          expect.objectContaining({
-            orderId: 1,
-            type: 'admin_cancel_refund',
-            source: 'admin',
-          }),
-        ]),
-      );
-    });
-
-    test('does not create duplicate refunds for duplicate requests', async () => {
-      mockAdminUser();
-      mockWhere
-        .mockReturnValueOnce({
-          get: vi.fn().mockResolvedValue(
-            mockCancelableOrder({
-              status: 'canceled',
-              slantStatus: 'CANCELED',
-            }),
-          ),
-        })
-        .mockReturnValueOnce({
-          all: vi.fn().mockResolvedValue([
-            {
-              orderId: 1,
-              finalStatus: 'canceled_refunded',
-              stripeRefundId: 're_existing',
-              stripeRefundStatus: 'succeeded',
-            },
-          ]),
-        });
-
-      const res = await app.fetch(
-        new Request('http://localhost/admin/orders/1/cancel-refund', {
-          method: 'POST',
-          headers: {
-            Cookie: 'better-auth.session_token=mock-session-token',
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({ reason: 'Retry click' }),
-        }),
-        env,
-      );
-
-      expect(res.status).toBe(200);
-      expect(await res.json()).toMatchObject({
-        success: true,
-        duplicate: true,
-        stripeRefundId: 're_existing',
-      });
-      expect(globalThis.fetch).not.toHaveBeenCalled();
-      expect(mockStripeRefundCreate).not.toHaveBeenCalled();
-    });
-
-    test('blocks shipped orders without override', async () => {
-      mockAdminUser();
-      mockWhere
-        .mockReturnValueOnce({
-          get: vi.fn().mockResolvedValue(
-            mockCancelableOrder({
-              status: 'shipped',
-              slantStatus: 'SHIPPED',
-            }),
-          ),
-        })
-        .mockReturnValueOnce({
-          all: vi.fn().mockResolvedValue([]),
-        });
-
-      const res = await app.fetch(
-        new Request('http://localhost/admin/orders/1/cancel-refund', {
-          method: 'POST',
-          headers: {
-            Cookie: 'better-auth.session_token=mock-session-token',
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({ reason: 'Customer request' }),
-        }),
-        env,
-      );
-
-      expect(res.status).toBe(400);
-      expect(mockStripeRefundCreate).not.toHaveBeenCalled();
-      expect(capturedInserts).toContainEqual(
-        expect.objectContaining({
-          orderId: 1,
-          finalStatus: 'blocked_ineligible_status',
-        }),
-      );
-    });
-
-    test('does not refund Stripe when Slant cancellation fails', async () => {
-      mockAdminUser();
-      mockWhere
-        .mockReturnValueOnce({
-          get: vi.fn().mockResolvedValue(mockCancelableOrder()),
-        })
-        .mockReturnValueOnce({
-          all: vi.fn().mockResolvedValue([]),
-        });
-      mockSlantDeleteResponse(false, 500, 'Slant failed');
-
-      const res = await app.fetch(
-        new Request('http://localhost/admin/orders/1/cancel-refund', {
-          method: 'POST',
-          headers: {
-            Cookie: 'better-auth.session_token=mock-session-token',
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({ reason: 'Customer request' }),
-        }),
-        env,
-      );
-
-      expect(res.status).toBe(502);
+      expect(res.status).toBe(410);
       expect(await res.json()).toEqual({
-        error: 'Slant3D cancellation failed; Stripe was not refunded.',
+        error:
+          'Cancellation/refund operation retired; Square support is pending issue181.',
       });
       expect(mockStripeRefundCreate).not.toHaveBeenCalled();
-      expect(capturedInserts).toContainEqual(
-        expect.objectContaining({
-          orderId: 1,
-          finalStatus: 'slant_cancellation_failed',
-          slantStatus: 'failed',
-        }),
-      );
-    });
-
-    test('persists Stripe refund failure after Slant cancellation succeeds', async () => {
-      mockAdminUser();
-      mockWhere
-        .mockReturnValueOnce({
-          get: vi.fn().mockResolvedValue(mockCancelableOrder()),
-        })
-        .mockReturnValueOnce({
-          all: vi.fn().mockResolvedValue([]),
-        });
-      mockSlantDeleteResponse(true, 200, JSON.stringify({ ok: true }));
-      mockStripeRefundCreate.mockRejectedValueOnce(new Error('Stripe failed'));
-
-      const res = await app.fetch(
-        new Request('http://localhost/admin/orders/1/cancel-refund', {
-          method: 'POST',
-          headers: {
-            Cookie: 'better-auth.session_token=mock-session-token',
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({ reason: 'Customer request' }),
-        }),
-        env,
-      );
-
-      expect(res.status).toBe(502);
-      expect(await res.json()).toEqual({ error: 'Stripe refund failed.' });
-      expect(capturedInserts).toContainEqual(
-        expect.objectContaining({
-          orderId: 1,
-          finalStatus: 'stripe_refund_failed',
-          errorMessage: 'Stripe failed',
-        }),
-      );
-    });
-
-    test('override allows refund when shipped order Slant cancellation fails', async () => {
-      mockAdminUser();
-      mockWhere
-        .mockReturnValueOnce({
-          get: vi.fn().mockResolvedValue(
-            mockCancelableOrder({
-              status: 'shipped',
-              slantStatus: 'SHIPPED',
-            }),
-          ),
-        })
-        .mockReturnValueOnce({
-          all: vi.fn().mockResolvedValue([]),
-        });
-      mockSlantDeleteResponse(false, 409, 'Already shipped');
-      mockStripeRefundCreate.mockResolvedValueOnce({
-        id: 're_override',
-        status: 'succeeded',
-      });
-
-      const res = await app.fetch(
-        new Request('http://localhost/admin/orders/1/cancel-refund', {
-          method: 'POST',
-          headers: {
-            Cookie: 'better-auth.session_token=mock-session-token',
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            reason: 'Manual support override',
-            override: true,
-          }),
-        }),
-        env,
-      );
-
-      expect(res.status).toBe(200);
-      expect(await res.json()).toMatchObject({
-        success: true,
-        stripeRefundId: 're_override',
-      });
-      expect(capturedInserts).toContainEqual(
-        expect.objectContaining({
-          orderId: 1,
-          finalStatus: 'canceled_refunded',
-          override: true,
-          slantStatus: 'failed',
-        }),
-      );
+      expect(fetch).not.toHaveBeenCalled();
+      expect(capturedInserts.length).toBe(before);
+      expect(mockUpdate).not.toHaveBeenCalled();
+      expect(mockDelete).not.toHaveBeenCalled();
     });
   });
 
@@ -954,42 +709,6 @@ describe('Admin Orders API', () => {
             resultStatus: 'recovered',
             detectedIssueType: JSON.stringify(['local_status_stale']),
             actionsTaken: JSON.stringify(['updated_local_status']),
-          }),
-        ]),
-      );
-    });
-
-    test('reports paid orders without a Slant order id', async () => {
-      mockAdminUser();
-      mockWhere.mockReturnValueOnce({
-        get: vi.fn().mockResolvedValue(
-          mockReconciliationOrder({
-            slantPublicOrderId: null,
-            slantStatus: null,
-            status: 'failed',
-          }),
-        ),
-      });
-
-      const res = await app.fetch(
-        new Request('http://localhost/admin/orders/1/reconcile', {
-          method: 'POST',
-          headers: { Cookie: 'better-auth.session_token=mock-session-token' },
-        }),
-        env,
-      );
-
-      expect(res.status).toBe(200);
-      expect(await res.json()).toMatchObject({
-        resultStatus: 'needs_admin_action',
-        detectedIssues: ['paid_without_slant_order_id'],
-        recommendedAction: 'Use admin retry fulfillment or cancel/refund.',
-      });
-      expect(capturedInserts).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({
-            orderId: 1,
-            resultStatus: 'needs_admin_action',
           }),
         ]),
       );

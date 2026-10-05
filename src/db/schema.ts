@@ -153,7 +153,6 @@ export const productsTable = sqliteTable('products', {
   color: text('color').default('#000000'),
   inPersonPrice: integer('in_person_price_cents'),
   squareRevision: integer('square_revision').notNull().default(0),
-  stripePriceId: text('stripe_price_id'),
   publicFileServiceId: text('public_file_service_id'), // Slant3D file UUID for orders
   // Make optional to allow products without categories during transition
   categoryId: integer().references(() => categoryTable.categoryId),
@@ -489,9 +488,6 @@ export const ordersTable = sqliteTable('ordersTable', {
   status: text('status').default('pending'),
   slantStatus: text('slant_status'),
   slantPublicOrderId: text('slant_public_order_id'),
-  stripeCheckoutSessionId: text('stripe_checkout_session_id'),
-  stripePaymentIntentId: text('stripe_payment_intent_id'),
-  stripeEventId: text('stripe_event_id'),
   source: text('source').notNull().default('online'),
   fulfillmentType: text('fulfillment_type').notNull().default('slant'),
   paymentStatus: text('payment_status'),
@@ -549,9 +545,6 @@ export const orderCancellationAttemptsTable = sqliteTable(
     override: integer('override', { mode: 'boolean' }).default(false).notNull(),
     slantStatus: text('slant_status'),
     slantResult: text('slant_result'),
-    stripeRefundId: text('stripe_refund_id'),
-    stripeRefundStatus: text('stripe_refund_status'),
-    stripeResult: text('stripe_result'),
     finalStatus: text('final_status').notNull(),
     errorMessage: text('error_message'),
     createdAt: text('created_at')
