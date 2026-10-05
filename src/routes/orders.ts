@@ -435,6 +435,24 @@ const ordersRouter = factory
             },
           },
         },
+        409: {
+          description:
+            'Ambiguous order identity, conflicting event ID reuse, invalid lifecycle transition, or a concurrent lifecycle change. Resolve identity/transition conflicts; retry the unchanged event after a concurrent change.',
+          content: {
+            'application/json': {
+              schema: resolver(webhookErrorSchema) as unknown as OpenAPISchema,
+            },
+          },
+        },
+        503: {
+          description:
+            'Webhook secret is not configured, or lifecycle persistence is unavailable. Missing configuration requires operator action; retry the same event after a persistence failure.',
+          content: {
+            'application/json': {
+              schema: resolver(webhookErrorSchema) as unknown as OpenAPISchema,
+            },
+          },
+        },
         422: {
           description: 'Invalid request body',
           content: {
