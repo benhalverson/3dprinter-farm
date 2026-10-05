@@ -12,13 +12,15 @@
     "dev": "wrangler dev",
     "start": "wrangler dev",
     "test": "vitest",
-    "test:ci": "vitest run",
+    "test:ci": "drizzle-kit generate --config test/quotes.drizzle.config.ts && vitest run && pnpm run test:database && pnpm test:quotes",
     "test:project-notes": "node --test --disable-warning=ExperimentalWarning --experimental-strip-types test/project-notes/*.spec.ts",
     "check:biome": "biome lint .",
     "check:types": "tsc --noEmit",
     "check:sql": "node --experimental-strip-types tools/sql-policy/check.ts",
     "check": "pnpm run check:biome && pnpm run check:types && pnpm run check:sql",
-    "cf-typegen": "wrangler types"
+    "cf-typegen": "wrangler types",
+    "test:database": "vitest run --config vitest.database.config.mts",
+    "test:quotes": "drizzle-kit generate --config test/quotes.drizzle.config.ts && vitest run --config test/quotes.vitest.config.ts"
   },
   "devDependencies": {
     "@biomejs/biome": "2.3.8",

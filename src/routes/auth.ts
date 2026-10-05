@@ -84,6 +84,7 @@ const signOutRouteDescription = describeRoute({
   },
 });
 
+/** Revokes the current session and reports provider failures without claiming success. */
 const signOutHandler = async (c: Context) => {
   const betterAuth = createAuth(c.env.DB, c.env);
   const authResponse = await betterAuth.handler(
@@ -92,6 +93,11 @@ const signOutHandler = async (c: Context) => {
       headers: c.req.raw.headers,
     }),
   );
+
+  if (!authResponse.ok) {
+    const body = await readAuthResponseBody(authResponse);
+    return jsonResponse(Object.keys(body).length ? body : { error: 'Signout failed' }, authResponse.status);
+  }
 
   const response = c.json({ message: 'signout success' });
   const setCookie = authResponse.headers.get('set-cookie');
@@ -316,7 +322,6 @@ const auth = factory
       }
     },
   )
-  .get('/signout', signOutRouteDescription, signOutHandler)
   .post('/signout', signOutRouteDescription, signOutHandler);
 
 export default auth;

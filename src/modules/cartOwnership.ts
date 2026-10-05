@@ -8,8 +8,21 @@ type Database = WorkerEnv['Variables']['db'];
 export type CartAccess = typeof shoppingCarts.$inferSelect;
 export type CartCaller = { userId?: string; guestToken?: string };
 
+/** Rejects stale account assertions; session identity alone remains authoritative. */
+export function assertCartIdentity(
+  userId: string | undefined,
+  expectedUserId: string | null,
+): void {
+  if ((userId ?? null) !== expectedUserId) {
+    throw new HTTPException(409, {
+      message: 'Account changed; refresh your session before retrying',
+    });
+  }
+}
+
 const tokenSchema = z.string().uuid();
 
+/** Hashes the bearer capability before persistence or comparison. */
 async function tokenHash(token: string) {
   const digest = await crypto.subtle.digest(
     'SHA-256',
@@ -18,6 +31,7 @@ async function tokenHash(token: string) {
   return btoa(String.fromCharCode(...new Uint8Array(digest)));
 }
 
+/** Persists an empty cart; only an anonymous creator receives a guest capability. */
 export async function createCart(db: Database, userId?: string) {
   const guestToken = userId ? undefined : crypto.randomUUID();
   const cartId = crypto.randomUUID();
@@ -27,9 +41,10 @@ export async function createCart(db: Database, userId?: string) {
     guestTokenHash: guestToken ? await tokenHash(guestToken) : null,
     accessVersion: crypto.randomUUID(),
   });
-  return { cartId, guestToken };
+  return { cartId, guestToken, ownerId: userId ?? null };
 }
 
+/** Resolves a durable owner from the verified session or an unclaimed guest capability. */
 export async function requireCartAccess(
   db: Database,
   cartId: string,
@@ -68,6 +83,7 @@ export function cartLines(access: CartAccess) {
   );
 }
 
+/** Atomically claims a guest cart once and revokes every outstanding guest authorization. */
 export async function claimCart(
   db: Database,
   cartId: string,

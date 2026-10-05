@@ -35,6 +35,12 @@ export type AdminOrderListItem = Pick<
   | 'slantPublicOrderId'
   | 'customerEmail'
   | 'createdAt'
+  | 'source'
+  | 'fulfillmentType'
+  | 'paymentStatus'
+  | 'squareOrderId'
+  | 'squarePaymentId'
+  | 'fulfillmentState'
 >;
 
 export type AdminOrderDetail = typeof ordersTable.$inferSelect & {
@@ -178,6 +184,12 @@ function createDrizzleAdminOrderReadAdapter(
           id: ordersTable.id,
           orderNumber: ordersTable.orderNumber,
           userId: ordersTable.userId,
+          source: ordersTable.source,
+          fulfillmentType: ordersTable.fulfillmentType,
+          paymentStatus: ordersTable.paymentStatus,
+          squareOrderId: ordersTable.squareOrderId,
+          squarePaymentId: ordersTable.squarePaymentId,
+          fulfillmentState: ordersTable.fulfillmentState,
           status: ordersTable.status,
           slantStatus: ordersTable.slantStatus,
           slantPublicOrderId: ordersTable.slantPublicOrderId,

@@ -35,6 +35,7 @@ export type Bindings = {
   AUTH_EMAIL: Env['AUTH_EMAIL'];
   ORDER_EMAIL?: Env['ORDER_EMAIL'];
   ORDER_ADMIN_EMAIL?: string;
+  ORDER_NOTIFICATIONS_ENABLED?: string;
   AUTH_BASE_URL: string;
   SHOPPING_AGENT: DurableObjectNamespace<
     import('./shopping/agent').ShoppingAgent
@@ -55,6 +56,12 @@ export type Bindings = {
   SLANT_API_V2_BASE_URL?: string;
   SLANT_PLATFORM_ID: string;
   SLANT_WEBHOOK_SECRET?: string;
+  SQUARE_ENVIRONMENT?: 'sandbox' | 'production';
+  SQUARE_ACCESS_TOKEN?: string;
+  SQUARE_MERCHANT_ID?: string;
+  SQUARE_LOCATION_ID?: string;
+  SQUARE_WEBHOOK_SIGNATURE_KEY?: string;
+  SQUARE_WEBHOOK_NOTIFICATION_URL?: string;
   STRIPE_SECRET_KEY: string;
   STRIPE_WEBHOOK_SECRET: string;
   DOMAIN: string;
@@ -234,12 +241,7 @@ export interface Slant3DOrderResponse {
   orderId?: string;
 }
 
-// Test response types
-export interface PaymentStatusResponse {
-  status: string;
-}
-
-export interface StripeWebhookResponse {
+export interface SquareWebhookResponse {
   success?: boolean;
   orderId?: string;
   error?: string;

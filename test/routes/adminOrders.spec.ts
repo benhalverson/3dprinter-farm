@@ -427,6 +427,7 @@ describe('Admin Orders API', () => {
 
     test('returns 400 for invalid order ID', async () => {
       mockAdminUser();
+      mockWhere.mockResolvedValueOnce([]);
 
       const res = await app.fetch(
         new Request('http://localhost/admin/orders/not-a-number/retry', {
@@ -443,6 +444,7 @@ describe('Admin Orders API', () => {
 
     test('returns 404 for missing order', async () => {
       mockAdminUser();
+      mockWhere.mockResolvedValueOnce([]);
 
       mockWhere.mockReturnValueOnce({
         get: vi.fn().mockResolvedValue(undefined),
@@ -461,6 +463,7 @@ describe('Admin Orders API', () => {
 
     test('blocks retry for already fulfilled order', async () => {
       mockAdminUser();
+      mockWhere.mockResolvedValueOnce([]);
 
       mockWhere.mockReturnValueOnce({
         get: vi.fn().mockResolvedValue({
@@ -485,6 +488,7 @@ describe('Admin Orders API', () => {
 
     test('blocks retry for non-eligible status', async () => {
       mockAdminUser();
+      mockWhere.mockResolvedValueOnce([]);
 
       mockWhere.mockReturnValueOnce({
         get: vi.fn().mockResolvedValue({
@@ -509,6 +513,7 @@ describe('Admin Orders API', () => {
 
     test('allows retry for failed order and records event', async () => {
       mockAdminUser();
+      mockWhere.mockResolvedValueOnce([]);
 
       // Order lookup
       mockWhere.mockReturnValueOnce({

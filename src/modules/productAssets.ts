@@ -197,24 +197,45 @@ async function finishReferenceAttempt(db: Database, id: string) {
     // and reservations remain discoverable; uncertainty never permits deletion.
   }
 }
+/** Reserves assets before an external effect, optionally under a durable caller-owned identity. */
 export async function reserveAssetAttempt(
   db: Database,
   assets: Asset[],
   kind: 'catalog' | 'order',
+  stableId?: string,
 ) {
-  const reference = `${kind}-attempt:${crypto.randomUUID()}`;
+  const reference = stableId || `${kind}-attempt:${crypto.randomUUID()}`;
   if (assets.length) {
     const now = Date.now();
-    await db
-      .insert(productAssetReferenceAttempts)
-      .values({
-        id: reference,
-        assetIds: assets.map(asset => asset.id),
-        state: 'unresolved',
-        createdAt: now,
-        updatedAt: now,
-      })
-      .returning();
+    const existing = stableId ? await readAttempt(db, reference) : undefined;
+    if (existing) {
+      if (existing.state === 'released')
+        await db
+          .update(productAssetReferenceAttempts)
+          .set({
+            state: 'unresolved',
+            assetIds: assets.map(asset => asset.id),
+            updatedAt: now,
+          })
+          .where(
+            and(
+              eq(productAssetReferenceAttempts.id, reference),
+              eq(productAssetReferenceAttempts.state, 'released'),
+            ),
+          )
+          .returning();
+    } else {
+      await db
+        .insert(productAssetReferenceAttempts)
+        .values({
+          id: reference,
+          assetIds: assets.map(asset => asset.id),
+          state: 'unresolved',
+          createdAt: now,
+          updatedAt: now,
+        })
+        .returning();
+    }
     try {
       for (const asset of assets)
         await reserveAssetReference(db, asset.id, reference);
@@ -227,11 +248,17 @@ export async function reserveAssetAttempt(
     if (assets.length) await finishReferenceAttempt(db, reference);
   };
 }
-export async function reservePendingOrderAssets(db: Database, input: unknown) {
+/** Binds an order asset hold to its stable local order identity. */
+export async function reservePendingOrderAssets(
+  db: Database,
+  input: unknown,
+  stableId?: string,
+) {
   return reserveAssetAttempt(
     db,
     await findAssets(db, attachmentIdentities(input)),
     'order',
+    stableId,
   );
 }
 // Mounted after authentication and payload validation on V2 mutations only.
@@ -450,4 +477,9 @@ export async function cleanupAsset(
       reason: `${asset.kind === 'print' ? 'Slant3D file' : 'Photo'} cleanup failed; retry cleanup`,
     };
   }
+}
+
+/** Finishes a persisted asset hold after durable order evidence exists; safe on replay. */
+export async function releasePaidOrderAssets(db: Database, orderId: number) {
+  await finishReferenceAttempt(db, `order-attempt:square-${orderId}`);
 }

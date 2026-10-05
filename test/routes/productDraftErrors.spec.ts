@@ -104,7 +104,7 @@ async function expectFailure(
   attachment = false,
 ) {
   expect(response.status).toBe(500);
-  expect(response.headers.get('cache-control')).toBe('no-store');
+  expect(response.headers.get('cache-control')).toBe('private, no-store');
   expect(await response.json()).toEqual({
     error: attachment
       ? 'Attachment request failed; reload to recover saved state'

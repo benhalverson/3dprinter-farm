@@ -10,12 +10,8 @@ export default defineConfig({
       miniflare: {
         d1Databases: ['NOTIFICATIONS_TEST_DB'],
         bindings: {
-          // Exercise the order schema and new migration unchanged. The inherited
-          // full history duplicates cart user_id/filament_id in 0002/0003/0004.
-          NOTIFICATIONS_TEST_MIGRATIONS: (
-            await readD1Migrations('./drizzle/migrations')
-          ).filter(migration =>
-            /^(0000_|0001_|0005_|0007_|0009_|0018_)/.test(migration.name),
+          NOTIFICATIONS_TEST_MIGRATIONS: await readD1Migrations(
+            './.generated/quote-test-migrations',
           ),
         },
         compatibilityDate: '2024-10-05',
@@ -34,7 +30,12 @@ export default defineConfig({
   ],
   test: {
     coverage: { provider: 'istanbul' },
-    exclude: [...configDefaults.exclude, 'test/project-notes/**'],
+    exclude: [
+      ...configDefaults.exclude,
+      'test/project-notes/**',
+      'test/database/**',
+      'test/persistence/**',
+    ],
     isolate: true,
     setupFiles: ['./test/setup.ts'],
   },

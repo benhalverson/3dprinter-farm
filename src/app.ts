@@ -1,7 +1,12 @@
 import { Scalar } from '@scalar/hono-api-reference';
-import { cors } from 'hono/cors';
 import { openAPISpecs } from 'hono-openapi';
 import factory from './factory';
+import {
+  browserCors,
+  browserOriginGuard,
+  privateResponseCache,
+} from './utils/browserSecurity';
+import checkoutQuotes from './routes/checkoutQuotes';
 import adminOrders from './routes/adminOrders';
 import auth from './routes/auth';
 import authApi from './routes/authApi';
@@ -14,6 +19,7 @@ import productDrafts from './routes/productDrafts';
 import productV2 from './routes/productV2';
 import shoppingAgent from './routes/shoppingAgent';
 import shoppingCart from './routes/shoppingCart';
+import squareCatalog from './routes/squareCatalog';
 import userRouter from './routes/users';
 import { requestLogger } from './utils/requestLogger';
 import { validateBindings } from './utils/validateBindings';
@@ -43,21 +49,9 @@ const app = factory
     return c.text('Internal Server Error', 500);
   })
   .use(requestLogger)
-  .use(
-    cors({
-      origin: [
-        'http://localhost:3000',
-        'http://localhost:4200',
-        'http://localhost:8787',
-        'https://rc-store.benhalverson.dev',
-        'https://rc-admin.pages.dev',
-        'https://api.benhalverson.dev',
-        'https://luluspeedworks.com',
-      ],
-      credentials: true,
-      allowMethods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    }),
-  )
+  .use(privateResponseCache)
+  .use(browserOriginGuard)
+  .use(browserCors)
   .get('/health', c => {
     try {
       validateBindings(c.env as Record<string, unknown>);
@@ -72,10 +66,12 @@ const app = factory
   .route('/admin/product-drafts', productDrafts)
   .route('/', product)
   .route('/', productV2)
+  .route('/', squareCatalog)
   .route('/', userRouter)
   .route('/', printer)
   .route('/', paymentsRouter)
   .route('/', shoppingCart)
+  .route('/', checkoutQuotes)
   .route('/', ordersRouter)
   .route('/', adminOrders)
   .route('/', notifications);

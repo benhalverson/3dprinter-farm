@@ -13,6 +13,7 @@ import {
   enqueueAdminFailure,
   enqueueOrderNotification,
   type NotificationEnv,
+  reconcileSquareNotifications,
 } from '../src/lib/notifications';
 
 const { drizzle } =
@@ -26,6 +27,7 @@ const send = vi.fn().mockResolvedValue({ messageId: 'cloudflare-message' });
 const mail: NotificationEnv = {
   ORDER_EMAIL: { send },
   ORDER_ADMIN_EMAIL: 'admin@example.com',
+  ORDER_NOTIFICATIONS_ENABLED: 'true',
 };
 
 beforeAll(async () => {
@@ -37,6 +39,8 @@ beforeAll(async () => {
 beforeEach(async () => {
   await db.delete(attempts);
   await db.delete(schema.ordersTable);
+  await db.delete(schema.checkoutAttempts);
+  await db.delete(schema.checkoutQuotes);
   await db.delete(schema.memberTable);
   mockBetterAuth.getSession.mockResolvedValue(null);
   send.mockReset().mockResolvedValue({ messageId: 'cloudflare-message' });
@@ -48,6 +52,32 @@ async function order() {
     .insert(schema.users)
     .values({ id: 'test-owner', email: 'owner@example.com', name: 'Owner' })
     .onConflictDoNothing();
+  const identity = crypto.randomUUID();
+  await db.insert(schema.checkoutQuotes).values({
+    id: identity,
+    ownerId: 'test-owner',
+    cartId: identity,
+    inputHash: 'hash',
+    encryptedSnapshot: 'fixture',
+    createdAt: 1,
+    expiresAt: 2,
+    consumedAttemptId: identity,
+  });
+  await db.insert(schema.checkoutAttempts).values({
+    id: identity,
+    ownerId: 'test-owner',
+    cartId: identity,
+    quoteId: identity,
+    requestKey: identity,
+    snapshot: '{}',
+    customerEmail: 'customer@example.com',
+    merchantId: 'merchant',
+    locationId: 'location',
+    state: 'paid',
+    squarePaymentId: identity,
+    squareOrderId: identity,
+    createdAt: 1,
+  });
   const [row] = await db
     .insert(schema.ordersTable)
     .values({
@@ -60,12 +90,41 @@ async function order() {
       userId: 'test-owner',
       filename: 'part',
       fileURL: 'private-print',
-      orderNumber: 'PRIVATE',
+      orderNumber: `PRIVATE-${identity}`,
+      cartId: identity,
+      checkoutAttemptId: identity,
+      squareOrderId: identity,
+      squarePaymentId: identity,
+      source: 'online',
+      fulfillmentType: 'slant',
+      paymentStatus: 'paid',
+      fulfillmentState: 'processed',
+      customerSnapshot: JSON.stringify({ email: 'customer@example.com' }),
       customerEmail: 'customer@example.com',
       status: 'processing',
       slantStatus: 'PROCESSING',
     })
     .returning();
+  await db.insert(schema.orderEventsTable).values([
+    {
+      orderId: row.id,
+      type: 'square_payment_verified',
+      dedupeKey: `square-paid:${identity}`,
+      source: 'square',
+      actor: 'square',
+      externalEventId: identity,
+      nextStatus: 'paid',
+    },
+    {
+      orderId: row.id,
+      type: 'square_fulfillment_processed',
+      dedupeKey: `square-fulfilled:${identity}`,
+      source: 'square',
+      actor: 'square',
+      externalEventId: identity,
+      nextStatus: 'PROCESSING',
+    },
+  ]);
   return row;
 }
 
@@ -95,14 +154,20 @@ describe('Cloudflare order notifications with real local D1', () => {
       from: 'Lulu Speedworks <noreply@luluspeedworks.com>',
       to: 'customer@example.com',
       subject: `Order #${row.id} confirmed`,
-      text: `Thank you for your order. Order #${row.id} is confirmed and is being processed.`,
+      text: `Thank you for your order. Order #${row.id} was confirmed for fulfillment.`,
     });
   });
 
   it('pre-provider configuration failure retries the original recipient and content', async () => {
     const row = await order();
     const queued = await enqueueOrderNotification(db, row.id, 'confirmed');
-    expect(await deliverNotification(db, {}, queued.id)).toMatchObject({
+    expect(
+      await deliverNotification(
+        db,
+        { ORDER_NOTIFICATIONS_ENABLED: 'true' },
+        queued.id,
+      ),
+    ).toMatchObject({
       status: 'failed',
     });
     expect(send).not.toHaveBeenCalled();
@@ -166,14 +231,21 @@ describe('Cloudflare order notifications with real local D1', () => {
       'payment-1',
       'fulfillment_failed',
     );
-    await deliverNotification(db, {}, queued.id);
+    await deliverNotification(
+      db,
+      { ORDER_NOTIFICATIONS_ENABLED: 'true' },
+      queued.id,
+    );
     expect(await attempt(queued.id)).toMatchObject({
       status: 'failed',
       recipientEmail: '',
     });
     await deliverNotification(
       db,
-      { ORDER_ADMIN_EMAIL: 'first@example.com' },
+      {
+        ORDER_ADMIN_EMAIL: 'first@example.com',
+        ORDER_NOTIFICATIONS_ENABLED: 'true',
+      },
       queued.id,
     );
     await deliverNotification(
@@ -247,10 +319,12 @@ describe('Cloudflare order notifications with real local D1', () => {
     const row = await order();
     await expect(
       enqueueOrderNotification(db, row.id, 'shipped'),
-    ).rejects.toThrow('notification_order_status_mismatch');
+    ).rejects.toThrow('notification_lifecycle_unverified');
     await db
       .update(schema.ordersTable)
-      .set({ customerEmail: 'bad\r\nBcc: evil@example.com' })
+      .set({
+        customerSnapshot: JSON.stringify({ email: 'mismatch@example.com' }),
+      })
       .where(eq(schema.ordersTable.id, row.id));
     await expect(
       enqueueOrderNotification(db, row.id, 'confirmed'),
@@ -298,13 +372,15 @@ describe('notification administration authorization and safe responses', () => {
     '/notifications/order/1',
     '/notifications/failed',
     '/notifications/resend/1',
+    '/notifications/order/1/reconcile',
   ])('requires authentication and privileged organization membership: %s', async path => {
-    const method = path.includes('/resend/') ? 'POST' : 'GET';
+    const method =
+      path.includes('/resend/') || path.endsWith('/reconcile') ? 'POST' : 'GET';
     expect((await request(path, method)).status).toBe(401);
     await session('user');
     const response = await request(path, method);
     expect(response.status).toBe(403);
-    expect(response.headers.get('cache-control')).toBe('no-store');
+    expect(response.headers.get('cache-control')).toContain('no-store');
     expect(send).not.toHaveBeenCalled();
   });
 
@@ -330,7 +406,7 @@ describe('notification administration authorization and safe responses', () => {
     const text = await listing.text();
     expect(text).not.toContain('customer@example.com');
     expect(text).not.toContain('Thank you');
-    expect(listing.headers.get('cache-control')).toBe('no-store');
+    expect(listing.headers.get('cache-control')).toContain('no-store');
   });
 
   it('rejects malformed IDs and forbids resending uncertain outcomes', async () => {
@@ -393,7 +469,182 @@ describe('notification administration authorization and safe responses', () => {
       '/notifications/order/{orderId}',
       '/notifications/failed',
       '/notifications/resend/{id}',
+      '/notifications/order/{orderId}/reconcile',
     ])
       expect(Object.keys(spec.paths)).toContain(path);
   });
+});
+
+describe('Square persisted-evidence notification integration', () => {
+  it('queues but never sends by default, including the manual retry path', async () => {
+    const row = await order();
+    const outcome = await reconcileSquareNotifications(db, {}, row.id);
+    expect(outcome).toMatchObject({
+      verified: true,
+      notifications: [{ status: 'disabled' }],
+    });
+    const queued = await db.select().from(attempts);
+    expect(queued).toHaveLength(1);
+    expect(queued[0].status).toBe('pending');
+    await deliverNotification(
+      db,
+      { ...mail, ORDER_NOTIFICATIONS_ENABLED: 'false' },
+      queued[0].id,
+    );
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    'SHIPPED',
+    'DELIVERED',
+  ])('recovers confirmed Square evidence after lifecycle advances to %s', async slantStatus => {
+    const row = await order();
+    await db
+      .update(schema.ordersTable)
+      .set({ slantStatus, customerEmail: 'mutable@example.com' })
+      .where(eq(schema.ordersTable.id, row.id));
+    await reconcileSquareNotifications(db, mail, row.id);
+    await reconcileSquareNotifications(db, mail, row.id);
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send.mock.calls[0][0]).toMatchObject({ to: 'customer@example.com' });
+  });
+
+  it.each([
+    'payment-event',
+    'fulfillment-event',
+    'payment-identity',
+    'checkout-owner',
+    'snapshot-email',
+    'unpaid',
+  ])('refuses missing/mismatched %s proof', async fault => {
+    const row = await order();
+    if (fault === 'payment-event' || fault === 'fulfillment-event') {
+      await db
+        .delete(schema.orderEventsTable)
+        .where(
+          eq(
+            schema.orderEventsTable.type,
+            fault === 'payment-event'
+              ? 'square_payment_verified'
+              : 'square_fulfillment_processed',
+          ),
+        );
+    } else if (fault === 'payment-identity') {
+      await db
+        .update(schema.ordersTable)
+        .set({ squarePaymentId: 'wrong' })
+        .where(eq(schema.ordersTable.id, row.id));
+    } else if (fault === 'checkout-owner') {
+      await db
+        .update(schema.ordersTable)
+        .set({ userId: null })
+        .where(eq(schema.ordersTable.id, row.id));
+    } else if (fault === 'snapshot-email') {
+      await db
+        .update(schema.ordersTable)
+        .set({
+          customerSnapshot: JSON.stringify({ email: 'attacker@example.com' }),
+        })
+        .where(eq(schema.ordersTable.id, row.id));
+    } else {
+      await db
+        .update(schema.ordersTable)
+        .set({ paymentStatus: 'pending' })
+        .where(eq(schema.ordersTable.id, row.id));
+    }
+    await expect(
+      enqueueOrderNotification(db, row.id, 'confirmed'),
+    ).rejects.toThrow();
+    expect(await db.select().from(attempts)).toHaveLength(0);
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it('alerts paid fulfillment failures once, then recovers the confirmation independently', async () => {
+    const row = await order();
+    await db
+      .update(schema.ordersTable)
+      .set({
+        status: 'paid_fulfillment_failed',
+        fulfillmentState: 'process_unknown',
+      })
+      .where(eq(schema.ordersTable.id, row.id));
+    await reconcileSquareNotifications(db, mail, row.id);
+    await reconcileSquareNotifications(db, mail, row.id);
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send.mock.calls[0][0]).toMatchObject({ to: 'admin@example.com' });
+    await db
+      .update(schema.ordersTable)
+      .set({ status: 'processing', fulfillmentState: 'processed' })
+      .where(eq(schema.ordersTable.id, row.id));
+    await reconcileSquareNotifications(db, mail, row.id);
+    expect(send).toHaveBeenCalledTimes(2);
+    expect(send.mock.calls[1][0]).toMatchObject({ to: 'customer@example.com' });
+  });
+
+  it('admin recovery ignores supplied event/recipient data and requires stored payment authority', async () => {
+    await session('admin');
+    const row = await order();
+    const response = await request(
+      `/notifications/order/${row.id}/reconcile`,
+      'POST',
+      JSON.stringify({
+        email: 'attacker@example.com',
+        event: 'square_fulfillment_processed',
+      }),
+    );
+    expect(response.status).toBe(200);
+    expect(send.mock.calls[0][0]).toMatchObject({ to: 'customer@example.com' });
+    expect(
+      (await request('/notifications/order/99999/reconcile', 'POST')).status,
+    ).toBe(409);
+  });
+
+  it('does not turn historical Slant rows or canceled orders into customer emails', async () => {
+    const row = await order();
+    await db
+      .update(schema.ordersTable)
+      .set({ status: 'canceled', slantStatus: 'CANCELED' })
+      .where(eq(schema.ordersTable.id, row.id));
+    await db.insert(schema.orderEventsTable).values({
+      orderId: row.id,
+      type: 'slant_status_changed',
+      source: 'slant3d',
+      nextStatus: 'SHIPPED',
+    });
+    await reconcileSquareNotifications(db, mail, row.id);
+    await expect(
+      enqueueOrderNotification(db, row.id, 'shipped'),
+    ).rejects.toThrow('notification_lifecycle_unverified');
+    expect(send).not.toHaveBeenCalled();
+  });
+});
+
+it.each([
+  'reconcile',
+  'manual',
+])('suppresses queued confirmation after cancellation via %s without reclaiming ambiguity', async path => {
+  const row = await order();
+  await reconcileSquareNotifications(db, {}, row.id);
+  const [queued] = await db.select().from(attempts);
+  await db
+    .update(schema.ordersTable)
+    .set({ status: 'canceled', slantStatus: 'CANCELED' })
+    .where(eq(schema.ordersTable.id, row.id));
+  if (path === 'reconcile')
+    await reconcileSquareNotifications(db, mail, row.id);
+  else {
+    await session('admin');
+    expect(
+      (await request(`/notifications/resend/${queued.id}`, 'POST')).status,
+    ).toBe(409);
+  }
+  expect(await attempt(queued.id)).toMatchObject({ status: 'skipped' });
+  expect(send).not.toHaveBeenCalled();
+  await db
+    .update(attempts)
+    .set({ status: 'sending' })
+    .where(eq(attempts.id, queued.id));
+  await deliverNotification(db, mail, queued.id);
+  expect(await attempt(queued.id)).toMatchObject({ status: 'sending' });
+  expect(send).not.toHaveBeenCalled();
 });

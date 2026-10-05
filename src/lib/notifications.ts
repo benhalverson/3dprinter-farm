@@ -1,9 +1,11 @@
-import { and, eq, inArray } from 'drizzle-orm';
+import { and, eq, exists, inArray, notExists, or } from 'drizzle-orm';
 import type { DrizzleD1Database } from 'drizzle-orm/d1';
 import { z } from 'zod';
 import type * as schema from '../db/schema';
 import {
   orderNotificationAttemptsTable as attempts,
+  checkoutAttempts,
+  orderEventsTable,
   ordersTable,
 } from '../db/schema';
 import type { Bindings } from '../types';
@@ -12,7 +14,7 @@ type Database = DrizzleD1Database<typeof schema>;
 type Attempt = typeof attempts.$inferSelect;
 export type NotificationEnv = Pick<
   Bindings,
-  'ORDER_EMAIL' | 'ORDER_ADMIN_EMAIL'
+  'ORDER_EMAIL' | 'ORDER_ADMIN_EMAIL' | 'ORDER_NOTIFICATIONS_ENABLED'
 >;
 export type OrderNotificationStatus =
   | 'confirmed'
@@ -74,53 +76,187 @@ async function enqueue(
   return row;
 }
 
+/** Match the actual PR228 durable payment event to the immutable checkout identity. */
+async function verifiedSquareOrder(db: Database, orderId: number) {
+  const order = await db
+    .select()
+    .from(ordersTable)
+    .where(eq(ordersTable.id, orderId))
+    .get();
+  if (
+    !order ||
+    order.source !== 'online' ||
+    order.fulfillmentType !== 'slant' ||
+    order.paymentStatus !== 'paid' ||
+    !order.checkoutAttemptId ||
+    !order.squarePaymentId ||
+    !order.squareOrderId
+  )
+    return null;
+  const checkout = await db
+    .select()
+    .from(checkoutAttempts)
+    .where(eq(checkoutAttempts.id, order.checkoutAttemptId))
+    .get();
+  if (
+    !checkout ||
+    checkout.state !== 'paid' ||
+    checkout.ownerId !== order.userId ||
+    checkout.cartId !== order.cartId ||
+    checkout.squarePaymentId !== order.squarePaymentId ||
+    checkout.squareOrderId !== order.squareOrderId
+  )
+    return null;
+  const event = await db
+    .select()
+    .from(orderEventsTable)
+    .where(
+      and(
+        eq(orderEventsTable.orderId, order.id),
+        eq(orderEventsTable.source, 'square'),
+        eq(orderEventsTable.actor, 'square'),
+        eq(orderEventsTable.type, 'square_payment_verified'),
+        eq(orderEventsTable.dedupeKey, `square-paid:${order.squarePaymentId}`),
+        eq(orderEventsTable.externalEventId, order.squarePaymentId),
+        eq(orderEventsTable.nextStatus, 'paid'),
+      ),
+    )
+    .get();
+  return event ? { order, checkout } : null;
+}
+
 /**
- * Queue only after an authenticated Square fulfillment or Slant lifecycle event.
- * The durable order owns the recipient; callers cannot supply another address.
- * Producers must replay this call after a failed enqueue before acknowledging events.
+ * Recover one confirmation from real Square evidence, including later SHIPPED or
+ * DELIVERED state. The immutable checkout recipient must match its order snapshot.
+ * Slant lifecycle emails remain blocked until authenticated, ordered, atomic
+ * lifecycle evidence is available; old Slant rows are not trusted retroactively.
  */
 export async function enqueueOrderNotification(
   db: Database,
   orderId: number,
   status: OrderNotificationStatus,
 ) {
-  const type =
-    status === 'confirmed' ? 'order_confirmation' : `order_${status}`;
+  if (status !== 'confirmed')
+    throw new Error('notification_lifecycle_unverified');
   const existing = await db
     .select()
     .from(attempts)
-    .where(eq(attempts.deliveryKey, deliveryKey(String(orderId), type, status)))
+    .where(
+      eq(
+        attempts.deliveryKey,
+        deliveryKey(String(orderId), 'order_confirmation', status),
+      ),
+    )
     .get();
   if (existing) return existing;
-  const order = await db
-    .select()
-    .from(ordersTable)
-    .where(eq(ordersTable.id, orderId))
-    .get();
-  if (!order) throw new Error('notification_order_not_found');
-  const recipient = email.safeParse(order.customerEmail);
-  if (!recipient.success) throw new Error('notification_recipient_invalid');
-  const expectedStatus =
-    status === 'confirmed' ? 'PROCESSING' : status.toUpperCase();
-  if (order.slantStatus?.toUpperCase() !== expectedStatus) {
+  const verified = await verifiedSquareOrder(db, orderId);
+  if (!verified) throw new Error('notification_square_unverified');
+  const { order, checkout } = verified;
+  if (
+    order.fulfillmentState !== 'processed' ||
+    order.slantStatus === 'CANCELED' ||
+    order.status === 'canceled'
+  )
     throw new Error('notification_order_status_mismatch');
+  const completed = await db
+    .select()
+    .from(orderEventsTable)
+    .where(
+      and(
+        eq(orderEventsTable.orderId, orderId),
+        eq(orderEventsTable.source, 'square'),
+        eq(orderEventsTable.actor, 'square'),
+        eq(orderEventsTable.type, 'square_fulfillment_processed'),
+        eq(orderEventsTable.dedupeKey, `square-fulfilled:${checkout.id}`),
+        eq(orderEventsTable.externalEventId, checkout.squarePaymentId ?? ''),
+        inArray(orderEventsTable.nextStatus, [
+          'PROCESSING',
+          'SHIPPED',
+          'DELIVERED',
+        ]),
+      ),
+    )
+    .get();
+  if (!completed) throw new Error('notification_fulfillment_unverified');
+  const recipient = email.safeParse(checkout.customerEmail);
+  let snapshotEmail: unknown;
+  try {
+    snapshotEmail = JSON.parse(order.customerSnapshot ?? 'null')?.email;
+  } catch {
+    throw new Error('notification_recipient_invalid');
   }
-  // Numbers are safe in mail headers and do not interpolate provider/customer text.
+  if (!recipient.success || recipient.data !== snapshotEmail)
+    throw new Error('notification_recipient_invalid');
   const reference = `Order #${order.id}`;
   return enqueue(db, {
-    orderId: order.id,
-    reference: String(order.id),
-    notificationType:
-      status === 'confirmed' ? 'order_confirmation' : `order_${status}`,
+    orderId,
+    reference: String(orderId),
+    notificationType: 'order_confirmation',
     recipientEmail: recipient.data,
-    subject: `${reference} ${status}`,
-    textContent:
-      status === 'confirmed'
-        ? `Thank you for your order. ${reference} is confirmed and is being processed.`
-        : `${reference} has been ${status}.`,
-    statusTransition: status,
-    source: status === 'confirmed' ? 'square' : 'slant3d',
+    subject: `${reference} confirmed`,
+    textContent: `Thank you for your order. ${reference} was confirmed for fulfillment.`,
+    statusTransition: 'confirmed',
+    source: 'square',
   });
+}
+
+/**
+ * Replay the actual durable Square evidence after webhook/admin fulfillment work.
+ * This never creates trusted events or calls a payment/manufacturing provider.
+ * It is also the explicit per-order recovery path after a process/DB interruption.
+ */
+export async function reconcileSquareNotifications(
+  db: Database,
+  env: NotificationEnv,
+  orderId: number,
+) {
+  const verified = await verifiedSquareOrder(db, orderId);
+  if (!verified)
+    return {
+      verified: false,
+      notifications: [] as ReturnType<typeof result>[],
+    };
+  const { order } = verified;
+  if (
+    order.fulfillmentState === 'processed' &&
+    order.slantStatus !== 'CANCELED' &&
+    order.status !== 'canceled'
+  ) {
+    await enqueueOrderNotification(db, orderId, 'confirmed');
+  } else if (order.status === 'paid_fulfillment_failed') {
+    await enqueueAdminFailure(
+      db,
+      env,
+      `square-paid:${order.squarePaymentId}`,
+      'fulfillment_failed',
+      orderId,
+    );
+  }
+  const queued = await db
+    .select()
+    .from(attempts)
+    .where(eq(attempts.orderId, orderId))
+    .all();
+  const notifications: ReturnType<typeof result>[] = [];
+  for (const attempt of queued) {
+    if (!attempt.deliveryKey) continue;
+    const outcome = await deliverNotification(db, env, attempt.id);
+    if (outcome) notifications.push(outcome);
+  }
+  return { verified: true, notifications };
+}
+
+/** Keep payment acknowledgements independent of email; durable evidence permits explicit replay. */
+export async function tryReconcileSquareNotifications(
+  db: Database,
+  env: NotificationEnv,
+  orderId: number,
+) {
+  try {
+    await reconcileSquareNotifications(db, env, orderId);
+  } catch {
+    console.error('notification.square_reconciliation_pending');
+  }
 }
 
 /** Queue a redacted alert using server configuration, never a provider error body. */
@@ -166,6 +302,8 @@ export async function deliverNotification(
 ) {
   let row = await db.select().from(attempts).where(eq(attempts.id, id)).get();
   if (!row) return null;
+  if (env.ORDER_NOTIFICATIONS_ENABLED !== 'true')
+    return { id, status: 'disabled', providerMessageId: null };
   // Legacy attempts have no durable envelope/claim key and must never be replayed.
   if (!row.deliveryKey) return result(row);
   if (!['pending', 'failed'].includes(row.status)) {
@@ -179,6 +317,39 @@ export async function deliverNotification(
       await recoverDeliveryAlert(db, env, row);
     }
     return result(row);
+  }
+  const canceled =
+    row.notificationType === 'order_confirmation' && row.orderId !== null
+      ? db
+          .select({ id: ordersTable.id })
+          .from(ordersTable)
+          .where(
+            and(
+              eq(ordersTable.id, row.orderId),
+              or(
+                eq(ordersTable.status, 'canceled'),
+                eq(ordersTable.slantStatus, 'CANCELED'),
+              ),
+            ),
+          )
+      : null;
+  if (canceled) {
+    const [suppressed] = await db
+      .update(attempts)
+      .set({
+        status: 'skipped',
+        errorMessage: 'notification_order_canceled',
+        updatedAt: new Date().toISOString(),
+      })
+      .where(
+        and(
+          eq(attempts.id, id),
+          inArray(attempts.status, ['pending', 'failed']),
+          exists(canceled),
+        ),
+      )
+      .returning();
+    if (suppressed) return result(suppressed);
   }
   // Missing admin configuration must not lose a durable failure alert. Pin the
   // first valid configured address atomically and retain it on every retry.
@@ -238,7 +409,11 @@ export async function deliverNotification(
       updatedAt: new Date().toISOString(),
     })
     .where(
-      and(eq(attempts.id, id), inArray(attempts.status, ['pending', 'failed'])),
+      and(
+        eq(attempts.id, id),
+        inArray(attempts.status, ['pending', 'failed']),
+        canceled ? notExists(canceled) : undefined,
+      ),
     )
     .returning();
   if (!claimed) {

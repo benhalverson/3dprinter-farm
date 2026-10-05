@@ -4,7 +4,10 @@ import { resolver } from 'hono-openapi/zod';
 import { z } from 'zod';
 import { orderNotificationAttemptsTable as attempts } from '../db/schema';
 import factory from '../factory';
-import { deliverNotification } from '../lib/notifications';
+import {
+  deliverNotification,
+  reconcileSquareNotifications,
+} from '../lib/notifications';
 import {
   authMiddleware,
   requireCatalogMutationRole,
@@ -120,6 +123,35 @@ const notifications = factory
         .orderBy(desc(attempts.id))
         .limit(100);
       return c.json({ notifications: rows });
+    },
+  )
+  .post(
+    '/notifications/order/:orderId/reconcile',
+    describeRoute({
+      description:
+        'Recover notifications from persisted verified Square evidence only (admin/owner). Does not call payment or fulfillment providers; sending requires explicit enablement.',
+      tags: ['Notifications'],
+      responses: {
+        200: {
+          description:
+            'Persisted Square evidence reconciled; emails remain disabled unless explicitly enabled',
+        },
+        400: { description: 'Invalid order ID' },
+        401: { description: 'Unauthorized' },
+        403: { description: 'Forbidden' },
+        409: { description: 'No verified Square evidence' },
+        500: { description: 'Reconciliation incomplete; retry the same order' },
+      },
+    }),
+    /** Replay trusted evidence after a missed producer invocation without accepting event/recipient input. */ async c => {
+      const orderId = parseId(c.req.param('orderId'));
+      if (orderId === null) return c.json({ error: 'Invalid order ID' }, 400);
+      const outcome = await reconcileSquareNotifications(
+        c.var.db,
+        c.env,
+        orderId,
+      );
+      return c.json(outcome, outcome.verified ? 200 : 409);
     },
   )
   .post(

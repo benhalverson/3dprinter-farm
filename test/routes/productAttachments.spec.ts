@@ -309,48 +309,62 @@ async function savedPrint(extra: Row = {}) {
   expect(response.status).toBe(200);
   return { providerId, assetId: transfer.attachmentId };
 }
+/** Exercises persisted paid-order fulfillment using the existing isolated attachment transport. */
 function orderRequest(reference: string, secondReference?: string) {
+  const line = {
+    cartItemId: 1,
+    productId: 1,
+    skuNumber: 'SKU',
+    name: 'Part',
+    quantity: 1,
+    color: 'Black',
+    filamentType: 'PLA',
+    filamentId: '22222222-2222-4222-8222-222222222222',
+    publicFileServiceId: 'provider',
+    unitAmountCents: 100,
+    totalAmountCents: 100,
+    image: reference,
+    stl: secondReference,
+  };
+  const order = {
+    id: 42,
+    userId: 'user_123',
+    orderNumber: 'SQ-payment',
+    cartId: 'cart',
+    checkoutAttemptId: 'attempt',
+    squarePaymentId: 'payment',
+    paymentStatus: 'paid',
+    fulfillmentType: 'slant',
+    fulfillmentState: 'ready',
+    status: 'paid',
+    fileURL: 'provider',
+    itemSnapshot: JSON.stringify([line]),
+    customerSnapshot: JSON.stringify({
+      email: 'customer@example.com',
+      shippingAddress: {
+        name: 'A B',
+        line1: '1 Main',
+        line2: '',
+        city: 'City',
+        state: 'CA',
+        zip: '12345',
+        country: 'US',
+      },
+    }),
+  };
+  tables.set(schema.ordersTable, [order]);
   return new Hono()
     .post('/fulfill', async c => {
       try {
+        await createPaidOrderFulfillment({
+          db: db as never,
+          env,
+        }).fulfillPaidOrder(42);
         return c.json(
-          await createPaidOrderFulfillment({
-            db: db as never,
-            env,
-          }).fulfillPaidOrder({
-            fulfillment: {
-              cartId: 'cart',
-              userId: 'user',
-              stripeEventId: 'event',
-              stripeObjectId: 'object',
-              idempotencyKey: 'payment',
-            },
-            profile: {
-              email: 'customer@example.com',
-              firstName: 'A',
-              lastName: 'B',
-              shippingAddress: '1 Main',
-              city: 'City',
-              state: 'CA',
-              zipCode: '12345',
-              phone: '5555555555',
-            },
-            items: [
-              {
-                id: 1,
-                skuNumber: 'SKU',
-                quantity: 1,
-                color: 'black',
-                filamentType: 'PLA',
-                filamentId: 'filament',
-                productName: 'Part',
-                productImage: reference,
-                productPrice: 1,
-                stl: secondReference ?? null,
-                publicFileServiceId: 'provider',
-              },
-            ],
-          }),
+          { orderId: 42 },
+          records(schema.ordersTable)[0].fulfillmentState === 'processed'
+            ? 200
+            : 500,
         );
       } catch {
         return c.json({ error: 'Could not fulfill' }, 500);
@@ -363,6 +377,7 @@ const catalogPayload = {
   name: 'Part',
   description: 'Part description',
   price: 12,
+  inPersonPrice: 7.25,
   filamentType: 'PLA',
   color: 'black',
   image: 'https://public.example/part.png',
@@ -395,7 +410,8 @@ function existingProduct(extra: Row = {}) {
     stl: 'old-stl',
     publicFileServiceId: 'old-print',
     skuNumber: 'KEEP-SKU',
-    stripeProductId: 'keep-product',
+    inPersonPrice: 725,
+    squareRevision: 0,
     stripePriceId: 'keep-price',
     ...extra,
   };
@@ -474,7 +490,7 @@ describe('durable product attachments through Hono', () => {
     const response = await request(`/attachments/${photo.id}/image`);
     expect(response.status).toBe(200);
     expect(response.headers.get('content-type')).toBe(mime);
-    expect(response.headers.get('cache-control')).toBe('no-store');
+    expect(response.headers.get('cache-control')).toBe('private, no-store');
     expect(new Uint8Array(await response.arrayBuffer())).toEqual(data);
     authorize('another-admin');
     expect((await request(`/attachments/${photo.id}/image`)).status).toBe(404);
@@ -2456,47 +2472,7 @@ describe('durable product attachments through Hono', () => {
   });
   it('protects pending order photos through provider awaits and releases reservations only after the snapshot exists', async () => {
     const photo = (await upload()).draft.attachments.photos[0];
-    const orderApp = new Hono().post('/fulfill', async c =>
-      c.json(
-        await createPaidOrderFulfillment({
-          db: db as never,
-          env,
-        }).fulfillPaidOrder({
-          fulfillment: {
-            cartId: 'cart',
-            userId: 'user',
-            stripeEventId: 'event',
-            stripeObjectId: 'object',
-            idempotencyKey: 'payment',
-          },
-          profile: {
-            email: 'customer@example.com',
-            firstName: 'A',
-            lastName: 'B',
-            shippingAddress: '1 Main',
-            city: 'City',
-            state: 'CA',
-            zipCode: '12345',
-            phone: '5555555555',
-          },
-          items: [
-            {
-              id: 1,
-              skuNumber: 'SKU',
-              quantity: 1,
-              color: 'black',
-              filamentType: 'PLA',
-              filamentId: 'filament',
-              productName: 'Part',
-              productImage: photo.imageUrl,
-              productPrice: 1,
-              stl: null,
-              publicFileServiceId: 'provider',
-            },
-          ],
-        }),
-      ),
-    );
+    const orderApp = { request: () => orderRequest(photo.imageUrl) };
     let resolve!: (response: Response) => void;
     vi.mocked(fetch).mockImplementationOnce(
       () =>
@@ -2515,7 +2491,9 @@ describe('durable product attachments through Hono', () => {
     );
     expect((await discarded.json()).cleanup[0].status).toBe('pending');
     expect(remove).not.toHaveBeenCalled();
-    vi.mocked(fetch).mockResolvedValueOnce(new Response('{}'));
+    vi.mocked(fetch).mockResolvedValueOnce(
+      Response.json({ status: 'PROCESSING' }),
+    );
     resolve(new Response(JSON.stringify({ publicOrderId: 'order' })));
     expect((await pending).status).toBe(200);
     expect(records(schema.productAssets)[0].references).toEqual([]);
@@ -2565,7 +2543,7 @@ describe('durable product attachments through Hono', () => {
     );
     vi.mocked(fetch).mockRejectedValueOnce(new Error('Ambiguous submission'));
     expect((await orderRequest(String(asset.id))).status).toBe(500);
-    expect((asset.references as string[]).length).toBe(retained.length + 1);
+    expect((asset.references as string[]).length).toBe(retained.length);
   });
   it('retries a stored photo without rotation and removes saved attachments lacking a retained transfer', async () => {
     const started = await intent();
@@ -2672,11 +2650,9 @@ describe('durable product attachments through Hono', () => {
       'POST',
       '/add-product',
     );
-    // The legacy provider rejects this controlled request, after Stripe creation.
+    // The controlled manufacturing request fails before any catalog publication.
     expect(create.status).toBe(500);
-    expect(stripe.product).toHaveBeenCalledWith(
-      expect.objectContaining({ images: [photo.imageUrl] }),
-    );
+    expect(stripe.product).not.toHaveBeenCalled();
     expect(records(schema.productAssetReferenceAttempts)).toEqual([]);
   });
   it('updates only the original contract fields and keeps pricing, file IDs and omitted categories', async () => {
@@ -2697,6 +2673,8 @@ describe('durable product attachments through Hono', () => {
     expect(records(schema.productsTable)[0]).toEqual({
       ...original,
       ...catalogPayload,
+      inPersonPrice: 725,
+      squareRevision: 1,
       imageGallery: '[]',
     });
     expect(records(schema.productsToCategories)).toEqual([
@@ -2743,9 +2721,13 @@ describe('durable product attachments through Hono', () => {
     beforeUpdate = table => {
       if (table === schema.productsTable) rejectUpdate = true;
     };
-    expect(await (await catalogRequest()).json()).toEqual({
-      error: 'Product update failed',
-    });
+    const linksBeforeConflict = structuredClone(
+      records(schema.productsToCategories),
+    );
+    const rejected = await catalogRequest({ categoryIds: [1] });
+    expect(rejected.status).toBe(409);
+    expect(await rejected.json()).toEqual({ error: 'catalog_changed_retry' });
+    expect(records(schema.productsToCategories)).toEqual(linksBeforeConflict);
     beforeUpdate = table => {
       if (table === schema.productsTable)
         throw new Error('Database unavailable');
@@ -3062,7 +3044,7 @@ describe('durable product attachments through Hono', () => {
     };
     vi.mocked(fetch)
       .mockResolvedValueOnce(Response.json({ publicOrderId: 'accepted-order' }))
-      .mockResolvedValueOnce(Response.json({}));
+      .mockResolvedValueOnce(Response.json({ status: 'PROCESSING' }));
     expect((await orderRequest(photo.id)).status).toBe(200);
     expect(records(schema.ordersTable)).toHaveLength(1);
     expect(records(schema.orderEventsTable)).toHaveLength(1);
