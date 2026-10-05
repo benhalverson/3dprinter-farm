@@ -69,6 +69,20 @@ The API now uses Better Auth for session-based authentication.
 - Compatibility routes remain available at `/auth/signup`, `/auth/signin`, and `/auth/signout`.
 - Native Better Auth routes are mounted under `/api/auth/*`.
 
+### Storefront origin and session contract
+
+`src/config/browserOrigins.ts` is the exact allowlist shared by CORS and Better Auth. It includes `https://luluspeedworks.com`, the existing RC storefront/admin, API and Race Forge origins, and local development ports 3000, 4200, 5173 and 8787. Unrelated origins (including `null`, lookalike suffixes, and unlisted subdomains) receive 403 before route execution. Credentialed preflights permit `Content-Type`, `Authorization` and `X-Cart-Token`. Originless non-browser clients still require each route's authentication/capability checks.
+
+Use `credentials: 'include'` for signup, signin, profile and **POST** signout. GET signout is not supported because link navigation must not revoke a session. A rejected signout remains an error; clients must not claim that the server session was cleared. Auth, profile, cart and other private responses, including errors and credentialed responses, carry `Cache-Control: private, no-store` and vary by Origin, Cookie, Authorization and X-Cart-Token.
+
+`AUTH_BASE_URL` identifies the API origin (local default `http://localhost:8787`), independently of the storefront `DOMAIN`. The production configuration uses `https://api.luluspeedworks.com`, which is same-site with `https://luluspeedworks.com` over HTTPS. Frontend requests remain cross-origin and must include credentials. HTTPS sessions use host-only HttpOnly cookies with Secure and SameSite=None; local HTTP uses SameSite=Lax without Secure. No shared cookie domain is configured. API cookies are not readable by storefront JavaScript or shared between API hostnames; customers must sign in again when moving from the old API hostname.
+
+Before serving Lulu traffic, provision routing, DNS and TLS for `api.luluspeedworks.com`, deploy the API configuration, and configure the frontend API origin. Preserve the `api.benhalverson.dev` route for RC-store clients when configuring Worker routes. Both API origins and the RC storefront are in the exact allowlist. The old API hostname is cross-site from Lulu: third-party-cookie restrictions in Chromium or WebKit can prevent sessions there despite correct CORS. Do not use the old hostname as a silent fallback for Lulu authentication.
+
+Keep `DOMAIN=https://rc-store.benhalverson.dev`, `RP_ID=rc-store.benhalverson.dev`, and `PASSKEY_ORIGIN=https://rc-store.benhalverson.dev` configured for RC-store behavior and its existing passkey credentials. Lulu's supported account flow uses passwords; changing AUTH_BASE_URL does not make RC-bound passkeys usable from Lulu. Lulu passkeys require a separate relying-party/credential design; do not overwrite the RC configuration to enable them. RC clients use `api.benhalverson.dev` and its host-only cookie. Generated auth links use `AUTH_BASE_URL`.
+
+On a 401 profile/cart response, clients must recover through signin and retain only the local cart/return intent, without serving another account's cached private data. Mocked route tests or local HTTP checks alone do not establish browser acceptance of the HTTPS origin/session topology.
+
 ### Route auth policy
 
 The API uses the following route protection rules:
@@ -257,5 +271,23 @@ Notes:
 - `PUT /update-product` - Update product (authenticated)
 - `POST /auth/signup` - Create a user and issue a session cookie
 - `POST /auth/signin` - Sign in and issue a session cookie
-- `GET|POST /auth/signout` - Clear the current session cookie
+- `POST /auth/signout` - Clear the current session cookie
 - `GET /api/auth/get-session` - Return the active Better Auth session
+
+## Cart ownership contract
+
+Cart ownership is persisted in `shopping_carts` independently of cart lines. It uses the existing Better Auth session, with no separate identity store. All cart responses are private and non-cacheable; requests must include credentials for account-owned carts.
+
+- `POST /cart/create` persists an empty cart and returns `{ cartId, ownerId, message }` for a verified account, or `{ cartId, guestToken, ownerId: null, message }` for a guest. Store the guest capability locally with its cart ID; it is returned only at creation and only its SHA-256 hash is persisted. Body fields such as `userId` and `ownerId` do not assign ownership. An optional `{ expectedUserId: string | null }` body asserts the account the UI observed (null for a guest); a changed session returns 409 before creating a cart. The response `ownerId` always reflects the verified session.
+- `GET /cart/:cartId`, `POST /cart/add`, `PUT /cart/update`, and `DELETE /cart/remove` require either the owning account's session cookie or `X-Cart-Token: <guestToken>` for an unclaimed cart. A cart ID alone grants no access. An account may access an unclaimed guest cart only with that capability.
+- `POST /cart/:cartId/claim` requires both a verified account session and the unclaimed guest capability. It binds the entire cart, including an empty cart, to that account, clears the capability hash, and rotates the authorization version atomically. Existing lines follow the rotated version through the database foreign key. Subsequent claims by the same owner succeed idempotently; other accounts and the old token cannot access the claimed cart. The required JSON body is `{ expectedUserId: string }`: this is a stale-session guard checked against the verified account, never an ownership credential. A shared-cookie account switch returns 409 before transfer. Success is `{ message: "Cart claimed", ownerId: string }`, reporting the verified account that owns the cart.
+- Shipping and the existing payment preparation routes additionally require the owning account session; sign in and claim first.
+- Reads return `{ items, total }`; an authorized empty cart returns an empty `items` array and zero total. Item `name` and `price` may be null when their catalog product is absent. These browsing values are not an authoritative quote or payment contract.
+- Addition validates the stored product SKU and fixed material against an available provider filament UUID. Add quantities are integers from 1 through 69; update quantities are integers from 0 through 69, where zero removes the line. Concurrent additions use a conditional quantity update or a unique configuration insertion; a losing request returns 409 instead of dropping an addition or exceeding the limit.
+- Ownership denial returns 404 without disclosing whether the cart exists. Missing required account authentication returns 401; invalid input returns 400; unavailable filament verification returns 503. A lost claim/addition race returns 409 and requires reloading before retrying. Updates/removals return 404 when no line remains in the authorized version, including requests invalidated by a claim. Do not blindly retry additions because a transport failure may conceal a completed mutation.
+
+Legacy lines without an authorization version are inaccessible through this contract; the API never trusts or infers ownership from a line or a client assertion. Generated migrations `0012` and `0013` are prerequisites for durable carts and the cascading authorization-version constraint.
+
+Run `pnpm run test:database` to test ownership, isolation, foreign-key cascades and concurrent mutations against disposable SQLite/libsql databases. The harness uses `drizzle-kit generate` and `drizzle-kit migrate` to create a current-schema database, and separately checks committed-history replay in another disposable database. This Node suite runs as part of `test:ci`, separately from the mocked Hono/Workers suites.
+
+Check migration-replay diagnostics separately from current-schema test results. Before provisioning or migrating a deployment, verify the target database's applied history and required constraints. If replay fails, reconcile the history/bootstrap discrepancy without rewriting applied history; a passing current-schema suite does not establish upgrade compatibility. Remote migration and deployment require separate authorization.

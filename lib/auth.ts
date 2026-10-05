@@ -5,6 +5,7 @@ import { createAuthMiddleware } from 'better-auth/api';
 import { openAPI, organization } from 'better-auth/plugins';
 import { drizzle } from 'drizzle-orm/d1';
 import * as schema from '../src/db/schema';
+import { BROWSER_ORIGINS } from '../src/config/browserOrigins';
 import type { Bindings } from '../src/types';
 import {
   hashPassword as hashLegacyPassword,
@@ -103,6 +104,7 @@ async function verifyWorkerPassword({
   return verifyLegacyPassword(password, salt, derivedHash);
 }
 
+/** Creates the API-owned Better Auth instance with the shared browser origin policy. */
 export function createAuth(
   database: Bindings['DB'],
   env?: AuthBindings,
@@ -217,17 +219,7 @@ export function createAuth(
         },
       },
     },
-    trustedOrigins: [
-      'http://localhost:3000',
-      'http://localhost:4200',
-      'http://localhost:5173',
-      'http://localhost:8787',
-      'https://rc-store.benhalverson.dev',
-      'https://rc-admin.pages.dev',
-      'https://api.benhalverson.dev',
-      'https://race-forge.com',
-      'https://luluspeedworks.com',
-    ],
+    trustedOrigins: [...BROWSER_ORIGINS],
     advanced: {
       // Keep redirect validation enabled in integration tests as well as production.
       disableOriginCheck: false,

@@ -175,9 +175,9 @@ describe('Auth Routes', () => {
     expect(json.error).toBe('Too many requests');
   });
 
-  test('GET /auth/signout clears the session cookie', async () => {
+  test('POST /auth/signout clears the session cookie', async () => {
     const request = new Request('http://localhost/auth/signout', {
-      method: 'GET',
+      method: 'POST',
       headers: { Cookie: 'better-auth.session_token=mock-session-token' },
     });
 
@@ -185,4 +185,18 @@ describe('Auth Routes', () => {
     expect(res.status).toBe(200);
     expect(res.headers.get('set-cookie')).toContain('Max-Age=0');
   });
+  test('GET /auth/signout cannot mutate a session', async () => {
+    const res = await app.fetch(new Request('http://localhost/auth/signout'), mockEnv());
+    expect(res.status).toBe(404);
+    expect(mockBetterAuth.handler).not.toHaveBeenCalled();
+  });
+
+  test('POST /auth/signout preserves provider rejection', async () => {
+    mockBetterAuth.handler.mockResolvedValueOnce(new Response(JSON.stringify({ error: 'Rejected' }), { status: 403 }));
+    const res = await app.fetch(new Request('http://localhost/auth/signout', { method: 'POST' }), mockEnv());
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({ error: 'Rejected' });
+    expect(res.headers.get('set-cookie')).toBeNull();
+  });
+
 });

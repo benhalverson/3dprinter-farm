@@ -1,7 +1,7 @@
 import { Scalar } from '@scalar/hono-api-reference';
-import { cors } from 'hono/cors';
 import { openAPISpecs } from 'hono-openapi';
 import factory from './factory';
+import { browserCors, browserOriginGuard, privateResponseCache } from './utils/browserSecurity';
 import adminOrders from './routes/adminOrders';
 import auth from './routes/auth';
 import authApi from './routes/authApi';
@@ -38,21 +38,9 @@ const app = factory
     return c.text('Internal Server Error', 500);
   })
   .use(requestLogger)
-  .use(
-    cors({
-      origin: [
-        'http://localhost:3000',
-        'http://localhost:4200',
-        'http://localhost:8787',
-        'https://rc-store.benhalverson.dev',
-        'https://rc-admin.pages.dev',
-        'https://api.benhalverson.dev',
-        'https://luluspeedworks.com',
-      ],
-      credentials: true,
-      allowMethods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    }),
-  )
+  .use(privateResponseCache)
+  .use(browserOriginGuard)
+  .use(browserCors)
   .get('/health', c => {
     try {
       validateBindings(c.env as Record<string, unknown>);

@@ -157,7 +157,7 @@ describe('private admin product draft endpoints', () => {
     ]);
     const result = await request('', 'POST', { target: { kind: 'new' } });
     expect(result.status).toBe(201);
-    expect(result.headers.get('cache-control')).toBe('no-store');
+    expect(result.headers.get('cache-control')).toBe('private, no-store');
     const body = await result.json();
     expect(body).toEqual({
       id: expect.any(String),
@@ -469,7 +469,7 @@ describe('private admin product draft endpoints', () => {
       status: 'discarded',
       cleanup: [],
     });
-    expect(result.headers.get('cache-control')).toBe('no-store');
+    expect(result.headers.get('cache-control')).toBe('private, no-store');
     expect(mockDelete).not.toHaveBeenCalled();
     expect(stored).toMatchObject({
       ownerId: 'user_123',
@@ -536,7 +536,7 @@ describe('private admin product draft endpoints', () => {
     mockBetterAuth.getSession.mockResolvedValueOnce(null);
     const result = await request(path, method, body);
     await expectError(result, 401, 'Unauthorized');
-    expect(result.headers.get('cache-control')).toBe('no-store');
+    expect(result.headers.get('cache-control')).toBe('private, no-store');
     expect(mockWhere).not.toHaveBeenCalled();
   });
   it.each(
@@ -545,7 +545,7 @@ describe('private admin product draft endpoints', () => {
     authorize('member'); // Session claims admin; stored membership wins.
     const result = await request(path, method, body);
     await expectError(result, 403, 'Forbidden');
-    expect(result.headers.get('cache-control')).toBe('no-store');
+    expect(result.headers.get('cache-control')).toBe('private, no-store');
     expect(mockInsert).not.toHaveBeenCalled();
     expect(mockUpdate).not.toHaveBeenCalled();
     expect(mockDelete).not.toHaveBeenCalled();
@@ -618,7 +618,7 @@ describe('private admin product draft endpoints', () => {
       mockEnv(),
     );
     await expectError(malformed, 400, 'Invalid input');
-    expect(malformed.headers.get('cache-control')).toBe('no-store');
+    expect(malformed.headers.get('cache-control')).toBe('private, no-store');
   });
 
   it('returns the documented JSON error when authorization storage fails', async () => {
@@ -629,7 +629,7 @@ describe('private admin product draft endpoints', () => {
     });
     const result = await request();
     await expectError(result, 500, 'Product draft request failed');
-    expect(result.headers.get('cache-control')).toBe('no-store');
+    expect(result.headers.get('cache-control')).toBe('private, no-store');
     expect(capturedInserts).toEqual([]);
     expect(updateSet).not.toHaveBeenCalled();
   });
@@ -697,7 +697,7 @@ describe('private admin product draft endpoints', () => {
     rejectWrite(new Error('Persistence failed'));
     const result = await response;
     await expectError(result, 500, 'Product draft request failed');
-    expect(result.headers.get('cache-control')).toBe('no-store');
+    expect(result.headers.get('cache-control')).toBe('private, no-store');
     expect(globalThis.fetch).not.toHaveBeenCalled();
   });
 

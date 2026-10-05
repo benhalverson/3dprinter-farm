@@ -1,9 +1,5 @@
 import { vi } from 'vitest';
-import type {
-  BetterAuthMocks,
-  DrizzleMocks,
-  TestMocks,
-} from './mocks/types';
+import type { BetterAuthMocks, DrizzleMocks, TestMocks } from './mocks/types';
 
 const testGlobals = globalThis as typeof globalThis & {
   __testMocks?: TestMocks;
@@ -224,7 +220,11 @@ vi.mock('drizzle-orm/d1', () => {
         }),
       }),
       delete: () => ({
-        where: () => mocks.drizzle.mockDelete(),
+        /** Supports awaited deletions and explicit returned-row assertions. */
+        where: () => {
+          const result = mocks.drizzle.mockDelete();
+          return Object.assign(result, { returning: () => result });
+        },
       }),
       query: mocks.drizzle.mockQuery,
     })),

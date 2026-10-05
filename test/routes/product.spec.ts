@@ -707,9 +707,7 @@ describe('Product Routes', () => {
 
   test('DELETE /delete-product/:id deletes a product', async () => {
     mockSessionRole('admin');
-    mockDelete.mockReturnValueOnce({
-      returning: vi.fn().mockResolvedValueOnce([{ id: 1 }]),
-    });
+    mockDelete.mockResolvedValueOnce([{ id: 1 }]);
 
     const request = new Request('http://localhost/delete-product/1', {
       method: 'DELETE',
