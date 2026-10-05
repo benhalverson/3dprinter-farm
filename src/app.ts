@@ -1,8 +1,12 @@
 import { Scalar } from '@scalar/hono-api-reference';
 import { openAPISpecs } from 'hono-openapi';
 import factory from './factory';
+import {
+  browserCors,
+  browserOriginGuard,
+  privateResponseCache,
+} from './utils/browserSecurity';
 import checkoutQuotes from './routes/checkoutQuotes';
-import { browserCors, browserOriginGuard, privateResponseCache } from './utils/browserSecurity';
 import adminOrders from './routes/adminOrders';
 import auth from './routes/auth';
 import authApi from './routes/authApi';

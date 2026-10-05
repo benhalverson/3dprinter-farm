@@ -112,12 +112,24 @@ const protectedRoutes = [
   { path: '/cart/update', method: 'PUT' },
   { path: '/cart/remove', method: 'DELETE' },
   { path: `/cart/shipping?cartId=${cartId}`, method: 'GET' },
-  { path: `/cart/${cartId}/stripe-items`, method: 'GET' },
-  { path: `/cart/${cartId}/payment-intent`, method: 'POST' },
   { path: `/cart/${cartId}/checkout`, method: 'POST' },
 ];
 
 describe('actual cart route authorization with mocked identity and D1 transport', () => {
+  test.each([
+    { path: `/cart/${cartId}/stripe-items`, method: 'GET' },
+    { path: `/cart/${cartId}/payment-intent`, method: 'POST' },
+  ])('retired Stripe route performs no queries or provider operations: $path', async ({
+    path,
+    method,
+  }) => {
+    const response = await request(path, method, 'bob');
+    expect(response.status).toBe(404);
+    expect(statements).toHaveLength(0);
+    expect(run).not.toHaveBeenCalled();
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
   test.each(
     protectedRoutes,
   )('rejects another account before reading lines or mutating: $path', async ({

@@ -25,7 +25,7 @@ export const cartAccessMiddleware = factory.createMiddleware(
       });
       if (
         (c.req.path === '/cart/shipping' ||
-          /\/(checkout|payment-intent|stripe-items)$/.test(c.req.path)) &&
+          /\/(checkout)$/.test(c.req.path)) &&
         (!c.var.userId || access.userId !== c.var.userId)
       ) {
         return c.json(

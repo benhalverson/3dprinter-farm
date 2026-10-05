@@ -21,6 +21,12 @@ vi.mock('../../src/utils/profileCrypto', async importOriginal => ({
   decryptStoredShippingProfile: async (profile: unknown) => profile,
 }));
 import route from '../../src/routes/checkoutQuotes';
+import { quoteSnapshotSchema } from '../../src/modules/checkoutQuotes';
+import {
+  decryptStoredProfileValue,
+  getCipherKitSecretKey,
+  isCipherKitEncryptedValue,
+} from '../../src/utils/profileCrypto';
 const cartId = '11111111-1111-4111-8111-111111111111';
 const filamentId = '22222222-2222-4222-8222-222222222222';
 let client: ReturnType<typeof createClient>;
@@ -221,8 +227,14 @@ test.each([
   });
   const [stored] = await db.select().from(schema.checkoutQuotes);
   expect(stored.invalidated).toBe(true);
-  expect(stored.encryptedSnapshot).not.toContain('10 Main Street');
-  expect(stored.encryptedSnapshot).not.toContain('Ada');
+  expect(isCipherKitEncryptedValue(stored.encryptedSnapshot)).toBe(true);
+  const decrypted = await decryptStoredProfileValue(
+    stored.encryptedSnapshot,
+    await getCipherKitSecretKey(env.ENCRYPTION_PASSPHRASE),
+  );
+  expect(JSON.parse(decrypted ?? '')).toEqual(
+    quoteSnapshotSchema.parse(created),
+  );
 });
 test('expires at the documented boundary without estimating again', async () => {
   const created = await quote();

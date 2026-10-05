@@ -89,9 +89,6 @@ importers:
       openai:
         specifier: ^4.57.0
         version: 4.104.0(ws@8.20.1)(zod@3.25.76)
-      stripe:
-        specifier: ^16.6.0
-        version: 16.12.0
       zod:
         specifier: ^3.23.8
         version: 3.25.76
@@ -132,6 +129,9 @@ importers:
       drizzle-kit:
         specifier: ^0.31.0
         version: 0.31.10
+      miniflare:
+        specifier: 4.20260609.0
+        version: 4.20260609.0
       typescript:
         specifier: ^5.5.2
         version: 5.9.3
@@ -3244,10 +3244,6 @@ packages:
   std-env@4.3.0:
     resolution: {integrity: sha512-OtU/EgQ1kIm5KwqQpBC6ZEMXrZRui11w8zgfTWp8cdO9B8OaPsbA8bTHO2P+HNo1VlUTGMVBwPhydu6poeXiag==}
 
-  stripe@16.12.0:
-    resolution: {integrity: sha512-H7eFVLDxeTNNSn4JTRfL2//LzCbDrMSZ+2q1c7CanVWgK2qIW5TwS+0V7N9KcKZZNpYh/uCqK0PyZh/2UsaAtQ==}
-    engines: {node: '>=12.*'}
-
   supports-color@10.2.2:
     resolution: {integrity: sha512-SS+jx45GF1QjgEXQx4NJZV9ImqmO2NPz5FNsIHrsDjh2YsHnawpan7SNQ1o8NuhrbHZy9AZhIoCUiCeaW/C80g==}
     engines: {node: '>=18'}
@@ -6129,11 +6125,6 @@ snapshots:
   statuses@2.0.2: {}
 
   std-env@4.3.0: {}
-
-  stripe@16.12.0:
-    dependencies:
-      '@types/node': 22.19.21
-      qs: 6.15.2
 
   supports-color@10.2.2: {}
 

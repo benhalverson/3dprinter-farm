@@ -1,6 +1,7 @@
 import { eq, relations } from 'drizzle-orm';
 import {
   index,
+  foreignKey,
   integer,
   primaryKey,
   real,
@@ -158,7 +159,6 @@ export const productsTable = sqliteTable('products', {
   color: text('color').default('#000000'),
   inPersonPrice: integer('in_person_price_cents'),
   squareRevision: integer('square_revision').notNull().default(0),
-  stripePriceId: text('stripe_price_id'),
   publicFileServiceId: text('public_file_service_id'), // Slant3D file UUID for orders
   // Make optional to allow products without categories during transition
   categoryId: integer().references(() => categoryTable.categoryId),
@@ -469,8 +469,8 @@ export type ProfileData = z.infer<typeof ProfileDataSchema>;
 export const ordersTable = sqliteTable('ordersTable', {
   id: integer('id').primaryKey(),
   userId: text('user_id')
-    .references(() => users.id, { onDelete: 'cascade' }) // Establish relationship with users table
-    .notNull(),
+    .references(() => users.id, { onDelete: 'cascade' })
+    .notNull(), // Preserve existing online ownership; future in-person intake requires its own safe storage migration
   orderNumber: text('order_number').notNull().unique(),
   cartId: text('cart_id'),
   filename: text('filename'),
@@ -497,9 +497,14 @@ export const ordersTable = sqliteTable('ordersTable', {
   status: text('status').default('pending'),
   slantStatus: text('slant_status'),
   slantPublicOrderId: text('slant_public_order_id'),
-  stripeCheckoutSessionId: text('stripe_checkout_session_id'),
-  stripePaymentIntentId: text('stripe_payment_intent_id'),
-  stripeEventId: text('stripe_event_id'),
+  source: text('source').notNull().default('online'),
+  fulfillmentType: text('fulfillment_type').notNull().default('slant'),
+  paymentStatus: text('payment_status'),
+  squareOrderId: text('square_order_id').unique(),
+  squarePaymentId: text('square_payment_id').unique(),
+  checkoutAttemptId: text('checkout_attempt_id').unique(),
+  shippingAmountCents: integer('shipping_amount_cents'),
+  fulfillmentState: text('fulfillment_state'),
   customerEmail: text('customer_email'),
   totalAmountCents: integer('total_amount_cents'),
   currency: text('currency').default('usd'),
@@ -523,6 +528,7 @@ export const orderEventsTable = sqliteTable('order_events', {
     .notNull()
     .references(() => ordersTable.id, { onDelete: 'cascade' }),
   type: text('type').notNull(),
+  dedupeKey: text('dedupe_key').unique(),
   detail: text('detail'),
   actor: text('actor'),
   externalEventId: text('external_event_id'),
@@ -548,9 +554,6 @@ export const orderCancellationAttemptsTable = sqliteTable(
     override: integer('override', { mode: 'boolean' }).default(false).notNull(),
     slantStatus: text('slant_status'),
     slantResult: text('slant_result'),
-    stripeRefundId: text('stripe_refund_id'),
-    stripeRefundStatus: text('stripe_refund_status'),
-    stripeResult: text('stripe_result'),
     finalStatus: text('final_status').notNull(),
     errorMessage: text('error_message'),
     createdAt: text('created_at')
@@ -791,21 +794,6 @@ export const addCartItemSchema = z.object({
   filamentId: z.string().uuid(),
 });
 
-export const stripeFulfillmentTable = sqliteTable('stripe_fulfillment', {
-  idempotencyKey: text('idempotency_key').primaryKey(),
-  stripeEventId: text('stripe_event_id').notNull(),
-  stripeObjectId: text('stripe_object_id').notNull(),
-  cartId: text('cart_id').notNull(),
-  status: text('status').notNull().default('processed'),
-  slantOrderId: text('slant_order_id'),
-  createdAt: integer('created_at', { mode: 'timestamp' })
-    .notNull()
-    .$defaultFn(() => new Date()),
-  updatedAt: integer('updated_at', { mode: 'timestamp' })
-    .notNull()
-    .$defaultFn(() => new Date()),
-});
-
 // Table for storing uploaded STL files with estimates from Slant3D
 export const uploadedFilesTable = sqliteTable('uploaded_files', {
   id: integer('id').primaryKey({ autoIncrement: true }),
@@ -855,11 +843,49 @@ export const checkoutQuotes = sqliteTable(
     encryptedSnapshot: text('encrypted_snapshot').notNull(),
     createdAt: integer('created_at').notNull(),
     expiresAt: integer('expires_at').notNull(),
+    consumedAttemptId: text('consumed_attempt_id'),
     invalidated: integer('invalidated', { mode: 'boolean' })
       .notNull()
       .default(false),
   },
   table => [
     index('checkout_quotes_owner_cart').on(table.ownerId, table.cartId),
+    uniqueIndex('checkout_quote_consumption').on(
+      table.id,
+      table.consumedAttemptId,
+    ),
+  ],
+);
+
+/** One immutable quote authorizes one logical checkout; keys and provider identities survive retries. */
+export const checkoutAttempts = sqliteTable(
+  'checkout_attempts',
+  {
+    id: text('id').primaryKey(),
+    ownerId: text('owner_id')
+      .notNull()
+      .references(() => users.id),
+    cartId: text('cart_id').notNull(),
+    quoteId: text('quote_id')
+      .notNull()
+      .unique()
+      .references(() => checkoutQuotes.id),
+    requestKey: text('request_key').notNull().unique(),
+    snapshot: text('snapshot').notNull(),
+    customerEmail: text('customer_email').notNull(),
+    merchantId: text('merchant_id').notNull(),
+    locationId: text('location_id').notNull(),
+    state: text('state').notNull().default('initiating'),
+    squareOrderId: text('square_order_id').unique(),
+    paymentLinkId: text('payment_link_id').unique(),
+    paymentUrl: text('payment_url'),
+    squarePaymentId: text('square_payment_id').unique(),
+    createdAt: integer('created_at').notNull(),
+  },
+  table => [
+    foreignKey({
+      columns: [table.quoteId, table.id],
+      foreignColumns: [checkoutQuotes.id, checkoutQuotes.consumedAttemptId],
+    }),
   ],
 );

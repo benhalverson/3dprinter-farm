@@ -12,8 +12,8 @@ export type AdminOrderListFilters = Partial<{
   email: string;
   orderNumber: string;
   slantPublicOrderId: string;
-  stripeCheckoutSessionId: string;
-  stripePaymentIntentId: string;
+  squareOrderId: string;
+  squarePaymentId: string;
   createdAfter: string;
   createdBefore: string;
   q: string;
@@ -35,6 +35,12 @@ export type AdminOrderListItem = Pick<
   | 'slantPublicOrderId'
   | 'customerEmail'
   | 'createdAt'
+  | 'source'
+  | 'fulfillmentType'
+  | 'paymentStatus'
+  | 'squareOrderId'
+  | 'squarePaymentId'
+  | 'fulfillmentState'
 >;
 
 export type AdminOrderDetail = typeof ordersTable.$inferSelect & {
@@ -178,6 +184,12 @@ function createDrizzleAdminOrderReadAdapter(
           id: ordersTable.id,
           orderNumber: ordersTable.orderNumber,
           userId: ordersTable.userId,
+          source: ordersTable.source,
+          fulfillmentType: ordersTable.fulfillmentType,
+          paymentStatus: ordersTable.paymentStatus,
+          squareOrderId: ordersTable.squareOrderId,
+          squarePaymentId: ordersTable.squarePaymentId,
+          fulfillmentState: ordersTable.fulfillmentState,
           status: ordersTable.status,
           slantStatus: ordersTable.slantStatus,
           slantPublicOrderId: ordersTable.slantPublicOrderId,
@@ -271,15 +283,11 @@ function buildListConditions(filters: AdminOrderListFilters) {
       eq(ordersTable.slantPublicOrderId, filters.slantPublicOrderId),
     );
   }
-  if (filters.stripeCheckoutSessionId) {
-    conditions.push(
-      eq(ordersTable.stripeCheckoutSessionId, filters.stripeCheckoutSessionId),
-    );
+  if (filters.squareOrderId) {
+    conditions.push(eq(ordersTable.squareOrderId, filters.squareOrderId));
   }
-  if (filters.stripePaymentIntentId) {
-    conditions.push(
-      eq(ordersTable.stripePaymentIntentId, filters.stripePaymentIntentId),
-    );
+  if (filters.squarePaymentId) {
+    conditions.push(eq(ordersTable.squarePaymentId, filters.squarePaymentId));
   }
   if (filters.createdAfter) {
     conditions.push(gte(ordersTable.createdAt, filters.createdAfter));

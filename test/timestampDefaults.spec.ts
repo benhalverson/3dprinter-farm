@@ -66,10 +66,7 @@ describe('application timestamp defaults', () => {
   });
 
   it('retains seconds precision for timestamp mode', () => {
-    for (const table of [
-      schema.stripeFulfillmentTable,
-      schema.uploadedFilesTable,
-    ]) {
+    for (const table of [schema.uploadedFilesTable]) {
       for (const column of [table.createdAt, table.updatedAt]) {
         expect(column.defaultFn?.()).toEqual(now);
         expect(column.mapToDriverValue(now)).toBe(
@@ -83,12 +80,11 @@ describe('application timestamp defaults', () => {
     }
     expect(
       db
-        .insert(schema.stripeFulfillmentTable)
+        .insert(schema.uploadedFilesTable)
         .values({
-          idempotencyKey: 'id',
-          stripeEventId: 'event',
-          stripeObjectId: 'object',
-          cartId: 'cart',
+          publicFileServiceId: 'file',
+          fileName: 'print.stl',
+          fileURL: 'https://files.example/print.stl',
         })
         .toSQL()
         .params.slice(-2),

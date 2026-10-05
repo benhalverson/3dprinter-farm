@@ -156,6 +156,65 @@ test('specific approval rejects changed contents and unrelated migrations', () =
   assert.equal(calls.length, 1);
 });
 
+test('only the exact reviewed Square Stripe-removal migration receives destructive approval', () => {
+  const name = '0022_square_order_storage.sql';
+  const contents = readFileSync(`drizzle/migrations/${name}`, 'utf8');
+  assert.equal(requiresMigrationApproval(contents), true);
+  assert.equal(hasSpecificMigrationApproval(name, contents), true);
+  assert.equal(
+    hasSpecificMigrationApproval(name, contents.replace(/\r?\n/g, '\r\n')),
+    true,
+  );
+  assert.equal(hasSpecificMigrationApproval('0023_other.sql', contents), false);
+  assert.equal(hasSpecificMigrationApproval(name, `${contents}\n`), false);
+  assert.equal(
+    hasSpecificMigrationApproval(
+      name,
+      contents.replace('stripe_fulfillment', 'order_events'),
+    ),
+    false,
+  );
+  const additions = readFileSync(
+    'drizzle/migrations/0021_square_online_checkout.sql',
+    'utf8',
+  );
+  assert.equal(requiresMigrationApproval(additions), false);
+  assert.equal(
+    hasSpecificMigrationApproval('0021_square_online_checkout.sql', additions),
+    false,
+  );
+});
+
+test('reviewed Square removals apply before release but altered removals block all effects', () => {
+  const name = '0022_square_order_storage.sql';
+  const listing = `Migrations to be applied:\n${name}`;
+  const calls = [];
+  productionDeploy({
+    run: args => {
+      calls.push(args);
+      return calls.length === 1 ? listing : none;
+    },
+  });
+  assert.deepEqual(
+    calls.map(args => (args[0] === 'deploy' ? 'deploy' : args[2])),
+    ['list', 'apply', 'list', 'deploy'],
+  );
+  const rejected = [];
+  assert.throws(
+    () =>
+      productionDeploy({
+        readMigration: () =>
+          `${readFileSync(`drizzle/migrations/${name}`, 'utf8')}\n`,
+        run: args => {
+          rejected.push(args);
+          return listing;
+        },
+      }),
+    /Destructive migration 0022_square_order_storage.sql requires specific approval/,
+  );
+  assert.equal(rejected.length, 1);
+});
+
 test('target overrides and concurrent deployment are rejected', () => {
   assert.throws(() => deploy({ args: ['--env', 'preview'] }), /overrides/);
   mkdirSync('.deploy-lock');

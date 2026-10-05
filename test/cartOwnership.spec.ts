@@ -170,7 +170,7 @@ describe('cart access middleware', () => {
     .get('/cart/:cartId', cartAccessMiddleware, c =>
       c.json({ id: c.var.cartAccess.id }),
     )
-    .post('/cart/:cartId/payment-intent', cartAccessMiddleware, c =>
+    .post('/cart/:cartId/checkout', cartAccessMiddleware, c =>
       c.json({ prepared: true }),
     )
     .put('/cart/update', cartAccessMiddleware, c => c.json({ updated: true }));
@@ -183,7 +183,7 @@ describe('cart access middleware', () => {
 
   test('an authenticated guest must claim before preparing a payment', async () => {
     raw.mockResolvedValueOnce([[cartId, null, 'hash', version]]);
-    const response = await app.request(`/cart/${cartId}/payment-intent`, {
+    const response = await app.request(`/cart/${cartId}/checkout`, {
       method: 'POST',
       headers: { 'Test-User': 'alice', 'X-Cart-Token': guestToken },
     });
@@ -192,7 +192,7 @@ describe('cart access middleware', () => {
 
   test('owned cart can prepare a payment', async () => {
     raw.mockResolvedValueOnce([[cartId, 'alice', null, version]]);
-    const response = await app.request(`/cart/${cartId}/payment-intent`, {
+    const response = await app.request(`/cart/${cartId}/checkout`, {
       method: 'POST',
       headers: { 'Test-User': 'alice' },
     });

@@ -406,7 +406,7 @@ describe('Product Routes', () => {
     expect(data.products[1]).toMatchObject({
       productId: 2,
       checkoutReady: false,
-      reasons: ['missing_stripe_price_id', 'missing_public_file_service_id'],
+      reasons: ['missing_public_file_service_id'],
     });
   });
 

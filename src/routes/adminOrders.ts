@@ -1,13 +1,11 @@
 import { eq } from 'drizzle-orm';
 import { describeRoute } from 'hono-openapi';
 import { resolver } from 'hono-openapi/zod';
-import Stripe from 'stripe';
+import { createPaidOrderFulfillment } from '../modules/paidOrderFulfillment';
 import { z } from 'zod';
-import { createSchema } from 'zod-openapi';
 import { BASE_URL_V2 } from '../constants';
 import {
   cart,
-  orderCancellationAttemptsTable,
   orderEventsTable,
   orderReconciliationAttemptsTable,
   ordersTable,
@@ -24,7 +22,13 @@ import {
 const orderListItemSchema = z.object({
   id: z.number(),
   orderNumber: z.string(),
-  userId: z.string(),
+  userId: z.string().nullable(),
+  source: z.string(),
+  fulfillmentType: z.string(),
+  paymentStatus: z.string().nullable(),
+  squareOrderId: z.string().nullable(),
+  squarePaymentId: z.string().nullable(),
+  fulfillmentState: z.string().nullable(),
   status: z.string().nullable(),
   slantStatus: z.string().nullable(),
   slantPublicOrderId: z.string().nullable(),
@@ -35,22 +39,28 @@ const orderListItemSchema = z.object({
 const orderDetailSchema = z.object({
   id: z.number(),
   orderNumber: z.string(),
-  userId: z.string(),
+  userId: z.string().nullable(),
   filename: z.string().nullable(),
   fileURL: z.string(),
   status: z.string().nullable(),
   slantStatus: z.string().nullable(),
   slantPublicOrderId: z.string().nullable(),
-  stripeCheckoutSessionId: z.string().nullable(),
-  stripePaymentIntentId: z.string().nullable(),
+  source: z.string(),
+  fulfillmentType: z.string(),
+  paymentStatus: z.string().nullable(),
+  squareOrderId: z.string().nullable(),
+  squarePaymentId: z.string().nullable(),
+  checkoutAttemptId: z.string().nullable(),
+  shippingAmountCents: z.number().nullable(),
+  fulfillmentState: z.string().nullable(),
   customerEmail: z.string().nullable(),
-  shipToName: z.string(),
-  shipToStreet1: z.string(),
+  shipToName: z.string().nullable(),
+  shipToStreet1: z.string().nullable(),
   shipToStreet2: z.string().nullable(),
-  shipToCity: z.string(),
-  shipToState: z.string(),
-  shipToZip: z.string(),
-  shipToCountryISO: z.string(),
+  shipToCity: z.string().nullable(),
+  shipToState: z.string().nullable(),
+  shipToZip: z.string().nullable(),
+  shipToCountryISO: z.string().nullable(),
   billToStreet1: z.string().nullable(),
   billToStreet2: z.string().nullable(),
   billToCity: z.string().nullable(),
@@ -78,21 +88,6 @@ const orderEventSchema = z.object({
   createdAt: z.string(),
 });
 
-const cancelRefundRequestSchema = z.object({
-  reason: z.string().max(500).optional(),
-  override: z.boolean().optional(),
-});
-
-const cancelRefundResponseSchema = z.object({
-  success: z.boolean(),
-  duplicate: z.boolean().optional(),
-  orderId: z.number(),
-  status: z.string(),
-  slantStatus: z.string().nullable(),
-  stripeRefundId: z.string().nullable(),
-  stripeRefundStatus: z.string().nullable(),
-});
-
 const reconcileResponseSchema = z.object({
   success: z.boolean(),
   orderId: z.number(),
@@ -106,30 +101,6 @@ const reconcileResponseSchema = z.object({
 
 const errorSchema = z.object({ error: z.string() });
 
-type DescribeRouteConfig = Parameters<typeof describeRoute>[0];
-type RequestBodySchema = NonNullable<
-  NonNullable<
-    Extract<
-      NonNullable<DescribeRouteConfig['requestBody']>,
-      { content?: Record<string, { schema?: unknown }> }
-    >['content']
-  >[string]['schema']
->;
-type OpenApiSchema = RequestBodySchema;
-
-function openApiInputSchema(schema: z.ZodTypeAny): OpenApiSchema {
-  return createSchema(schema, {
-    openapi: '3.1.0',
-    schemaType: 'input',
-  }).schema as unknown as OpenApiSchema;
-}
-
-const INELIGIBLE_REFUND_STATUSES = new Set([
-  'shipped',
-  'delivered',
-  'SHIPPED',
-  'DELIVERED',
-]);
 const SLANT_TERMINAL_OR_ACTIVE_STATUSES = new Set([
   'PROCESSING',
   'SHIPPED',
@@ -140,34 +111,6 @@ const SLANT_TERMINAL_OR_ACTIVE_STATUSES = new Set([
 function parseOrderId(value: string) {
   const orderId = Number(value);
   return Number.isNaN(orderId) ? null : orderId;
-}
-
-function getAdminActor(c: { get: (key: string) => unknown }) {
-  const payload = c.get('jwtPayload') as
-    | { id?: string; email?: string }
-    | undefined;
-  return {
-    id: payload?.id ?? null,
-    email: payload?.email ?? null,
-    label: payload?.email ?? payload?.id ?? 'unknown-admin',
-  };
-}
-
-function requiresRefundOverride(order: typeof ordersTable.$inferSelect) {
-  return (
-    (order.status && INELIGIBLE_REFUND_STATUSES.has(order.status)) ||
-    (order.slantStatus && INELIGIBLE_REFUND_STATUSES.has(order.slantStatus))
-  );
-}
-
-function serializeUnknown(value: unknown) {
-  if (value === null || value === undefined) return null;
-  if (typeof value === 'string') return value;
-  try {
-    return JSON.stringify(value);
-  } catch {
-    return String(value);
-  }
 }
 
 async function readResponseBody(response: Response) {
@@ -229,8 +172,8 @@ function orderStartingState(order: typeof ordersTable.$inferSelect) {
     status: order.status,
     slantStatus: order.slantStatus,
     slantPublicOrderId: order.slantPublicOrderId,
-    stripeCheckoutSessionId: order.stripeCheckoutSessionId,
-    stripePaymentIntentId: order.stripePaymentIntentId,
+    squareOrderId: order.squareOrderId,
+    squarePaymentId: order.squarePaymentId,
     cartId: order.cartId,
     hasItemSnapshot: Boolean(order.itemSnapshot),
     hasCustomerSnapshot: Boolean(order.customerSnapshot),
@@ -363,14 +306,17 @@ const adminOrders = factory
     requireCatalogMutationRole,
     describeRoute({
       description:
-        'Retry a failed Slant submission for an order. Blocked if already successfully processed.',
+        'Retry eligible fulfillment. Square orders permit only ready/drafted stages, return success/orderId, and reject ambiguous or completed stages with409; reconcile first.',
       tags: ['Admin Orders'],
       responses: {
         200: {
           content: {
             'application/json': {
               schema: resolver(
-                z.object({ success: z.boolean(), event: orderEventSchema }),
+                z.union([
+                  z.object({ success: z.boolean(), event: orderEventSchema }),
+                  z.object({ success: z.boolean(), orderId: z.number() }),
+                ]),
               ),
             },
           },
@@ -379,6 +325,10 @@ const adminOrders = factory
         400: {
           content: { 'application/json': { schema: resolver(errorSchema) } },
           description: 'Retry not allowed',
+        },
+        409: {
+          description:
+            'Square fulfillment is completed or uncertain; reconcile before retry',
         },
         401: {
           content: { 'application/json': { schema: resolver(errorSchema) } },
@@ -401,6 +351,25 @@ const adminOrders = factory
         return c.json({ error: 'Invalid order ID' }, 400);
       }
 
+      const [paid] = await c.var.db
+        .select()
+        .from(ordersTable)
+        .where(eq(ordersTable.id, orderId));
+      if (paid?.squarePaymentId) {
+        if (!['ready', 'drafted'].includes(paid.fulfillmentState || ''))
+          return c.json(
+            {
+              error:
+                'Reconcile uncertain fulfillment before retry; no external effect was repeated',
+            },
+            409,
+          );
+        await createPaidOrderFulfillment({
+          db: c.var.db,
+          env: c.env,
+        }).fulfillPaidOrder(orderId);
+        return c.json({ success: true, orderId });
+      }
       const operations = adminOrderOperationsForDb(c.var.db);
       const result = await operations.requestRetry({
         orderId,
@@ -426,273 +395,26 @@ const adminOrders = factory
     requireCatalogMutationRole,
     describeRoute({
       description:
-        'Cancel an eligible Slant3D order and refund the Stripe payment (admin only)',
+        'Retired cancellation/refund operation. Square cancellation/refund support is pending issue181; this endpoint performs no provider or persistence operations.',
       tags: ['Admin Orders'],
-      requestBody: {
-        content: {
-          'application/json': {
-            schema: openApiInputSchema(cancelRefundRequestSchema),
-          },
-        },
-        required: false,
-      },
       responses: {
-        200: {
-          content: {
-            'application/json': {
-              schema: resolver(cancelRefundResponseSchema),
-            },
-          },
-          description: 'Order canceled and refunded',
-        },
-        400: {
+        410: {
           content: { 'application/json': { schema: resolver(errorSchema) } },
-          description: 'Cancellation/refund is not allowed',
+          description: 'Legacy cancellation/refund operation retired',
         },
-        401: {
-          content: { 'application/json': { schema: resolver(errorSchema) } },
-          description: 'Unauthorized',
-        },
-        403: {
-          content: { 'application/json': { schema: resolver(errorSchema) } },
-          description: 'Forbidden',
-        },
-        404: {
-          content: { 'application/json': { schema: resolver(errorSchema) } },
-          description: 'Order not found',
-        },
-        502: {
-          content: { 'application/json': { schema: resolver(errorSchema) } },
-          description: 'Slant3D or Stripe refund failed',
-        },
+        401: { description: 'Unauthorized' },
+        403: { description: 'Forbidden' },
       },
     }),
-    async c => {
-      const orderId = parseOrderId(c.req.param('id'));
-
-      if (orderId === null) {
-        return c.json({ error: 'Invalid order ID' }, 400);
-      }
-
-      const body = await c.req.json().catch(() => ({}));
-      const parsed = cancelRefundRequestSchema.safeParse(body);
-      if (!parsed.success) {
-        return c.json({ error: 'Invalid request body' }, 400);
-      }
-
-      const order = await c.var.db
-        .select()
-        .from(ordersTable)
-        .where(eq(ordersTable.id, orderId))
-        .get();
-
-      if (!order) {
-        return c.json({ error: 'Order not found' }, 404);
-      }
-
-      const actor = getAdminActor(c);
-      const now = new Date().toISOString();
-      const attempts = await c.var.db
-        .select()
-        .from(orderCancellationAttemptsTable)
-        .where(eq(orderCancellationAttemptsTable.orderId, order.id))
-        .all();
-      const successfulAttempt = attempts.find(
-        attempt =>
-          attempt.stripeRefundId ||
-          attempt.finalStatus === 'refunded' ||
-          attempt.finalStatus === 'canceled_refunded',
-      );
-
-      if (successfulAttempt) {
-        return c.json({
-          success: true,
-          duplicate: true,
-          orderId: order.id,
-          status: order.status ?? 'canceled',
-          slantStatus: order.slantStatus,
-          stripeRefundId: successfulAttempt.stripeRefundId,
-          stripeRefundStatus: successfulAttempt.stripeRefundStatus,
-        });
-      }
-
-      const override = parsed.data.override ?? false;
-      if (requiresRefundOverride(order) && !override) {
-        await c.var.db.insert(orderCancellationAttemptsTable).values({
-          orderId: order.id,
-          actorId: actor.id,
-          actorEmail: actor.email,
-          reason: parsed.data.reason ?? null,
-          override,
-          slantStatus: order.slantStatus,
-          finalStatus: 'blocked_ineligible_status',
-          errorMessage:
-            'Order has shipped or delivered and requires override to cancel/refund.',
-          createdAt: now,
-          updatedAt: now,
-        });
-
-        return c.json(
-          {
-            error:
-              'Order has shipped or delivered and requires override to cancel/refund.',
-          },
-          400,
-        );
-      }
-
-      if (!order.stripePaymentIntentId) {
-        await c.var.db.insert(orderCancellationAttemptsTable).values({
-          orderId: order.id,
-          actorId: actor.id,
-          actorEmail: actor.email,
-          reason: parsed.data.reason ?? null,
-          override,
-          slantStatus: order.slantStatus,
-          finalStatus: 'missing_stripe_payment_intent',
-          errorMessage: 'Order is missing Stripe payment intent ID.',
-          createdAt: now,
-          updatedAt: now,
-        });
-
-        return c.json(
-          { error: 'Order is missing Stripe payment intent ID.' },
-          400,
-        );
-      }
-
-      let slantStatus = order.slantPublicOrderId
-        ? 'not_attempted'
-        : 'skipped_no_slant_order_id';
-      let slantResult: string | null = null;
-
-      if (order.slantPublicOrderId) {
-        const slantResponse = await fetch(
-          `${BASE_URL_V2}orders/${order.slantPublicOrderId}`,
-          {
-            method: 'DELETE',
-            headers: {
-              'Content-Type': 'application/json',
-              Authorization: `Bearer ${c.env.SLANT_API_V2}`,
-            },
-          },
-        );
-        slantResult = serializeUnknown(await readResponseBody(slantResponse));
-        slantStatus = slantResponse.ok ? 'canceled' : 'failed';
-
-        if (!slantResponse.ok && !override) {
-          await c.var.db.insert(orderCancellationAttemptsTable).values({
-            orderId: order.id,
-            actorId: actor.id,
-            actorEmail: actor.email,
-            reason: parsed.data.reason ?? null,
-            override,
-            slantStatus,
-            slantResult,
-            finalStatus: 'slant_cancellation_failed',
-            errorMessage: `Slant3D cancellation failed with ${slantResponse.status}`,
-            createdAt: now,
-            updatedAt: now,
-          });
-
-          return c.json(
-            { error: 'Slant3D cancellation failed; Stripe was not refunded.' },
-            502,
-          );
-        }
-      }
-
-      const stripe = new Stripe(c.env.STRIPE_SECRET_KEY, { telemetry: false });
-      let refund: Stripe.Refund;
-
-      try {
-        refund = await stripe.refunds.create(
-          {
-            payment_intent: order.stripePaymentIntentId,
-            reason: 'requested_by_customer',
-            metadata: {
-              orderId: String(order.id),
-              orderNumber: order.orderNumber,
-              actorId: actor.id ?? '',
-            },
-          },
-          {
-            idempotencyKey: `order-${order.id}-cancel-refund`,
-          },
-        );
-      } catch (error) {
-        const errorMessage =
-          error instanceof Error ? error.message : 'Stripe refund failed';
-        await c.var.db.insert(orderCancellationAttemptsTable).values({
-          orderId: order.id,
-          actorId: actor.id,
-          actorEmail: actor.email,
-          reason: parsed.data.reason ?? null,
-          override,
-          slantStatus,
-          slantResult,
-          finalStatus: 'stripe_refund_failed',
-          errorMessage,
-          createdAt: now,
-          updatedAt: now,
-        });
-
-        return c.json({ error: 'Stripe refund failed.' }, 502);
-      }
-
-      await c.var.db.insert(orderCancellationAttemptsTable).values({
-        orderId: order.id,
-        actorId: actor.id,
-        actorEmail: actor.email,
-        reason: parsed.data.reason ?? null,
-        override,
-        slantStatus,
-        slantResult,
-        stripeRefundId: refund.id,
-        stripeRefundStatus: refund.status ?? null,
-        stripeResult: serializeUnknown(refund),
-        finalStatus: 'canceled_refunded',
-        createdAt: now,
-        updatedAt: now,
-      });
-
-      await c.var.db
-        .update(ordersTable)
-        .set({
-          status: 'canceled',
-          slantStatus: 'CANCELED',
-          canceledAt: now,
-          updatedAt: now,
-        })
-        .where(eq(ordersTable.id, order.id));
-
-      await c.var.db.insert(orderEventsTable).values({
-        orderId: order.id,
-        type: 'admin_cancel_refund',
-        detail: `Order canceled/refunded by ${actor.label}`,
-        actor: actor.label,
-        source: 'admin',
-        previousStatus: order.status,
-        nextStatus: 'canceled',
-        metadata: JSON.stringify({
-          reason: parsed.data.reason ?? null,
-          override,
-          stripeRefundId: refund.id,
-          stripeRefundStatus: refund.status,
-          slantStatus,
-        }),
-        createdAt: now,
-      });
-
-      return c.json({
-        success: true,
-        orderId: order.id,
-        status: 'canceled',
-        slantStatus: 'CANCELED',
-        stripeRefundId: refund.id,
-        stripeRefundStatus: refund.status ?? null,
-      });
-    },
+    /** Rejects the retired operation without canceling manufacture or refunding payment. */
+    c =>
+      c.json(
+        {
+          error:
+            'Cancellation/refund operation retired; Square support is pending issue181.',
+        },
+        410,
+      ),
   )
   .post(
     '/admin/orders/:id/reconcile',
@@ -700,7 +422,21 @@ const adminOrders = factory
     requireCatalogMutationRole,
     describeRoute({
       description:
-        'Reconcile a local order with Slant3D and recover safe fulfillment drift (admin only)',
+        'Reconcile a local order with Slant3D (admin only). For Square, optionally supply slantPublicOrderId to recover a lost draft ID; retrieved orderNumber must match. Ambiguous process is read-only and never re-manufactured.',
+      requestBody: {
+        required: false,
+        content: {
+          'application/json': {
+            schema: {
+              type: 'object',
+              additionalProperties: false,
+              properties: {
+                slantPublicOrderId: { type: 'string', minLength: 1 },
+              },
+            },
+          },
+        },
+      },
       tags: ['Admin Orders'],
       responses: {
         200: {
@@ -750,6 +486,40 @@ const adminOrders = factory
         return c.json({ error: 'Order not found' }, 404);
       }
 
+      if (order.squarePaymentId) {
+        const fulfillment = createPaidOrderFulfillment({
+          db: c.var.db,
+          env: c.env,
+        });
+        const recovery = z
+          .object({ slantPublicOrderId: z.string().min(1).optional() })
+          .strict()
+          .safeParse(await c.req.json().catch(() => ({})));
+        if (!recovery.success)
+          return c.json({ error: 'Invalid recovery input' }, 400);
+        await fulfillment.reconcilePaidOrder(
+          order.id,
+          recovery.data.slantPublicOrderId,
+        );
+        const [current] = await c.var.db
+          .select()
+          .from(ordersTable)
+          .where(eq(ordersTable.id, order.id));
+        return c.json({
+          success: true,
+          orderId: order.id,
+          resultStatus: current.fulfillmentState,
+          localStatus: current.status,
+          slantStatus: current.slantStatus,
+          detectedIssues: [],
+          actionsTaken: [],
+          recommendedAction:
+            current.fulfillmentState === 'processed'
+              ? null
+              : 'Inspect Slant by immutable orderNumber; do not resubmit ambiguous draft or process',
+          order: current,
+        });
+      }
       const detectedIssues: string[] = [];
       const actionsTaken: string[] = [];
       const now = new Date().toISOString();
@@ -778,36 +548,6 @@ const adminOrders = factory
         detectedIssues.push('cart_not_cleared_after_fulfillment');
         await c.var.db.delete(cart).where(eq(cart.cartId, order.cartId ?? ''));
         actionsTaken.push('cleared_cart');
-      }
-
-      const hasStripePayment = Boolean(
-        order.stripePaymentIntentId || order.stripeCheckoutSessionId,
-      );
-      if (hasStripePayment && !order.slantPublicOrderId) {
-        detectedIssues.push('paid_without_slant_order_id');
-        resultStatus = 'needs_admin_action';
-        recommendedAction = 'Use admin retry fulfillment or cancel/refund.';
-
-        await recordReconciliationAttempt({
-          db: c.var.db,
-          order,
-          triggerSource: 'admin',
-          detectedIssues,
-          actionsTaken,
-          resultStatus,
-          at: now,
-        });
-
-        return c.json({
-          success: true,
-          orderId: order.id,
-          resultStatus,
-          detectedIssues,
-          actionsTaken,
-          recommendedAction,
-          localStatus: order.status,
-          slantStatus: currentSlantStatus,
-        });
       }
 
       if (order.slantPublicOrderId) {
