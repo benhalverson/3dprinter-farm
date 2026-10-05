@@ -125,6 +125,14 @@ Notes:
 - Validation errors and response payloads for registration verification follow Better Auth defaults.
 - `/api/auth/passkey/register` and `/api/auth/passkey/authenticate` are client helper names in Better Auth, not server routes in this API.
 
+## Administrator conversation preparation
+
+`POST /admin/product-drafts/:id/prepare` is protected by the existing administrator role and draft ownership checks. Supply `expectedRevision` and an `answers` patch; optionally supply the current `message` for interpretation or an exact `confirmCategoryName`. Responses use the existing durable draft DTO. A concurrent save rejects the interpreted patch rather than overwriting newer work. Interpretation state uses the existing draft JSON column. Category confirmation uses server-owned draft fields and a nullable unique normalized category key; legacy category identities remain intact.
+
+Messages make at most one bounded model call through the existing enabled/version gates and deployment-account budget, using administrator-prefixed accounting identities. Direct controls omit `message` and do not call the model. Failures retain the message and answers with deterministic controls. Available material/color pairs come from the existing Slant3D filament metadata contract; failed metadata verification stays visible.
+
+Selecting existing category IDs explicitly replaces name proposals by sending `categoryNames: []` together with `categoryIds`. An exact `confirmCategoryName` must match a current saved proposal at the supplied revision and cannot accompany inference. Its explicit action atomically saves the draft and creates or reuses the category, with a server-owned token gating insertion after revision CAS. Reads resolve authoritative identities without creating categories; ambiguous legacy names require identity selection. Unknown save outcomes require reload before retry. This endpoint does not execute product mutations or calculate proposed prices; current catalog prices are distinct from proposed prices. Neither completeness nor saved confirmation/history authorizes execution.
+
 ## Database Migrations
 
 Use Drizzle schemas and query APIs for all persistence, including database initialization and data corrections. Generate migrations with the Drizzle commands below; do not author SQL or use raw SQL escape hatches.

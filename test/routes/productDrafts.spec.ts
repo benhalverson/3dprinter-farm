@@ -231,6 +231,7 @@ describe('private admin product draft endpoints', () => {
             description: 'Description',
             image: null,
             price: 10,
+            inPersonPrice: null,
             filamentType: 'PLA',
             color: null,
             skuNumber: null,
@@ -308,6 +309,7 @@ describe('private admin product draft endpoints', () => {
       description: 'Description',
       image: null,
       price: 10,
+      inPersonPrice: 1250,
       filamentType: 'PLA',
       color: null,
       skuNumber: null,
@@ -332,6 +334,7 @@ describe('private admin product draft endpoints', () => {
           description: 'Description',
           image: null,
           price: 10,
+          inPersonPrice: 12.5,
           filamentType: 'PLA',
           color: null,
           skuNumber: null,
@@ -721,5 +724,43 @@ describe('private admin product draft endpoints', () => {
     expect(
       document.paths['/admin/product-drafts/{id}'].delete.responses['409'],
     ).toBeDefined();
+  });
+  it('projects current missing questions once without inference or mutations on resume', async () => {
+    authorize();
+    get({
+      ...row,
+      state: {
+        ...empty,
+        pendingQuestions: [
+          {
+            id: 'categoryNames',
+            prompt: 'Which categories should this product use?',
+          },
+        ],
+        interpretation: {
+          intent: 'create',
+          status: 'prepared',
+          explanation: 'Preparation only',
+          confirmedCategoryNames: [],
+          proposedCategoryNames: [],
+          productionOptions: [],
+        },
+      },
+    });
+    const result = await request(`/${id}`);
+    expect(result.status).toBe(200);
+    const body = (await result.json()) as any;
+    expect(
+      body.state.pendingQuestions.filter(
+        (question: { id: string }) => question.id === 'categoryNames',
+      ),
+    ).toEqual([
+      {
+        id: 'categoryNames',
+        prompt: 'Which categories should this product use?',
+      },
+    ]);
+    expect(capturedInserts).toEqual([]);
+    expect(mockUpdate).not.toHaveBeenCalled();
   });
 });

@@ -19,11 +19,30 @@ export const productDraftAnswersSchema = z
     filamentType: z.string().max(256).optional(),
     color: z.string().max(256).optional(),
     notes: z.string().max(16384).optional(),
+    markupPercentage: z.string().max(64).optional(),
+    inPersonPrice: z.string().max(64).optional(),
+    categoryNames: z
+      .array(z.string().trim().min(1).max(256))
+      .max(20)
+      .optional(),
   })
   .strict();
 export const productDraftStateSchema = z
   .object({
     answers: productDraftAnswersSchema,
+    interpretation: z
+      .object({
+        intent: z.enum(['create', 'update', 'delete']),
+        status: z.enum(['prepared', 'clarification', 'unavailable']),
+        confirmedCategoryNames: z.array(z.string().max(256)).max(20),
+        proposedCategoryNames: z.array(z.string().max(256)).max(20),
+        productionOptions: z
+          .array(z.object({ material: z.string(), color: z.string() }).strict())
+          .max(500),
+        explanation: z.string().max(4096),
+      })
+      .strict()
+      .optional(),
     pendingQuestions: z
       .array(
         z
@@ -86,6 +105,12 @@ export const productDraftContextSchema = z.discriminatedUnion('status', [
           description: z.string(),
           image: z.string().nullable(),
           price: z.number(),
+          inPersonPrice: z
+            .number()
+            .finite()
+            .nonnegative()
+            .nullable()
+            .optional(),
           filamentType: z.string(),
           color: z.string().nullable(),
           skuNumber: z.string().nullable(),
