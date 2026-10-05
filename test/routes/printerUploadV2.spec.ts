@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
-import app from '../../src/index';
+import app from '../../src/app';
 import { mockInsert } from '../mocks/drizzle';
 import { mockEnv } from '../mocks/env';
 

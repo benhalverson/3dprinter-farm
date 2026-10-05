@@ -32,4 +32,4 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Validate PR project notes
-        run: node --disable-warning=ExperimentalWarning --experimental-default-type=module --experimental-strip-types tools/project-notes/validate-pr-notes.ts
+        run: node --disable-warning=ExperimentalWarning --experimental-strip-types tools/project-notes/validate-pr-notes.ts

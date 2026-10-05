@@ -4,11 +4,6 @@ import { resolver } from 'hono-openapi/zod';
 import { z } from 'zod';
 import { orderEventsTable, ordersTable } from '../db/schema';
 import factory from '../factory';
-import {
-  notificationTypeForSlantStatus,
-  sendAdminFailureAlert,
-  sendOrderNotification,
-} from '../modules/orderNotifications';
 import { authMiddleware } from '../utils/authMiddleware';
 
 type OpenAPISchema = Record<string, unknown>;
@@ -100,31 +95,6 @@ function responseStatusForOrder(
 ) {
   const parsed = slantOrderStatusSchema.safeParse(value);
   return parsed.success ? parsed.data : fallback;
-}
-
-async function alertSlantWebhookFailure(input: {
-  c: {
-    var: { db: Parameters<typeof sendAdminFailureAlert>[0]['db'] };
-    env: Parameters<typeof sendAdminFailureAlert>[0]['env'];
-  };
-  order?: Partial<OrderRow> | null;
-  statusTransition: string;
-  reason: string;
-  details?: string | null;
-}) {
-  try {
-    await sendAdminFailureAlert({
-      db: input.c.var.db,
-      env: input.c.env,
-      order: input.order,
-      source: 'slant3d',
-      statusTransition: input.statusTransition,
-      reason: input.reason,
-      details: input.details,
-    });
-  } catch (error) {
-    console.error('Failed to send Slant3D webhook admin alert:', error);
-  }
 }
 
 type OrderRow = typeof ordersTable.$inferSelect;
@@ -484,27 +454,9 @@ const ordersRouter = factory
         }
       }
 
-      let jsonParseFailed = false;
-      const rawBody = await c.req.json().catch(async error => {
-        jsonParseFailed = true;
-        await alertSlantWebhookFailure({
-          c,
-          statusTransition: 'slant_webhook_invalid_json',
-          reason: 'Slant3D webhook body could not be parsed as JSON',
-          details: error instanceof Error ? error.message : String(error),
-        });
-        return null;
-      });
+      const rawBody = await c.req.json().catch(() => null);
       const parsed = slantWebhookBodySchema.safeParse(rawBody);
       if (!parsed.success) {
-        if (!jsonParseFailed) {
-          await alertSlantWebhookFailure({
-            c,
-            statusTransition: 'slant_webhook_invalid_body',
-            reason: 'Slant3D webhook payload failed validation',
-            details: parsed.error.message,
-          });
-        }
         return c.json({ error: 'Invalid request body' }, 422);
       }
 
@@ -516,12 +468,6 @@ const ordersRouter = factory
         .get();
 
       if (!order) {
-        await alertSlantWebhookFailure({
-          c,
-          statusTransition: 'slant_webhook_unknown_order',
-          reason: 'Slant3D webhook referenced an unknown local order',
-          details: `Slant order ${orderId}, event ${eventId ?? 'missing-event-id'}`,
-        });
         return c.json({ error: 'Order not found' }, 404);
       }
 
@@ -576,36 +522,6 @@ const ordersRouter = factory
         metadata: metadata ? JSON.stringify(metadata) : null,
         createdAt: now,
       });
-
-      const notificationType = notificationTypeForSlantStatus(status);
-      if (notificationType) {
-        try {
-          await sendOrderNotification({
-            db: c.var.db,
-            env: c.env,
-            order: {
-              id: order.id,
-              orderNumber: order.orderNumber,
-              customerEmail: order.customerEmail,
-              status: updateFields.status ?? order.status,
-              slantStatus: status,
-            },
-            type: notificationType,
-            source: 'slant3d',
-            statusTransition: `${previousStatus ?? 'unknown'}_to_${status}`,
-          });
-        } catch (error) {
-          console.error('Slant3D webhook notification handling failed:', error);
-          await alertSlantWebhookFailure({
-            c,
-            order,
-            statusTransition: 'slant_webhook_notification_failed',
-            reason:
-              'Slant3D webhook status was applied but notification handling failed',
-            details: error instanceof Error ? error.message : String(error),
-          });
-        }
-      }
 
       return c.json({
         success: true,

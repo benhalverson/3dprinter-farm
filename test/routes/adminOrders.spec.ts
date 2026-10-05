@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
-import app from '../../src';
+import app from '../../src/app';
 import { mockAuth, mockBetterAuth } from '../mocks/auth';
 import {
   capturedInserts,
@@ -899,7 +899,7 @@ describe('Admin Orders API', () => {
       );
     });
 
-    test('recovers stale local status from Slant and notifies the customer', async () => {
+    test('recovers stale local status from Slant', async () => {
       mockAdminUser();
       mockWhere
         .mockReturnValueOnce({
@@ -938,12 +938,6 @@ describe('Admin Orders API', () => {
             source: 'admin',
             previousStatus: 'PROCESSING',
             nextStatus: 'SHIPPED',
-          }),
-          expect.objectContaining({
-            orderId: 1,
-            notificationType: 'order_shipped',
-            recipientEmail: 'customer@example.com',
-            status: 'sent',
           }),
           expect.objectContaining({
             orderId: 1,
@@ -987,11 +981,6 @@ describe('Admin Orders API', () => {
             orderId: 1,
             resultStatus: 'needs_admin_action',
           }),
-          expect.objectContaining({
-            orderId: 1,
-            notificationType: 'admin_failure_alert',
-            status: 'sent',
-          }),
         ]),
       );
     });
@@ -1022,11 +1011,6 @@ describe('Admin Orders API', () => {
             resultStatus: 'failed',
             detectedIssueType: JSON.stringify(['slant_lookup_failed']),
             errorMessage: 'Slant3D lookup failed with 500',
-          }),
-          expect.objectContaining({
-            orderId: 1,
-            notificationType: 'admin_failure_alert',
-            status: 'sent',
           }),
         ]),
       );
@@ -1070,132 +1054,6 @@ describe('Admin Orders API', () => {
           ]),
           actionsTaken: JSON.stringify(['cleared_cart']),
         }),
-      );
-    });
-  });
-
-  describe('POST /admin/orders/:id/resend-notification', () => {
-    test('returns 401 for unauthenticated user', async () => {
-      mockUnauthenticated();
-
-      const res = await app.fetch(
-        new Request('http://localhost/admin/orders/1/resend-notification', {
-          method: 'POST',
-          headers: { Cookie: '' },
-        }),
-        env,
-      );
-
-      expect(res.status).toBe(401);
-    });
-
-    test('returns 403 for non-admin user', async () => {
-      mockNonAdminUser();
-
-      const res = await app.fetch(
-        new Request('http://localhost/admin/orders/1/resend-notification', {
-          method: 'POST',
-          headers: { Cookie: 'better-auth.session_token=mock-session-token' },
-        }),
-        env,
-      );
-
-      expect(res.status).toBe(403);
-    });
-
-    test('returns 400 for invalid order ID', async () => {
-      mockAdminUser();
-
-      const res = await app.fetch(
-        new Request(
-          'http://localhost/admin/orders/not-a-number/resend-notification',
-          {
-            method: 'POST',
-            headers: { Cookie: 'better-auth.session_token=mock-session-token' },
-          },
-        ),
-        env,
-      );
-
-      expect(res.status).toBe(400);
-      const body = await res.json();
-      expect(body.error).toBe('Invalid order ID');
-    });
-
-    test('returns 404 for missing order', async () => {
-      mockAdminUser();
-
-      mockWhere.mockReturnValueOnce({
-        get: vi.fn().mockResolvedValue(undefined),
-      });
-
-      const res = await app.fetch(
-        new Request('http://localhost/admin/orders/999/resend-notification', {
-          method: 'POST',
-          headers: { Cookie: 'better-auth.session_token=mock-session-token' },
-        }),
-        env,
-      );
-
-      expect(res.status).toBe(404);
-    });
-
-    test('resends notification and records event', async () => {
-      mockAdminUser();
-
-      // Order lookup
-      mockWhere.mockReturnValueOnce({
-        get: vi.fn().mockResolvedValue({
-          id: 1,
-          orderNumber: 'ORD-001',
-          status: 'pending',
-          slantStatus: 'PROCESSING',
-          customerEmail: 'customer@example.com',
-        }),
-      });
-
-      // Insert event returning
-      mockInsert.mockResolvedValueOnce([
-        {
-          id: 2,
-          orderId: 1,
-          type: 'notification_resent',
-          detail: 'Notification resent by admin@example.com',
-          actor: 'admin@example.com',
-          createdAt: '2024-01-01T00:00:00Z',
-        },
-      ]);
-      // Order lookup for the actual resend attempt
-      mockWhere.mockReturnValueOnce({
-        get: vi.fn().mockResolvedValue(mockCancelableOrder()),
-      });
-
-      const res = await app.fetch(
-        new Request('http://localhost/admin/orders/1/resend-notification', {
-          method: 'POST',
-          headers: { Cookie: 'better-auth.session_token=mock-session-token' },
-        }),
-        env,
-      );
-
-      expect(res.status).toBe(200);
-      const body = await res.json();
-      expect(body.success).toBe(true);
-      expect(body.event.type).toBe('notification_resent');
-      expect(capturedInserts).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({
-            orderId: 1,
-            type: 'notification_resent',
-          }),
-          expect.objectContaining({
-            orderId: 1,
-            notificationType: 'order_confirmation',
-            recipientEmail: 'customer@example.com',
-            status: 'sent',
-            source: 'admin',
-          }),
-        ]),
       );
     });
   });

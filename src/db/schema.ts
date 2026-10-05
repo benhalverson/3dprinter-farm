@@ -1,26 +1,126 @@
-import { relations, sql } from 'drizzle-orm';
+import { relations } from 'drizzle-orm';
 import {
+  index,
   integer,
   primaryKey,
   real,
   sqliteTable,
   text,
+  uniqueIndex,
 } from 'drizzle-orm/sqlite-core';
 import { z } from 'zod';
+import type { AttachmentState } from '../modules/productAttachmentState';
+import type {
+  ProductDraftState,
+  ProductDraftTarget,
+} from '../modules/productDraftContracts';
+
+// No product foreign key: the conversation survives deletion of its target.
+export const productDrafts = sqliteTable(
+  'product_drafts',
+  {
+    id: text('id').primaryKey(),
+    ownerId: text('owner_id').notNull(),
+    target: text('target', { mode: 'json' })
+      .$type<ProductDraftTarget>()
+      .notNull(),
+    state: text('state', { mode: 'json' }).$type<ProductDraftState>().notNull(),
+    revision: integer('revision').notNull(),
+    createdAt: integer('created_at').notNull(),
+    updatedAt: integer('updated_at').notNull(),
+    status: text('status', { enum: ['active', 'discarded'] })
+      .notNull()
+      .default('active'),
+    attachments: text('attachments', { mode: 'json' }).$type<AttachmentState>(),
+  },
+  table => [
+    index('product_drafts_owner_updated').on(table.ownerId, table.updatedAt),
+  ],
+);
+
+// Reference reservations and deletion claims share one versioned row. A reservation
+// is retained after an ambiguous catalog write, so cleanup cannot race publication.
+export const productAssets = sqliteTable(
+  'product_assets',
+  {
+    id: text('id').primaryKey(),
+    ownerId: text('owner_id').notNull(),
+    draftId: text('draft_id').notNull(),
+    kind: text('kind', { enum: ['photo', 'print'] }).notNull(),
+    objectKey: text('object_key').notNull().unique(),
+    providerId: text('provider_id'),
+    fileUrl: text('file_url'),
+    contentType: text('content_type'),
+    encryptionKey: text('encryption_key').notNull(),
+    references: text('references', { mode: 'json' })
+      .$type<string[]>()
+      .notNull(),
+    status: text('status', {
+      enum: ['active', 'deleting', 'deleted'],
+    }).notNull(),
+    revision: integer('revision').notNull(),
+  },
+  table => [
+    index('product_assets_provider_id').on(table.providerId),
+    index('product_assets_file_url').on(table.fileUrl),
+    index('product_assets_draft_id').on(table.draftId),
+  ],
+);
+
+export const productAssetReferenceAttempts = sqliteTable(
+  'product_asset_reference_attempts',
+  {
+    id: text('id').primaryKey(),
+    assetIds: text('asset_ids', { mode: 'json' }).$type<string[]>().notNull(),
+    state: text('state', {
+      enum: ['unresolved', 'release_pending', 'released'],
+    }).notNull(),
+    createdAt: integer('created_at').notNull(),
+    updatedAt: integer('updated_at').notNull(),
+  },
+  table => [index('product_asset_reference_attempts_state').on(table.state)],
+);
 
 export const DEFAULT_PLA_BLACK_FILAMENT_ID =
   '76fe1f79-3f1e-43e4-b8f4-61159de5b93c';
 
-export const cart = sqliteTable('cart', {
-  id: integer('id').primaryKey(),
-  cartId: text('cart_id').notNull(),
-  userId: text('user_id').references(() => users.id, { onDelete: 'set null' }),
-  skuNumber: text('sku_number').notNull(),
-  quantity: integer('quantity').default(1).notNull(),
-  color: text('color').default('#000000'),
-  filamentType: text('filament_type').notNull(),
-  filamentId: text('filament_id').default(DEFAULT_PLA_BLACK_FILAMENT_ID),
+export const shoppingCarts = sqliteTable('shopping_carts', {
+  id: text('id').primaryKey(),
+  userId: text('user_id').references(() => users.id, { onDelete: 'cascade' }),
+  guestTokenHash: text('guest_token_hash'),
+  accessVersion: text('access_version').notNull().unique(),
 });
+
+export const cart = sqliteTable(
+  'cart',
+  {
+    id: integer('id').primaryKey(),
+    cartId: text('cart_id').notNull(),
+    // Null only for legacy carts, which cannot be accessed through the new API.
+    accessVersion: text('access_version').references(
+      () => shoppingCarts.accessVersion,
+      {
+        onUpdate: 'cascade',
+        onDelete: 'cascade',
+      },
+    ),
+    userId: text('user_id').references(() => users.id, {
+      onDelete: 'set null',
+    }),
+    skuNumber: text('sku_number').notNull(),
+    quantity: integer('quantity').default(1).notNull(),
+    color: text('color').default('#000000'),
+    filamentType: text('filament_type').notNull(),
+    filamentId: text('filament_id').default(DEFAULT_PLA_BLACK_FILAMENT_ID),
+  },
+  table => [
+    uniqueIndex('cart_configuration_unique').on(
+      table.accessVersion,
+      table.skuNumber,
+      table.filamentId,
+    ),
+  ],
+);
 
 export const leads = sqliteTable('leads', {
   id: integer('id').primaryKey(),
@@ -82,7 +182,9 @@ export const productsToCategories = sqliteTable(
         onUpdate: 'cascade',
       }),
     orderIndex: integer('order_index'),
-    createdAt: text('created_at').default(sql`CURRENT_TIMESTAMP`).notNull(),
+    createdAt: text('created_at')
+      .$defaultFn(() => new Date().toISOString().slice(0, 19).replace('T', ' '))
+      .notNull(),
   },
   t => [primaryKey({ columns: [t.productId, t.categoryId] })],
 );
@@ -137,10 +239,10 @@ export const users = sqliteTable('users', {
     .notNull(),
   image: text('image'),
   createdAt: integer('created_at', { mode: 'timestamp_ms' })
-    .default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`)
+    .$defaultFn(() => new Date())
     .notNull(),
   updatedAt: integer('updated_at', { mode: 'timestamp_ms' })
-    .default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`)
+    .$defaultFn(() => new Date())
     .notNull(),
   firstName: text('first_name').default('').notNull(),
   lastName: text('last_name').default('').notNull(),
@@ -195,10 +297,10 @@ export const session = sqliteTable('session', {
   expiresAt: integer('expires_at', { mode: 'timestamp_ms' }).notNull(),
   token: text('token').notNull().unique(),
   createdAt: integer('created_at', { mode: 'timestamp_ms' })
-    .default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`)
+    .$defaultFn(() => new Date())
     .notNull(),
   updatedAt: integer('updated_at', { mode: 'timestamp_ms' })
-    .default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`)
+    .$defaultFn(() => new Date())
     .notNull(),
   ipAddress: text('ip_address'),
   userAgent: text('user_agent'),
@@ -228,10 +330,10 @@ export const account = sqliteTable('account', {
   scope: text('scope'),
   password: text('password'),
   createdAt: integer('created_at', { mode: 'timestamp_ms' })
-    .default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`)
+    .$defaultFn(() => new Date())
     .notNull(),
   updatedAt: integer('updated_at', { mode: 'timestamp_ms' })
-    .default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`)
+    .$defaultFn(() => new Date())
     .notNull(),
 });
 
@@ -240,10 +342,12 @@ export const verification = sqliteTable('verification', {
   identifier: text('identifier').notNull(),
   value: text('value').notNull(),
   expiresAt: integer('expires_at', { mode: 'timestamp_ms' }).notNull(),
-  createdAt: integer('created_at', { mode: 'timestamp_ms' })
-    .default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`),
-  updatedAt: integer('updated_at', { mode: 'timestamp_ms' })
-    .default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`),
+  createdAt: integer('created_at', { mode: 'timestamp_ms' }).$defaultFn(
+    () => new Date(),
+  ),
+  updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).$defaultFn(
+    () => new Date(),
+  ),
 });
 
 export const passkey = sqliteTable('passkey', {
@@ -332,8 +436,12 @@ export const ordersTable = sqliteTable('ordersTable', {
   currency: text('currency').default('usd'),
   itemSnapshot: text('item_snapshot'),
   customerSnapshot: text('customer_snapshot'),
-  createdAt: text('created_at').default(sql`CURRENT_TIMESTAMP`),
-  updatedAt: text('updated_at').default(sql`CURRENT_TIMESTAMP`),
+  createdAt: text('created_at').$defaultFn(() =>
+    new Date().toISOString().slice(0, 19).replace('T', ' '),
+  ),
+  updatedAt: text('updated_at').$defaultFn(() =>
+    new Date().toISOString().slice(0, 19).replace('T', ' '),
+  ),
   processedAt: text('processed_at'),
   shippedAt: text('shipped_at'),
   deliveredAt: text('delivered_at'),
@@ -353,7 +461,9 @@ export const orderEventsTable = sqliteTable('order_events', {
   previousStatus: text('previous_status'),
   nextStatus: text('next_status'),
   metadata: text('metadata'),
-  createdAt: text('created_at').default(sql`CURRENT_TIMESTAMP`).notNull(),
+  createdAt: text('created_at')
+    .$defaultFn(() => new Date().toISOString().slice(0, 19).replace('T', ' '))
+    .notNull(),
 });
 
 export const orderCancellationAttemptsTable = sqliteTable(
@@ -374,8 +484,12 @@ export const orderCancellationAttemptsTable = sqliteTable(
     stripeResult: text('stripe_result'),
     finalStatus: text('final_status').notNull(),
     errorMessage: text('error_message'),
-    createdAt: text('created_at').default(sql`CURRENT_TIMESTAMP`).notNull(),
-    updatedAt: text('updated_at').default(sql`CURRENT_TIMESTAMP`).notNull(),
+    createdAt: text('created_at')
+      .$defaultFn(() => new Date().toISOString().slice(0, 19).replace('T', ' '))
+      .notNull(),
+    updatedAt: text('updated_at')
+      .$defaultFn(() => new Date().toISOString().slice(0, 19).replace('T', ' '))
+      .notNull(),
   },
 );
 
@@ -394,8 +508,12 @@ export const orderNotificationAttemptsTable = sqliteTable(
     statusTransition: text('status_transition'),
     source: text('source').notNull(),
     idempotencyKey: text('idempotency_key').notNull(),
-    createdAt: text('created_at').default(sql`CURRENT_TIMESTAMP`).notNull(),
-    updatedAt: text('updated_at').default(sql`CURRENT_TIMESTAMP`).notNull(),
+    createdAt: text('created_at')
+      .$defaultFn(() => new Date().toISOString().slice(0, 19).replace('T', ' '))
+      .notNull(),
+    updatedAt: text('updated_at')
+      .$defaultFn(() => new Date().toISOString().slice(0, 19).replace('T', ' '))
+      .notNull(),
     sentAt: text('sent_at'),
   },
 );
@@ -413,8 +531,12 @@ export const orderReconciliationAttemptsTable = sqliteTable(
     actionsTaken: text('actions_taken'),
     resultStatus: text('result_status').notNull(),
     errorMessage: text('error_message'),
-    createdAt: text('created_at').default(sql`CURRENT_TIMESTAMP`).notNull(),
-    updatedAt: text('updated_at').default(sql`CURRENT_TIMESTAMP`).notNull(),
+    createdAt: text('created_at')
+      .$defaultFn(() => new Date().toISOString().slice(0, 19).replace('T', ' '))
+      .notNull(),
+    updatedAt: text('updated_at')
+      .$defaultFn(() => new Date().toISOString().slice(0, 19).replace('T', ' '))
+      .notNull(),
   },
 );
 
@@ -515,8 +637,19 @@ const addProductBaseSchema = z.object({
   categoryId: z.union([z.number().int(), z.array(z.number().int())]).optional(),
 });
 
-const requiresMarkupPercentage = (data: z.infer<typeof addProductBaseSchema>) =>
-  data.price !== undefined || data.markupPercentage !== undefined;
+const requiresMarkupPercentage = (data: {
+  price?: number;
+  markupPercentage?: number;
+}) => data.price !== undefined || data.markupPercentage !== undefined;
+
+const addProductV2BaseSchema = addProductBaseSchema.extend({
+  stl: z
+    .string()
+    .optional()
+    .describe(
+      'Deprecated compatibility field. Use publicFileServiceId as the durable Slant3D print file reference.',
+    ),
+});
 
 export const addProductSchema = addProductBaseSchema.refine(
   requiresMarkupPercentage,
@@ -526,7 +659,7 @@ export const addProductSchema = addProductBaseSchema.refine(
   },
 );
 
-export const addProductV2Schema = addProductBaseSchema
+export const addProductV2Schema = addProductV2BaseSchema
   .extend({
     publicFileServiceId: z
       .string()
@@ -584,10 +717,10 @@ export const stripeFulfillmentTable = sqliteTable('stripe_fulfillment', {
   slantOrderId: text('slant_order_id'),
   createdAt: integer('created_at', { mode: 'timestamp' })
     .notNull()
-    .default(sql`(unixepoch())`),
+    .$defaultFn(() => new Date()),
   updatedAt: integer('updated_at', { mode: 'timestamp' })
     .notNull()
-    .default(sql`(unixepoch())`),
+    .$defaultFn(() => new Date()),
 });
 
 // Table for storing uploaded STL files with estimates from Slant3D
@@ -618,8 +751,10 @@ export const uploadedFilesTable = sqliteTable('uploaded_files', {
   // Timestamps
   createdAt: integer('created_at', { mode: 'timestamp' })
     .notNull()
-    .default(sql`(unixepoch())`),
+    .$defaultFn(() => new Date()),
   updatedAt: integer('updated_at', { mode: 'timestamp' })
     .notNull()
-    .default(sql`(unixepoch())`),
+    .$defaultFn(() => new Date()),
 });
+export { reservations, starts } from '../shopping/storage/ledger-schema';
+export { runs, visits } from '../shopping/storage/visit-schema';

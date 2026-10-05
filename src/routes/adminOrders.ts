@@ -15,11 +15,6 @@ import {
 import factory from '../factory';
 import { adminOrderOperationsForDb } from '../modules/adminOrderOperations';
 import {
-  notificationTypeForSlantStatus,
-  sendAdminFailureAlert,
-  sendOrderNotification,
-} from '../modules/orderNotifications';
-import {
   authMiddleware,
   requireCatalogMutationRole,
 } from '../utils/authMiddleware';
@@ -642,16 +637,6 @@ const adminOrders = factory
           updatedAt: now,
         });
 
-        await sendAdminFailureAlert({
-          db: c.var.db,
-          env: c.env,
-          order,
-          source: 'admin',
-          statusTransition: 'cancel_refund_stripe_refund_failed',
-          reason: 'Stripe refund failed during admin cancel/refund',
-          details: errorMessage,
-        });
-
         return c.json({ error: 'Stripe refund failed.' }, 502);
       }
 
@@ -697,22 +682,6 @@ const adminOrders = factory
           slantStatus,
         }),
         createdAt: now,
-      });
-
-      await sendOrderNotification({
-        db: c.var.db,
-        env: c.env,
-        order: {
-          id: order.id,
-          orderNumber: order.orderNumber,
-          customerEmail: order.customerEmail,
-          status: 'canceled',
-          slantStatus: 'CANCELED',
-        },
-        type: 'order_canceled',
-        source: 'admin',
-        statusTransition: `${order.status ?? 'unknown'}_to_canceled`,
-        reason: parsed.data.reason ?? null,
       });
 
       return c.json({
@@ -828,15 +797,6 @@ const adminOrders = factory
           resultStatus,
           at: now,
         });
-        await sendAdminFailureAlert({
-          db: c.var.db,
-          env: c.env,
-          order,
-          source: 'admin',
-          statusTransition: 'reconciliation_paid_without_slant_order',
-          reason: 'Paid order is missing a Slant3D order id',
-          details: `Order ${order.orderNumber}`,
-        });
 
         return c.json({
           success: true,
@@ -877,15 +837,6 @@ const adminOrders = factory
             resultStatus,
             errorMessage,
             at: now,
-          });
-          await sendAdminFailureAlert({
-            db: c.var.db,
-            env: c.env,
-            order,
-            source: 'admin',
-            statusTransition: 'reconciliation_slant_lookup_failed',
-            reason: 'Slant3D reconciliation lookup failed',
-            details: errorMessage,
           });
 
           return c.json({ error: 'Slant3D lookup failed.' }, 502);
@@ -940,24 +891,6 @@ const adminOrders = factory
             createdAt: now,
           });
           actionsTaken.push('updated_local_status');
-
-          const notificationType = notificationTypeForSlantStatus(slantStatus);
-          if (notificationType) {
-            await sendOrderNotification({
-              db: c.var.db,
-              env: c.env,
-              order: {
-                id: order.id,
-                orderNumber: order.orderNumber,
-                customerEmail: order.customerEmail,
-                status: nextLocalStatus,
-                slantStatus,
-              },
-              type: notificationType,
-              source: 'admin',
-              statusTransition: `${order.slantStatus ?? 'unknown'}_to_${slantStatus}`,
-            });
-          }
         }
       }
 
@@ -990,78 +923,6 @@ const adminOrders = factory
             : order.status,
         slantStatus: currentSlantStatus,
       });
-    },
-  )
-  .post(
-    '/admin/orders/:id/resend-notification',
-    authMiddleware,
-    requireCatalogMutationRole,
-    describeRoute({
-      description: 'Resend order notification email (admin only)',
-      tags: ['Admin Orders'],
-      responses: {
-        200: {
-          content: {
-            'application/json': {
-              schema: resolver(
-                z.object({ success: z.boolean(), event: orderEventSchema }),
-              ),
-            },
-          },
-          description: 'Notification resent',
-        },
-        401: {
-          content: { 'application/json': { schema: resolver(errorSchema) } },
-          description: 'Unauthorized',
-        },
-        403: {
-          content: { 'application/json': { schema: resolver(errorSchema) } },
-          description: 'Forbidden',
-        },
-        404: {
-          content: { 'application/json': { schema: resolver(errorSchema) } },
-          description: 'Order not found',
-        },
-      },
-    }),
-    async c => {
-      const orderId = parseOrderId(c.req.param('id'));
-
-      if (orderId === null) {
-        return c.json({ error: 'Invalid order ID' }, 400);
-      }
-
-      const operations = adminOrderOperationsForDb(c.var.db);
-      const result = await operations.recordNotificationResend({
-        orderId,
-        actor: {
-          email: (c.get('jwtPayload') as { email?: string } | undefined)?.email,
-        },
-      });
-
-      if (result.type === 'not_found') {
-        return c.json({ error: 'Order not found' }, 404);
-      }
-
-      const order = await c.var.db
-        .select()
-        .from(ordersTable)
-        .where(eq(ordersTable.id, orderId))
-        .get();
-
-      if (order) {
-        await sendOrderNotification({
-          db: c.var.db,
-          env: c.env,
-          order,
-          type: 'order_confirmation',
-          source: 'admin',
-          statusTransition: `admin_resend:${result.event.id}`,
-          dedupe: false,
-        });
-      }
-
-      return c.json({ success: true, event: result.event });
     },
   );
 

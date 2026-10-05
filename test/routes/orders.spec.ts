@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
-import app from '../../src/index';
+import app from '../../src/app';
 import { mockAuth } from '../mocks/auth';
 import {
   capturedInserts,
@@ -59,13 +59,6 @@ function makeWebhookRequest(body: unknown, secret?: string): Request {
     method: 'POST',
     headers,
     body: JSON.stringify(body),
-  });
-}
-
-function mailjetResponse(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { 'Content-Type': 'application/json' },
   });
 }
 
@@ -300,15 +293,7 @@ describe('POST /webhook/slant3d', () => {
 
     expect(res.status).toBe(422);
     expect(await res.json()).toEqual({ error: 'Invalid request body' });
-    expect(capturedInserts).toHaveLength(1);
-    expect(capturedInserts[0]).toMatchObject({
-      orderId: null,
-      notificationType: 'admin_failure_alert',
-      recipientEmail: env.MAILJET_SENDER_EMAIL,
-      status: 'sent',
-      statusTransition: 'slant_webhook_invalid_body',
-      source: 'slant3d',
-    });
+    expect(capturedInserts).toHaveLength(0);
   });
 
   test('returns 404 when the Slant order is unknown locally', async () => {
@@ -366,7 +351,8 @@ describe('POST /webhook/slant3d', () => {
       orderId: 42,
       status: 'SHIPPED',
     });
-    expect(capturedInserts).toHaveLength(2);
+    expect(capturedInserts).toHaveLength(1);
+    expect(globalThis.fetch).not.toHaveBeenCalled();
     expect(capturedInserts[0]).toMatchObject({
       orderId: 42,
       type: 'slant_status_changed',
@@ -377,27 +363,12 @@ describe('POST /webhook/slant3d', () => {
       nextStatus: 'SHIPPED',
       metadata: JSON.stringify({ trackingNumber: 'TRACK123' }),
     });
-    expect(capturedInserts[1]).toMatchObject({
-      orderId: 42,
-      notificationType: 'order_shipped',
-      recipientEmail: 'test@example.com',
-      status: 'sent',
-      statusTransition: 'PROCESSING_to_SHIPPED',
-      source: 'slant3d',
-    });
   });
 
-  test('acknowledges status updates and alerts admins when customer notification delivery fails', async () => {
-    vi.mocked(globalThis.fetch)
-      .mockResolvedValueOnce(
-        mailjetResponse(
-          { Messages: [{ Errors: [{ ErrorMessage: 'down' }] }] },
-          500,
-        ),
-      )
-      .mockResolvedValueOnce(
-        mailjetResponse({ Messages: [{ To: [{ MessageID: 123 }] }] }),
-      );
+  test('applies status updates without external requests', async () => {
+    vi.mocked(globalThis.fetch).mockRejectedValue(
+      new Error('No external requests expected'),
+    );
     mockWhere
       .mockReturnValueOnce({
         get: vi.fn().mockResolvedValue({
@@ -418,7 +389,7 @@ describe('POST /webhook/slant3d', () => {
     const res = await app.fetch(
       makeWebhookRequest(
         {
-          eventId: 'slant-event-notification-failed',
+          eventId: 'slant-event-without-email',
           orderId: slantOrderId,
           status: 'SHIPPED',
         },
@@ -433,27 +404,12 @@ describe('POST /webhook/slant3d', () => {
       orderId: 42,
       status: 'SHIPPED',
     });
-    expect(capturedInserts).toHaveLength(3);
+    expect(capturedInserts).toHaveLength(1);
+    expect(globalThis.fetch).not.toHaveBeenCalled();
     expect(capturedInserts[0]).toMatchObject({
       orderId: 42,
       type: 'slant_status_changed',
       nextStatus: 'SHIPPED',
-    });
-    expect(capturedInserts[1]).toMatchObject({
-      orderId: 42,
-      notificationType: 'order_shipped',
-      recipientEmail: 'test@example.com',
-      status: 'failed',
-      statusTransition: 'PROCESSING_to_SHIPPED',
-      source: 'slant3d',
-    });
-    expect(capturedInserts[2]).toMatchObject({
-      orderId: 42,
-      notificationType: 'admin_failure_alert',
-      recipientEmail: env.MAILJET_SENDER_EMAIL,
-      status: 'sent',
-      statusTransition: 'order_shipped_delivery_failed',
-      source: 'slant3d',
     });
   });
 
