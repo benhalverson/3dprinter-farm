@@ -252,67 +252,30 @@ Notes:
 - `GET|POST /auth/signout` - Clear the current session cookie
 - `GET /api/auth/get-session` - Return the active Better Auth session
 
-### Shipping estimate contract
+### Shipping estimates
 
-`GET /cart/shipping?cartId=<uuid>` requires a valid Better Auth session cookie
-and a cart claimed by that user. Guest credentials alone do not suffice. The
-route accepts no address or amount body and returns `Cache-Control: no-store`.
-Use `GET /profile` to retrieve saved details (its street field is `address`);
-profile writes use `shippingAddress`. Estimation reads the stored, decrypted
-profile, not a client-supplied shipping destination.
+`GET /cart/shipping?cartId=<uuid>` requires a Better Auth session and a cart
+claimed by that user. It uses the saved profile and returns
+`Cache-Control: no-store`. No request body is required.
 
-Required profile values are nonblank `firstName`, `lastName`, `shippingAddress`,
-`city`, `state`, `zipCode`, a valid `email`, and a two-letter `country` code.
-The adapter explicitly maps `firstName` + `lastName` to `name`,
-`shippingAddress` to `line1`, an empty string to `line2`, `zipCode` to `zip`,
-and uppercase `country` to `country`; `city` and `state` retain their names.
-It does not silently substitute US for missing/invalid countries. `phone` is
-not sent in the existing V2 estimate request.
+Use `GET /profile` to retrieve the address and `POST /profile/:id` to update it.
+Profile reads use `address` for the street; writes use `shippingAddress`.
+Estimates require nonblank names, street, city, state and ZIP/postal code,
+a valid email, and a two-letter country code.
 
-Success is `{ "shippingCost": 15.99 }`, a finite nonnegative **USD major-unit
-amount (dollars)**, not an address or payable quote. The adapter accepts only
-`data.order.deliveryCost` (a nonnegative two-decimal string) and
-`data.totals.deliveryCost` (a finite nonnegative number), as shown in the
-[official V2 Orders examples](https://slant3dapi.com/documentation/orders).
-Either field can supply the estimate; if both are present they must agree.
-Legacy aliases such as top-level `shippingCost` are no longer accepted: their
-units are not established. Malformed, conflicting or missing costs yield 502.
+Success: `{ "shippingCost": 15.99 }`, in **USD dollars**. Amounts are nonnegative,
+represent exact cents, and cannot exceed `90071992547409` USD. Convert validated
+values with `Math.round(shippingCost * 100)`; require a safe integer and
+`cents / 100 === shippingCost`. Use integer cents for monetary arithmetic and
+reject total overflow. An estimate is not a persisted or authorized payment quote.
 
-The provider's [August 5, 2026 integration guide](https://www.slant3d.com/blog/2bdfb955-53b3-48d0-8e95-b04cb3187634)
-uses the same V2 draft endpoint and converts USD major units to cents. The owner
-confirmed this account's currency is **USD on October 5, 2026**. Together these
-establish this endpoint's USD/dollar contract; no universal provider currency
-or units for legacy aliases are assumed. The response shape remains unchanged.
+Errors return `{ "error": "message" }`:
 
-Amounts must represent exact cents, are nonnegative, and cannot exceed
-`90071992547409` USD (`floor(Number.MAX_SAFE_INTEGER / 100)`, a numeric safety
-bound, not a pricing policy). Values with fractional cents, unsafe magnitudes,
-or decimal conversion that cannot preserve the original integer cents yield
-502. Both provider fields are compared in integer cents before normalization.
+- `400`: invalid cart ID, incomplete profile, missing print file or invalid quantity.
+- `401`: missing/invalid session or unclaimed cart.
+- `403`: cart lines belong to another account.
+- `404`: missing/inaccessible or empty cart, or missing profile.
+- `500`: server configuration, decryption or database failure.
+- `502`: provider failure, timeout or invalid estimate.
 
-Downstream #5 / #189 must validate this contract before converting dollars with
-`Math.round(shippingCost * 100)`; require a safe nonnegative integer result and
-round-trip agreement (`cents / 100 === shippingCost`). Never multiply arbitrary
-provider aliases or trust a client-submitted amount. Perform arithmetic in
-integer cents and check every combined total for safe integer overflow.
-This estimate is not persisted or bound to payment: checkout must independently
-validate current cart/address/configuration and authorize the final payable
-quote before initiating a Square payment. This slice changes no payment amount.
-
-All documented errors have the JSON shape `{ "error": "message" }`:
-
-- `400`: invalid/missing cart UUID, incomplete profile, missing printable file,
-  or invalid quantity.
-- `401`: missing/invalid session or an unclaimed cart.
-- `403`: cart lines belong to a different account.
-- `404`: missing profile, missing/inaccessible cart, or empty cart.
-- `500`: server configuration, profile decryption or database failure.
-- `502`: provider rejection, transport failure, 15-second timeout, malformed
-  JSON, or invalid/ambiguous amount. Raw upstream bodies and exceptions are
-  never returned.
-
-The existing `POST /v2/api/orders` provider draft-estimate integration is used;
-no local quote is persisted and no payment/fulfillment endpoint is called.
-The legacy default black filament remains for older cart lines. Checkout must
-perform its own current catalog/configuration validation. Generated endpoint
-schemas are available through `/open-api` and `/docs`.
+See `/open-api` or `/docs` for generated endpoint documentation.
