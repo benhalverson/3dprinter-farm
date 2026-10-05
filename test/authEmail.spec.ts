@@ -1,6 +1,7 @@
 import { betterAuth } from 'better-auth';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import { createAuth, type AuthBindings } from '../lib/auth';
+import { BROWSER_ORIGINS } from '../src/config/browserOrigins';
 import { mockEnv } from './mocks/env';
 
 vi.unmock('../lib/auth');
@@ -50,13 +51,7 @@ describe('password reset email delivery', () => {
     });
     expect(auth.options?.advanced?.backgroundTasks).toBeUndefined();
     expect(auth.options?.advanced?.disableOriginCheck).toBe(false);
-    expect(auth.options?.trustedOrigins).toEqual([
-      'http://localhost:3000', 'http://localhost:4200', 'http://localhost:5173',
-      'http://localhost:8787', 'https://rc-store.benhalverson.dev',
-      'https://rc-admin.pages.dev', 'https://rc-admin.benhalverson.workers.dev',
-      'https://api.benhalverson.dev', 'https://race-forge.com',
-      'https://luluspeedworks.com',
-    ]);
+    expect(auth.options?.trustedOrigins).toEqual([...BROWSER_ORIGINS]);
   });
 
   test('waits until the provider finishes delivery', async () => {

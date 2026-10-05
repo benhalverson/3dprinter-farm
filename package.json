@@ -12,13 +12,14 @@
     "dev": "wrangler dev",
     "start": "wrangler dev",
     "test": "vitest",
-    "test:ci": "vitest run",
+    "test:ci": "vitest run && pnpm run test:database",
     "test:project-notes": "node --test --disable-warning=ExperimentalWarning --experimental-strip-types test/project-notes/*.spec.ts",
     "check:biome": "biome lint .",
     "check:types": "tsc --noEmit",
     "check:sql": "node --experimental-strip-types tools/sql-policy/check.ts",
     "check": "pnpm run check:biome && pnpm run check:types && pnpm run check:sql",
     "cf-typegen": "wrangler types",
+    "test:database": "vitest run --config vitest.database.config.mts",
     "test:deploy": "node --test test/deploy.spec.mjs"
   },
   "devDependencies": {

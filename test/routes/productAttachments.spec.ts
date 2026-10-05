@@ -476,7 +476,7 @@ describe('durable product attachments through Hono', () => {
     const response = await request(`/attachments/${photo.id}/image`);
     expect(response.status).toBe(200);
     expect(response.headers.get('content-type')).toBe(mime);
-    expect(response.headers.get('cache-control')).toBe('no-store');
+    expect(response.headers.get('cache-control')).toBe('private, no-store');
     expect(new Uint8Array(await response.arrayBuffer())).toEqual(data);
     authorize('another-admin');
     expect((await request(`/attachments/${photo.id}/image`)).status).toBe(404);

@@ -46,8 +46,8 @@ test.each(origins)('preserves preflight and unauthorized profile CORS for %s', a
   expect(preflight.headers.get('Access-Control-Allow-Methods')?.split(',')).toEqual([
     'GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS',
   ]);
-  expect(preflight.headers.get('Access-Control-Allow-Headers')?.toLowerCase()).toBe('content-type,authorization');
-  expect(preflight.headers.get('Vary')).toContain('Access-Control-Request-Headers');
+  expect(preflight.headers.get('Access-Control-Allow-Headers')?.toLowerCase()).toBe('content-type,authorization,x-cart-token');
+  expect(preflight.headers.get('Cache-Control')).toBe('private, no-store');
   expect(mockBetterAuth.handler).not.toHaveBeenCalled();
   mockBetterAuth.getSession.mockResolvedValueOnce(null);
   const profile = await request('/profile', origin);
@@ -92,7 +92,8 @@ test.each([
   mockBetterAuth.getSession.mockResolvedValueOnce(null);
   const response = await request('/profile', origin);
   expect(response.headers.get('Access-Control-Allow-Origin')).toBeNull();
-  expect(response.status).toBe(401);
+  expect(response.status).toBe(403);
+  expect(mockBetterAuth.getSession).not.toHaveBeenCalled();
   expect(response.headers.get('Vary')).toContain('Origin');
 });
 
