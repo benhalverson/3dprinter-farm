@@ -2,6 +2,7 @@ import { Scalar } from '@scalar/hono-api-reference';
 import { cors } from 'hono/cors';
 import { openAPISpecs } from 'hono-openapi';
 import factory from './factory';
+import checkoutQuotes from './routes/checkoutQuotes';
 import adminOrders from './routes/adminOrders';
 import auth from './routes/auth';
 import authApi from './routes/authApi';
@@ -70,6 +71,7 @@ const app = factory
   .route('/', printer)
   .route('/', paymentsRouter)
   .route('/', shoppingCart)
+  .route('/', checkoutQuotes)
   .route('/', ordersRouter)
   .route('/', adminOrders);
 

@@ -758,3 +758,25 @@ export const uploadedFilesTable = sqliteTable('uploaded_files', {
 });
 export { reservations, starts } from '../shopping/storage/ledger-schema';
 export { runs, visits } from '../shopping/storage/visit-schema';
+
+/** Immutable checkout evidence; only invalidated may transition after creation. */
+export const checkoutQuotes = sqliteTable(
+  'checkout_quotes',
+  {
+    id: text('id').primaryKey(),
+    ownerId: text('owner_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    cartId: text('cart_id').notNull(),
+    inputHash: text('input_hash').notNull(),
+    encryptedSnapshot: text('encrypted_snapshot').notNull(),
+    createdAt: integer('created_at').notNull(),
+    expiresAt: integer('expires_at').notNull(),
+    invalidated: integer('invalidated', { mode: 'boolean' })
+      .notNull()
+      .default(false),
+  },
+  table => [
+    index('checkout_quotes_owner_cart').on(table.ownerId, table.cartId),
+  ],
+);
