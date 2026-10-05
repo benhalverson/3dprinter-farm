@@ -6,7 +6,7 @@ import {
   generateSQLiteMigration,
   type DrizzleSQLiteSnapshotJSON,
 } from 'drizzle-kit/api';
-import { eq } from 'drizzle-orm';
+import { eq, getTableColumns } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/d1';
 import { migrate } from 'drizzle-orm/d1/migrator';
 import { integer, sqliteTable, text } from 'drizzle-orm/sqlite-core';
@@ -27,6 +27,20 @@ const baselineOrders = sqliteTable('ordersTable', {
   shipToZip: text('ship_to_zip').notNull(),
   shipToCountryISO: text('ship_to_country_iso').notNull(),
 });
+
+// Freeze the historical pre-notification envelope used by this Square-only upgrade.
+const baselineNotifications = sqliteTable('order_notification_attempts', {
+  orderId: integer('order_id'),
+  notificationType: text('notification_type').notNull(),
+  recipientEmail: text('recipient_email').notNull(),
+  status: text('status').notNull(),
+  source: text('source').notNull(),
+  idempotencyKey: text('idempotency_key').notNull(),
+  createdAt: text('created_at').$defaultFn(() => new Date().toISOString()),
+  updatedAt: text('updated_at').$defaultFn(() => new Date().toISOString()),
+});
+const { slantEventKey: _futureLifecycleKey, ...squareOrderColumns } =
+  getTableColumns(schema.ordersTable);
 
 /** Builds a disposable schema baseline through Drizzle, without replaying broken historical bootstrap migrations. */
 async function baselineFolder(root: string) {
@@ -127,7 +141,8 @@ test('committed Square increments preserve real D1 orders, dependent history and
       ]),
     });
     expect(
-      (await db.select().from(schema.ordersTable))[0].paymentStatus,
+      (await db.select(squareOrderColumns).from(schema.ordersTable))[0]
+        .paymentStatus,
     ).toBeNull();
     await db.insert(schema.checkoutQuotes).values({
       id: 'upgrade-quote',
@@ -174,7 +189,7 @@ test('committed Square increments preserve real D1 orders, dependent history and
       dedupeKey: 'square-paid:square-payment',
       detail: 'retained event',
     });
-    await db.insert(schema.orderNotificationAttemptsTable).values({
+    await db.insert(baselineNotifications).values({
       orderId: 700,
       notificationType: 'paid',
       recipientEmail: 'upgrade@example.test',
@@ -190,7 +205,9 @@ test('committed Square increments preserve real D1 orders, dependent history and
     const cleanup = await forwardFolder(root, ['0022_square_order_storage']);
     await migrate(db, { migrationsFolder: cleanup });
     await migrate(db, { migrationsFolder: cleanup });
-    expect((await db.select().from(schema.ordersTable))[0]).toMatchObject({
+    expect(
+      (await db.select(squareOrderColumns).from(schema.ordersTable))[0],
+    ).toMatchObject({
       orderNumber: 'EXISTING-ORDER',
       squareOrderId: 'square-order',
       squarePaymentId: 'square-payment',
@@ -204,8 +221,7 @@ test('committed Square increments preserve real D1 orders, dependent history and
       'retained event',
     );
     expect(
-      (await db.select().from(schema.orderNotificationAttemptsTable))[0]
-        .idempotencyKey,
+      (await db.select().from(baselineNotifications))[0].idempotencyKey,
     ).toBe('retained-notification');
     expect(
       (await db.select().from(schema.orderCancellationAttemptsTable))[0].reason,

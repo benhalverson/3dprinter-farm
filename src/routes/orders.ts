@@ -1,9 +1,14 @@
-import { and, eq } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import { describeRoute } from 'hono-openapi';
 import { resolver } from 'hono-openapi/zod';
 import { z } from 'zod';
 import { orderEventsTable, ordersTable } from '../db/schema';
 import factory from '../factory';
+import { recordSlantLifecycle } from '../modules/slantLifecycle';
+import {
+  alertSlantWebhookFailure,
+  tryReconcileSquareNotifications,
+} from '../lib/notifications';
 import { authMiddleware } from '../utils/authMiddleware';
 
 type OpenAPISchema = Record<string, unknown>;
@@ -17,8 +22,8 @@ const slantOrderStatusSchema = z.enum([
 ]);
 
 const slantWebhookBodySchema = z.object({
-  eventId: z.string().optional(),
-  orderId: z.string(),
+  eventId: z.string().trim().min(1).max(200),
+  orderId: z.string().trim().min(1).max(200),
   status: slantOrderStatusSchema,
   metadata: z.record(z.unknown()).optional(),
 });
@@ -79,30 +84,6 @@ const customerOrderListSchema = z.object({
     count: z.number(),
   }),
 });
-
-function localStatusForSlantStatus(
-  status: z.infer<typeof slantOrderStatusSchema>,
-) {
-  return status.toLowerCase();
-}
-
-function timestampFieldForStatus(
-  status: z.infer<typeof slantOrderStatusSchema>,
-) {
-  if (status === 'PROCESSING') return 'processedAt';
-  if (status === 'SHIPPED') return 'shippedAt';
-  if (status === 'DELIVERED') return 'deliveredAt';
-  if (status === 'CANCELED') return 'canceledAt';
-  return null;
-}
-
-function responseStatusForOrder(
-  value: string | null | undefined,
-  fallback: z.infer<typeof slantOrderStatusSchema>,
-) {
-  const parsed = slantOrderStatusSchema.safeParse(value);
-  return parsed.success ? parsed.data : fallback;
-}
 
 type OrderRow = typeof ordersTable.$inferSelect;
 type OrderEventRow = typeof orderEventsTable.$inferSelect;
@@ -464,6 +445,7 @@ const ordersRouter = factory
         },
       },
     }),
+    /** Authenticate before atomically recording manufacturing evidence and recovering email intents. */
     async c => {
       const configuredSecret = c.env.SLANT_WEBHOOK_SECRET;
       if (!configuredSecret)
@@ -481,73 +463,29 @@ const ordersRouter = factory
         return c.json({ error: 'Invalid request body' }, 422);
       }
 
-      const { eventId, orderId, status, metadata } = parsed.data;
-      const order = await c.var.db
-        .select()
-        .from(ordersTable)
-        .where(eq(ordersTable.slantPublicOrderId, orderId))
-        .get();
-
-      if (!order) {
-        return c.json({ error: 'Order not found' }, 404);
+      let outcome: Awaited<ReturnType<typeof recordSlantLifecycle>>;
+      try {
+        outcome = await recordSlantLifecycle(c.var.db, parsed.data);
+      } catch {
+        console.error('notification.slant_webhook_failed');
+        await alertSlantWebhookFailure(
+          c.var.db,
+          c.env,
+          parsed.data.orderId,
+          parsed.data.eventId,
+        );
+        return c.json(
+          { error: 'Lifecycle persistence unavailable; retry event' },
+          503,
+        );
       }
-
-      if (eventId) {
-        const existingEvent = await c.var.db
-          .select()
-          .from(orderEventsTable)
-          .where(
-            and(
-              eq(orderEventsTable.orderId, order.id),
-              eq(orderEventsTable.externalEventId, eventId),
-            ),
-          )
-          .get();
-
-        if (existingEvent) {
-          return c.json({
-            success: true,
-            orderId: order.id,
-            status: responseStatusForOrder(order.slantStatus, status),
-          });
-        }
-      }
-
-      const now = new Date().toISOString();
-      const previousStatus = order.slantStatus ?? order.status ?? null;
-      const updateFields: Partial<typeof ordersTable.$inferInsert> = {
-        status: localStatusForSlantStatus(status),
-        slantStatus: status,
-        updatedAt: now,
-      };
-      const timestampField = timestampFieldForStatus(status);
-      if (timestampField === 'processedAt') updateFields.processedAt = now;
-      if (timestampField === 'shippedAt') updateFields.shippedAt = now;
-      if (timestampField === 'deliveredAt') updateFields.deliveredAt = now;
-      if (timestampField === 'canceledAt') updateFields.canceledAt = now;
-
-      await c.var.db
-        .update(ordersTable)
-        .set(updateFields)
-        .where(eq(ordersTable.id, order.id));
-
-      await c.var.db.insert(orderEventsTable).values({
-        orderId: order.id,
-        type: 'slant_status_changed',
-        detail: `Slant3D status changed from ${previousStatus ?? 'unknown'} to ${status}`,
-        actor: 'slant3d',
-        externalEventId: eventId ?? null,
-        source: 'slant3d',
-        previousStatus,
-        nextStatus: status,
-        metadata: metadata ? JSON.stringify(metadata) : null,
-        createdAt: now,
-      });
-
+      if (outcome.status !== 200)
+        return c.json({ error: outcome.error }, outcome.status);
+      await tryReconcileSquareNotifications(c.var.db, c.env, outcome.orderId);
       return c.json({
         success: true,
-        orderId: order.id,
-        status,
+        orderId: outcome.orderId,
+        status: outcome.lifecycleStatus,
       });
     },
   );

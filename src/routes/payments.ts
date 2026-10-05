@@ -2,6 +2,7 @@ import { describeRoute } from 'hono-openapi';
 import { validator, resolver } from 'hono-openapi/zod';
 import { z } from 'zod';
 import factory from '../factory';
+import { tryReconcileSquareNotifications } from '../lib/notifications';
 import { verifySquareSignature, isSquareFailure } from '../lib/square';
 import {
   acceptSquarePayment,
@@ -105,6 +106,7 @@ router.post(
       503: { description: 'Webhook configuration required' },
     },
   }),
+  /** Resolve only authenticated Square payment evidence before notification reconciliation. */
   async c => {
     const body = await c.req.text();
     if (body.length > 1024 * 1024)
@@ -137,14 +139,13 @@ router.post(
         event.data.data.type !== 'payment'
       )
         return c.json({ received: true });
-      return c.json(
-        await acceptSquarePayment(
-          c.var.db,
-          c.env,
-          event.data.merchant_id,
-          event.data.data.id,
-        ),
+      const accepted = await acceptSquarePayment(
+        c.var.db, c.env, event.data.merchant_id, event.data.data.id,
       );
+      if ('orderId' in accepted && typeof accepted.orderId === 'number') {
+        await tryReconcileSquareNotifications(c.var.db, c.env, accepted.orderId);
+      }
+      return c.json(accepted);
     } catch (error) {
       if (isSquareFailure(error))
         return c.json(

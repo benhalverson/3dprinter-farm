@@ -11,6 +11,7 @@ import {
   ordersTable,
 } from '../db/schema';
 import factory from '../factory';
+import { tryReconcileSquareNotifications } from '../lib/notifications';
 import { adminOrderOperationsForDb } from '../modules/adminOrderOperations';
 import {
   authMiddleware,
@@ -344,6 +345,7 @@ const adminOrders = factory
         },
       },
     }),
+    /** Run authorized order recovery, then reconcile only persisted Square notification evidence. */
     async c => {
       const orderId = parseOrderId(c.req.param('id'));
 
@@ -368,6 +370,7 @@ const adminOrders = factory
           db: c.var.db,
           env: c.env,
         }).fulfillPaidOrder(orderId);
+        await tryReconcileSquareNotifications(c.var.db, c.env, orderId);
         return c.json({ success: true, orderId });
       }
       const operations = adminOrderOperationsForDb(c.var.db);
@@ -469,6 +472,7 @@ const adminOrders = factory
         },
       },
     }),
+    /** Run authorized order recovery, then reconcile only persisted Square notification evidence. */
     async c => {
       const orderId = parseOrderId(c.req.param('id'));
 
@@ -501,6 +505,7 @@ const adminOrders = factory
           order.id,
           recovery.data.slantPublicOrderId,
         );
+        await tryReconcileSquareNotifications(c.var.db, c.env, order.id);
         const [current] = await c.var.db
           .select()
           .from(ordersTable)

@@ -12,7 +12,7 @@
     "dev": "wrangler dev",
     "start": "wrangler dev",
     "test": "vitest",
-    "test:ci": "vitest run && pnpm run test:database && pnpm run test:quotes",
+    "test:ci": "drizzle-kit generate --config test/quotes.drizzle.config.ts && vitest run && pnpm run test:database && pnpm test:quotes",
     "test:project-notes": "node --test --disable-warning=ExperimentalWarning --experimental-strip-types test/project-notes/*.spec.ts",
     "check:biome": "biome lint .",
     "check:types": "tsc --noEmit",

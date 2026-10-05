@@ -1,10 +1,19 @@
-import { cloudflareTest } from '@cloudflare/vitest-pool-workers';
+import {
+  cloudflareTest,
+  readD1Migrations,
+} from '@cloudflare/vitest-pool-workers';
 import { configDefaults, defineConfig } from 'vitest/config';
 
 export default defineConfig({
   plugins: [
     cloudflareTest({
       miniflare: {
+        d1Databases: ['NOTIFICATIONS_TEST_DB'],
+        bindings: {
+          NOTIFICATIONS_TEST_MIGRATIONS: await readD1Migrations(
+            './.generated/quote-test-migrations',
+          ),
+        },
         compatibilityDate: '2024-10-05',
         // Vitest 4 observes Node rejection events; wait for promise adoption
         // before classifying a rejection as unhandled (default since 2026-03-03).

@@ -11,6 +11,10 @@ enabled = true
 invocation_logs = false
 
 [[send_email]]
+name = "ORDER_EMAIL"
+remote = false
+
+[[send_email]]
 name = "AUTH_EMAIL"
 remote = false
 
@@ -47,6 +51,7 @@ id = "81516966d6ad4902bf63e82b284c0617"
 preview_id = "c7d43c86ba9c4f5c9419970c12bb2fca"
 
 [vars]
+ORDER_NOTIFICATIONS_ENABLED = "false"
 AGENT_ENABLED = "false"
 AGENT_PRICE_VERSION = "glm-5.3-flash-2026-09-21"
 DOMAIN = "https://rc-store.benhalverson.dev"

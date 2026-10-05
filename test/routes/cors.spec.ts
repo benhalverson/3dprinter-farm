@@ -93,6 +93,7 @@ test.each([
   const response = await request('/profile', origin);
   expect(response.headers.get('Access-Control-Allow-Origin')).toBeNull();
   expect(response.status).toBe(403);
+  expect(response.headers.get('Cache-Control')).toContain('no-store');
   expect(response.headers.get('Vary')).toContain('Origin');
 });
 

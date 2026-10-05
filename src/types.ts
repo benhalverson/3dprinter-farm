@@ -32,6 +32,9 @@ import type { orderSchema } from './db/schema';
  */
 export type Bindings = {
   AUTH_EMAIL: Env['AUTH_EMAIL'];
+  ORDER_EMAIL?: Env['ORDER_EMAIL'];
+  ORDER_ADMIN_EMAIL?: string;
+  ORDER_NOTIFICATIONS_ENABLED?: string;
   AUTH_BASE_URL: string;
   SHOPPING_AGENT: DurableObjectNamespace<
     import('./shopping/agent').ShoppingAgent

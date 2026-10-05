@@ -11,6 +11,7 @@ import adminOrders from './routes/adminOrders';
 import auth from './routes/auth';
 import authApi from './routes/authApi';
 import ordersRouter from './routes/orders';
+import notifications from './routes/notifications';
 import paymentsRouter from './routes/payments';
 import printer from './routes/printer';
 import product from './routes/product';
@@ -27,6 +28,11 @@ const app = factory
   .createApp()
   /** Preserves route-specific JSON failures without hiding mounted OpenAPI metadata. */
   .onError((error, c) => {
+    if (c.req.path.startsWith('/notifications/')) {
+      console.error('notification.request_failed');
+      c.header('Cache-Control', 'no-store');
+      return c.json({ error: 'Notification request failed' }, 500);
+    }
     if (c.req.path === '/cart/shipping') {
       c.header('Cache-Control', 'no-store');
       return c.json({ error: 'Failed to retrieve shipping estimate' }, 500);
@@ -67,7 +73,8 @@ const app = factory
   .route('/', shoppingCart)
   .route('/', checkoutQuotes)
   .route('/', ordersRouter)
-  .route('/', adminOrders);
+  .route('/', adminOrders)
+  .route('/', notifications);
 
 app.get(
   '/open-api',

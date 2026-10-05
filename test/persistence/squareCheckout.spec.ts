@@ -1,7 +1,7 @@
 import { createClient } from '@libsql/client';
+import { eq } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/libsql';
 import { migrate } from 'drizzle-orm/libsql/migrator';
-import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import * as schema from '../../src/db/schema';
 import { mockEnv } from '../mocks/env';
@@ -20,11 +20,15 @@ vi.mock('../../src/utils/profileCrypto', async importOriginal => ({
   ...(await importOriginal<typeof import('../../src/utils/profileCrypto')>()),
   decryptStoredShippingProfile: async (profile: unknown) => profile,
 }));
-import route from '../../src/routes/checkoutQuotes';
-import payments from '../../src/routes/payments';
+
 import { createPaidOrderFulfillment } from '../../src/modules/paidOrderFulfillment';
 import admin from '../../src/routes/adminOrders';
+import route from '../../src/routes/checkoutQuotes';
+import notifications from '../../src/routes/notifications';
 import orders from '../../src/routes/orders';
+import { recordSlantLifecycle } from '../../src/modules/slantLifecycle';
+import payments from '../../src/routes/payments';
+
 const cartId = '11111111-1111-4111-8111-111111111111';
 const filamentId = '22222222-2222-4222-8222-222222222222';
 let client: ReturnType<typeof createClient>;
@@ -66,6 +70,9 @@ async function quote() {
 }
 beforeEach(async () => {
   state.userId = 'owner';
+  env.ORDER_NOTIFICATIONS_ENABLED = 'false';
+  env.ORDER_EMAIL = undefined;
+  env.ORDER_ADMIN_EMAIL = undefined;
   client = createClient({ url: ':memory:' });
   db = drizzle(client, { schema });
   state.db = db;
@@ -665,6 +672,11 @@ test('existing authorized admin recovery reads retained Slant identity and rejec
     env,
   );
   expect(reconciled.status).toBe(200);
+  expect(
+    (await db.select().from(schema.orderNotificationAttemptsTable))
+      .map(row => row.notificationType)
+      .sort(),
+  ).toEqual(['admin_failure_alert', 'order_confirmation']);
   expect(await reconciled.json()).toMatchObject({
     resultStatus: 'processed',
     localStatus: 'processing',
@@ -675,4 +687,282 @@ test('existing authorized admin recovery reads retained Slant identity and rejec
   expect(
     (await db.select().from(schema.ordersTable))[0].processedAt,
   ).not.toBeNull();
+});
+
+/** Authorizes only the local fixture's existing owner for notification recovery. */
+async function notificationAdmin() {
+  await db.insert(schema.organizationTable).values({
+    id: 'org_shared_catalog',
+    name: 'Store',
+    slug: 'store',
+    createdAt: new Date(),
+  });
+  await db.insert(schema.memberTable).values({
+    id: 'member-owner',
+    organizationId: 'org_shared_catalog',
+    userId: 'owner',
+    role: 'admin',
+    createdAt: new Date(),
+  });
+}
+
+test('actual signed Square webhook queues one Cloudflare confirmation with sending disabled', async () => {
+  await prepared();
+  const send = vi.fn().mockResolvedValue({ messageId: 'mail-id' });
+  env.ORDER_EMAIL = { send };
+  await Promise.all([event(), event(), event()]);
+  const queued = await db.select().from(schema.orderNotificationAttemptsTable);
+  expect(queued).toHaveLength(1);
+  expect(queued[0]).toMatchObject({
+    notificationType: 'order_confirmation',
+    status: 'pending',
+    recipientEmail: 'owner@example.com',
+  });
+  expect(send).not.toHaveBeenCalled();
+  env.ORDER_NOTIFICATIONS_ENABLED = 'true';
+  await event();
+  await event();
+  expect(send).toHaveBeenCalledTimes(1);
+  expect(send.mock.calls[0][0]).toMatchObject({ to: 'owner@example.com' });
+  expect(slantDraftCalls).toBe(1);
+  expect(slantProcessCalls).toBe(1);
+});
+
+test('invalid signatures and mismatched Square evidence cannot enqueue emails', async () => {
+  await prepared();
+  env.ORDER_NOTIFICATIONS_ENABLED = 'true';
+  const send = vi.fn();
+  env.ORDER_EMAIL = { send };
+  expect((await event({}, true)).status).toBe(403);
+  paymentAmount = 199;
+  expect((await event()).status).toBe(400);
+  expect(
+    await db.select().from(schema.orderNotificationAttemptsTable),
+  ).toHaveLength(0);
+  expect(send).not.toHaveBeenCalled();
+});
+
+test('actual Square fulfillment ambiguity queues only a redacted admin alert', async () => {
+  await prepared();
+  processAmbiguous = true;
+  env.ORDER_NOTIFICATIONS_ENABLED = 'true';
+  env.ORDER_ADMIN_EMAIL = 'admin@example.com';
+  const send = vi.fn().mockResolvedValue({ messageId: 'alert-id' });
+  env.ORDER_EMAIL = { send };
+  expect((await event()).status).toBe(200);
+  await event();
+  expect(send).toHaveBeenCalledTimes(1);
+  expect(send.mock.calls[0][0]).toMatchObject({ to: 'admin@example.com' });
+  const queued = await db.select().from(schema.orderNotificationAttemptsTable);
+  expect(queued).toHaveLength(1);
+  expect(queued[0].notificationType).toBe('admin_failure_alert');
+  expect(JSON.stringify(send.mock.calls)).not.toContain('lost process');
+  expect(slantProcessCalls).toBe(1);
+});
+
+test('explicit admin recovery rebuilds a missing intent from durable Square events without provider reads', async () => {
+  await prepared();
+  await event();
+  await db.delete(schema.orderNotificationAttemptsTable);
+  await notificationAdmin();
+  const [order] = await db.select().from(schema.ordersTable);
+  const providerCalls = fetchMock.mock.calls.length;
+  const response = await notifications.request(
+    `/notifications/order/${order.id}/reconcile`,
+    { method: 'POST' },
+    env,
+  );
+  expect(response.status).toBe(200);
+  expect(await response.json()).toMatchObject({
+    verified: true,
+    notifications: [{ status: 'disabled' }],
+  });
+  expect(
+    await db.select().from(schema.orderNotificationAttemptsTable),
+  ).toHaveLength(1);
+  expect(fetchMock.mock.calls).toHaveLength(providerCalls);
+});
+
+test('a real post-fulfillment enqueue outage preserves acknowledgement and is recovered without provider calls', async () => {
+  await prepared();
+  let fail = true;
+  const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+  state.db = new Proxy(db, {
+    get(target, key, receiver) {
+      if (key === 'insert')
+        return (...args: Parameters<typeof db.insert>) => {
+          if (args[0] === schema.orderNotificationAttemptsTable && fail) {
+            fail = false;
+            throw new Error('sensitive database envelope');
+          }
+          return target.insert(...args);
+        };
+      return Reflect.get(target, key, receiver);
+    },
+  });
+  expect((await event()).status).toBe(200);
+  expect(
+    await db.select().from(schema.orderNotificationAttemptsTable),
+  ).toHaveLength(0);
+  expect(JSON.stringify(log.mock.calls)).not.toContain(
+    'sensitive database envelope',
+  );
+  expect(log).toHaveBeenCalledWith(
+    'notification.square_reconciliation_pending',
+  );
+  log.mockRestore();
+  state.db = db;
+  await notificationAdmin();
+  const [order] = await db.select().from(schema.ordersTable);
+  const calls = fetchMock.mock.calls.length;
+  const response = await notifications.request(
+    `/notifications/order/${order.id}/reconcile`,
+    { method: 'POST' },
+    env,
+  );
+  expect(response.status).toBe(200);
+  expect(
+    await db.select().from(schema.orderNotificationAttemptsTable),
+  ).toHaveLength(1);
+  expect(fetchMock.mock.calls).toHaveLength(calls);
+});
+
+test('eligible admin retry reconciles original failure and new confirmation through the production hook', async () => {
+  await prepared();
+  const original = fetchMock.getMockImplementation();
+  if (!original) throw new Error('provider fixture missing');
+  let rejectDraft = true;
+  fetchMock.mockImplementation(async (url, init) => {
+    if (
+      String(url).endsWith('/orders') &&
+      init?.method === 'POST' &&
+      rejectDraft
+    ) {
+      rejectDraft = false;
+      return new Response('rejected fixture', { status: 400 });
+    }
+    return original(url, init);
+  });
+  expect((await event()).status).toBe(200);
+  const [order] = await db.select().from(schema.ordersTable);
+  expect(order.fulfillmentState).toBe('ready');
+  await notificationAdmin();
+  env.ORDER_NOTIFICATIONS_ENABLED = 'true';
+  env.ORDER_ADMIN_EMAIL = 'admin@example.com';
+  const send = vi.fn().mockResolvedValue({ messageId: 'email' });
+  env.ORDER_EMAIL = { send };
+  const response = await admin.request(
+    `/admin/orders/${order.id}/retry`,
+    { method: 'POST' },
+    env,
+  );
+  expect(response.status).toBe(200);
+  expect(
+    (await db.select().from(schema.orderNotificationAttemptsTable))
+      .map(row => row.notificationType)
+      .sort(),
+  ).toEqual(['admin_failure_alert', 'order_confirmation']);
+  expect(send).toHaveBeenCalledTimes(2);
+});
+
+test.each([
+  'resolve',
+  'reject',
+  'reconcile',
+] as const)('retains authenticated cancellation during in-flight Slant %s and prevents manufacturing replay', async outcome => {
+  await prepared();
+  if (outcome === 'reconcile') {
+    processAmbiguous = true;
+    await event();
+  }
+  const original = fetchMock.getMockImplementation()!;
+  let entered!: () => void;
+  const started = new Promise<void>(resolve => {
+    entered = resolve;
+  });
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => {
+    release = resolve;
+  });
+  fetchMock.mockImplementation(async (url, init) => {
+    if (
+      String(url).endsWith('/orders/slant-order') &&
+      (outcome === 'reconcile'
+        ? init?.method === 'GET'
+        : init?.method === 'POST')
+    ) {
+      entered();
+      await gate;
+      if (outcome === 'reject') throw new Error('lost process response');
+    }
+    return original(url, init);
+  });
+  const [existing] = await db.select().from(schema.ordersTable);
+  const operation =
+    outcome === 'reconcile'
+      ? createPaidOrderFulfillment({
+          db: state.db as never,
+          env,
+        }).reconcilePaidOrder(existing.id)
+      : event();
+  await started;
+  const [pending] = await db.select().from(schema.ordersTable);
+  expect(pending.slantStatus).toBeNull();
+  expect(
+    (
+      await recordSlantLifecycle(state.db as never, {
+        eventId: 'cancel-in-flight',
+        orderId: 'slant-order',
+        status: 'CANCELED',
+      })
+    ).status,
+  ).toBe(200);
+  release();
+  await operation;
+  const [canceled] = await db.select().from(schema.ordersTable);
+  expect(canceled).toMatchObject({
+    slantStatus: 'CANCELED',
+    status: 'canceled',
+    fulfillmentState: 'canceled',
+    paymentStatus: 'paid',
+  });
+  const calls = fetchMock.mock.calls.length;
+  await createPaidOrderFulfillment({
+    db: state.db as never,
+    env,
+  }).fulfillPaidOrder(canceled.id);
+  await createPaidOrderFulfillment({
+    db: state.db as never,
+    env,
+  }).reconcilePaidOrder(canceled.id);
+  expect(fetchMock.mock.calls).toHaveLength(calls);
+});
+
+test('Slant shipment during actual process response cannot regress to PROCESSING', async () => {
+  await prepared();
+  const original = fetchMock.getMockImplementation()!;
+  fetchMock.mockImplementation(async (url, init) => {
+    if (
+      String(url).endsWith('/orders/slant-order') &&
+      init?.method === 'POST'
+    ) {
+      expect(
+        (
+          await recordSlantLifecycle(state.db as never, {
+            eventId: 'shipped-in-flight',
+            orderId: 'slant-order',
+            status: 'SHIPPED',
+          })
+        ).status,
+      ).toBe(200);
+    }
+    return original(url, init);
+  });
+  await event();
+  expect((await db.select().from(schema.ordersTable))[0]).toMatchObject({
+    slantStatus: 'SHIPPED',
+    status: 'shipped',
+    fulfillmentState: 'processed',
+    paymentStatus: 'paid',
+  });
 });

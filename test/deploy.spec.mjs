@@ -243,3 +243,22 @@ test('unrecognized output fails closed', () => {
     /Unknown/,
   );
 });
+
+test('exact additive notification migration applies and verifies before simulated release', () => {
+  const name = '0023_order_email_lifecycle.sql';
+  const contents = readFileSync(`drizzle/migrations/${name}`, 'utf8');
+  assert.equal(requiresMigrationApproval(contents), false);
+  assert.equal(hasSpecificMigrationApproval(name, contents), false);
+  const calls = [];
+  productionDeploy({
+    run: args => {
+      calls.push(args);
+      return calls.length === 1 ? `Migrations to be applied:\n${name}` : none;
+    },
+  });
+  assert.deepEqual(
+    calls.map(args => (args[0] === 'deploy' ? 'deploy' : args[2])),
+    ['list', 'apply', 'list', 'deploy'],
+  );
+  assert.deepEqual(calls[0].slice(3), calls[1].slice(3));
+});
