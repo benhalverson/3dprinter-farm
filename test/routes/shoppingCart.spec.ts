@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
-import app from '../../src/index';
+import app from '../../src/app';
 import { mockAuth, mockBetterAuth } from '../mocks/auth';
 import {
   capturedInserts,
@@ -14,23 +14,45 @@ import { mockEnv } from '../mocks/env';
 mockAuth();
 mockDrizzle();
 
+// This suite exercises handlers after authorization. The real authorization
+// predicates and middleware are covered in cartOwnership.spec.ts.
+vi.mock('../../src/modules/cartOwnership', async importOriginal => ({
+  ...(await importOriginal<typeof import('../../src/modules/cartOwnership')>()),
+  requireCartAccess: vi.fn(
+    async (_db, id: string, caller: { userId?: string }) => ({
+      id,
+      userId: caller.userId ?? null,
+      guestTokenHash: null,
+      accessVersion: 'test-version',
+    }),
+  ),
+}));
+vi.mock('../../src/modules/cartConfiguration', () => ({
+  validateCartConfiguration: vi.fn(),
+}));
+
 // Mock Stripe
 const mockStripeCheckoutCreate = vi.fn();
 const mockPaymentIntentsCreate = vi.fn();
 vi.mock('stripe', () => ({
-  default: vi.fn().mockImplementation(() => ({
-    checkout: {
-      sessions: {
-        create: mockStripeCheckoutCreate,
-      },
+  default: vi.fn(
+    /** Builds the Stripe stub when production code calls its constructor. */
+    function StripeMock() {
+      return {
+        checkout: {
+          sessions: {
+            create: mockStripeCheckoutCreate,
+          },
+        },
+        paymentIntents: {
+          create: mockPaymentIntentsCreate,
+        },
+        webhooks: {
+          constructEventAsync: vi.fn(),
+        },
+      };
     },
-    paymentIntents: {
-      create: mockPaymentIntentsCreate,
-    },
-    webhooks: {
-      constructEventAsync: vi.fn(),
-    },
-  })),
+  ),
 }));
 
 // Mock the profile crypto utilities
@@ -139,6 +161,73 @@ describe('Shopping Cart Routes', () => {
     });
   });
 
+  describe('cart mutation limits and conflicts', () => {
+    const selection = {
+      cartId: mockCartId,
+      skuNumber: 'TEST-SKU-001',
+      quantity: 1,
+      color: 'Black',
+      filamentType: 'PLA',
+      filamentId: defaultBlackFilamentId,
+    };
+    const add = () =>
+      app.request(
+        '/cart/add',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(selection),
+        },
+        env,
+      );
+
+    test('rejects an addition that would exceed the per-line quantity limit', async () => {
+      mockQuery.cart.findFirst.mockResolvedValueOnce({
+        id: 1,
+        quantity: 69,
+        userId: null,
+      });
+      const response = await add();
+      expect(response.status).toBe(400);
+      expect(mockUpdate).not.toHaveBeenCalled();
+      expect(capturedInserts).toHaveLength(0);
+    });
+    test('reports a concurrent quantity change instead of losing an addition', async () => {
+      mockQuery.cart.findFirst.mockResolvedValueOnce({
+        id: 1,
+        quantity: 2,
+        userId: null,
+      });
+      mockUpdate.mockResolvedValueOnce([]);
+      const response = await add();
+      expect(response.status).toBe(409);
+      expect(capturedInserts).toHaveLength(0);
+    });
+    test('accepts an addition whose conditional update succeeded', async () => {
+      mockQuery.cart.findFirst.mockResolvedValueOnce({
+        id: 1,
+        quantity: 2,
+        userId: null,
+      });
+      mockUpdate.mockResolvedValueOnce([{ id: 1 }]);
+      expect((await add()).status).toBe(200);
+    });
+    test.each([
+      -1, 0.5, 70,
+    ])('rejects invalid update quantity %s', async quantity => {
+      const response = await app.request(
+        '/cart/update',
+        {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ cartId: mockCartId, itemId: 1, quantity }),
+        },
+        env,
+      );
+      expect(response.status).toBe(400);
+      expect(mockUpdate).not.toHaveBeenCalled();
+    });
+  });
   describe('GET /cart/:cartId', () => {
     test('retrieves cart items successfully', async () => {
       const mockCartItems = [
@@ -323,6 +412,7 @@ describe('Shopping Cart Routes', () => {
         `http://localhost/cart/${mockCartId}/stripe-items`,
         {
           method: 'GET',
+          headers: { Cookie: 'better-auth.session_token=test' },
         },
       );
 
@@ -351,6 +441,7 @@ describe('Shopping Cart Routes', () => {
         `http://localhost/cart/${mockCartId}/stripe-items`,
         {
           method: 'GET',
+          headers: { Cookie: 'better-auth.session_token=test' },
         },
       );
 
@@ -368,6 +459,7 @@ describe('Shopping Cart Routes', () => {
         `http://localhost/cart/${mockCartId}/stripe-items`,
         {
           method: 'GET',
+          headers: { Cookie: 'better-auth.session_token=test' },
         },
       );
 
@@ -490,7 +582,7 @@ describe('Shopping Cart Routes', () => {
 
       expect(res.status).toBe(400);
       const data = (await res.json()) as any;
-      expect(data.error).toBe('cartId query param required');
+      expect(data.error).toBe('A valid cartId is required');
     });
 
     test('returns 401 when not authenticated', async () => {

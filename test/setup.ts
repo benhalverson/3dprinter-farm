@@ -165,12 +165,11 @@ function createDrizzleMocks(): DrizzleMocks {
   };
 }
 
-const mocks =
-  testGlobals.__testMocks ??
-  (testGlobals.__testMocks = {
-    betterAuth: createBetterAuthMocks(),
-    drizzle: createDrizzleMocks(),
-  });
+testGlobals.__testMocks ??= {
+  betterAuth: createBetterAuthMocks(),
+  drizzle: createDrizzleMocks(),
+};
+const mocks = testGlobals.__testMocks;
 
 vi.mock('../lib/auth', () => ({
   createAuth: vi.fn(() => ({

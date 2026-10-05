@@ -6,6 +6,14 @@ compatibility_flags = ["nodejs_compat"]
 [observability]
 enabled = true
 
+# Invocation logs include full request URLs, including password-reset tokens.
+[observability.logs]
+invocation_logs = false
+
+[[send_email]]
+name = "AUTH_EMAIL"
+remote = false
+
 [[kv_namespaces]]
 binding = "COLOR_CACHE"
 id = "546aedc37b4843489e0f8c4a1f3799f5"
@@ -39,7 +47,10 @@ id = "81516966d6ad4902bf63e82b284c0617"
 preview_id = "c7d43c86ba9c4f5c9419970c12bb2fca"
 
 [vars]
+AGENT_ENABLED = "false"
+AGENT_PRICE_VERSION = "glm-5.3-flash-2026-09-21"
 DOMAIN = "https://rc-store.benhalverson.dev"
+AUTH_BASE_URL = "https://api.benhalverson.dev"
 RP_ID = "rc-store.benhalverson.dev"
 PASSKEY_ORIGIN = "https://rc-store.benhalverson.dev"
 R2_PUBLIC_BASE_URL = "https://uploads.benhalverson.dev"
@@ -49,3 +60,23 @@ SLANT_API_V2_BASE_URL = "https://slant3dapi.com/v2/api/"
 # Square catalog publication requires explicitly configured SQUARE_ENVIRONMENT
 # (sandbox or production), SQUARE_MERCHANT_ID and SQUARE_LOCATION_ID for each deployment.
 # Store SQUARE_ACCESS_TOKEN as a Worker secret. No default seller/location is selected.
+
+[ai]
+binding = "AI"
+
+[[durable_objects.bindings]]
+name = "SHOPPING_AGENT"
+class_name = "ShoppingAgent"
+
+[[durable_objects.bindings]]
+name = "SHOPPING_LEDGER"
+class_name = "ShoppingLedger"
+
+[[migrations]]
+tag = "shopping-agent-v1"
+new_sqlite_classes = ["ShoppingAgent", "ShoppingLedger"]
+
+[[rules]]
+type = "Text"
+globs = ["**/drizzle/migrations/*.sql"]
+fallthrough = true

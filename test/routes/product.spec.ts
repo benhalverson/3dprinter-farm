@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
+import app from '../../src/app';
 import { DEFAULT_PLA_BLACK_FILAMENT_ID } from '../../src/db/schema';
-import app from '../../src/index';
 import { mockBetterAuth } from '../mocks/auth';
 import {
   capturedInserts,
@@ -15,23 +15,28 @@ import { mockEnv } from '../mocks/env';
 // Mock Stripe to prevent network calls
 vi.mock('stripe', () => {
   return {
-    default: vi.fn().mockImplementation(() => ({
-      products: {
-        create: vi.fn().mockResolvedValue({
-          id: 'prod_test123',
-          name: 'Test Product',
-          description: 'Test Description',
-        }),
+    default: vi.fn(
+      /** Builds the Stripe stub when production code calls its constructor. */
+      function StripeMock() {
+        return {
+          products: {
+            create: vi.fn().mockResolvedValue({
+              id: 'prod_test123',
+              name: 'Test Product',
+              description: 'Test Description',
+            }),
+          },
+          prices: {
+            create: vi.fn().mockResolvedValue({
+              id: 'price_test123',
+              product: 'prod_test123',
+              unit_amount: 1000,
+              currency: 'usd',
+            }),
+          },
+        };
       },
-      prices: {
-        create: vi.fn().mockResolvedValue({
-          id: 'price_test123',
-          product: 'prod_test123',
-          unit_amount: 1000,
-          currency: 'usd',
-        }),
-      },
-    })),
+    ),
   };
 });
 
@@ -106,6 +111,7 @@ function mockV2AddProductDependencies() {
 describe('Product Routes', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockAll.mockResolvedValue([]);
     capturedInserts.length = 0;
   });
 

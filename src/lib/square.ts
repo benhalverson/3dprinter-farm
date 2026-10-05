@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import type { Bindings } from '../types';
 
-export const SQUARE_API_VERSION = '2026-08-19';
+export const SQUARE_API_VERSION = '2026-09-16';
 const squareFailureSchema = z.object({
   kind: z.literal('square_failure'),
   code: z.enum([
@@ -17,12 +17,14 @@ const squareFailureSchema = z.object({
   uncertain: z.boolean(),
 });
 type SquareFailure = z.infer<typeof squareFailureSchema>;
+/** Creates a sanitized provider failure without retaining sensitive response data. */
 export function squareFailure(
   code: SquareFailure['code'],
   uncertain = false,
 ): SquareFailure {
   return { kind: 'square_failure', code, uncertain };
 }
+/** Narrows an unknown failure to the provider boundary’s documented error shape. */
 export function isSquareFailure(value: unknown): value is SquareFailure {
   return squareFailureSchema.safeParse(value).success;
 }
@@ -33,6 +35,7 @@ const configSchema = z.object({
   SQUARE_MERCHANT_ID: z.string().trim().min(1),
   SQUARE_LOCATION_ID: z.string().trim().min(1),
 });
+/** Requires explicit environment, credentials, merchant, and location configuration. */
 export function squareConfig(env: Bindings) {
   const result = configSchema.safeParse(env);
   if (!result.success) throw squareFailure('square_configuration_required');
@@ -79,6 +82,7 @@ export function squareClient(config: SquareConfig) {
     config.SQUARE_ENVIRONMENT === 'sandbox'
       ? 'https://connect.squareupsandbox.com'
       : 'https://connect.squareup.com';
+  /** Owns the request timeout and bounded response read, preserving uncertain outcomes. */
   async function request(path: string, payload?: string): Promise<unknown> {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 10000);
@@ -134,6 +138,7 @@ export function squareClient(config: SquareConfig) {
       clearTimeout(timeout);
     }
   }
+  /** Rejects malformed or deleted catalog objects before they can confirm publication. */
   function parseItem(data: unknown): SquareItem {
     const result = z
       .object({
@@ -147,6 +152,7 @@ export function squareClient(config: SquareConfig) {
     return result.data.catalog_object;
   }
   return {
+    /** Confirms that the configured seller owns an active USD location. */
     async validateLocation() {
       const result = z
         .object({
@@ -170,6 +176,7 @@ export function squareClient(config: SquareConfig) {
         throw squareFailure('square_location_mismatch');
       }
     },
+    /** Reads a complete mapped item and requires versioned, active variations. */
     async retrieve(itemId: string) {
       const item = parseItem(
         await request(`catalog/object/${encodeURIComponent(itemId)}`),
@@ -184,6 +191,7 @@ export function squareClient(config: SquareConfig) {
       }
       return item;
     },
+    /** Sends the exact persisted payload so retries retain their idempotency key. */
     async upsert(payload: string) {
       return parseItem(await request('catalog/object', payload));
     },

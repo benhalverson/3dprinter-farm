@@ -1,4 +1,5 @@
-import { and, eq, exists, isNull, notExists, or, sql } from 'drizzle-orm';
+import { reserveCatalogOperation } from './catalogPublicationReservation';
+import { and, eq, exists, isNull, notExists, or } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/d1';
 import { z } from 'zod';
 import {
@@ -17,16 +18,19 @@ import {
 } from '../lib/square';
 import type { Bindings } from '../types';
 
+/** Converts an already validated USD channel price to integer cents. */
 export function priceToCents(value: number) {
   return Math.round(value * 100);
 }
+/** Serializes stored channel prices without exposing the internal publication revision. */
 export function productPrices<
-  T extends { inPersonPrice: number; squareRevision?: number },
+  T extends { inPersonPrice: number | null; squareRevision?: number },
 >(product: T) {
   const { squareRevision: _revision, ...fields } = product;
   return {
     ...fields,
-    inPersonPrice: product.inPersonPrice / 100,
+    inPersonPrice:
+      product.inPersonPrice === null ? null : product.inPersonPrice / 100,
   };
 }
 const publicationFailureSchema = z.object({
@@ -41,12 +45,14 @@ const publicationFailureSchema = z.object({
   ]),
 });
 type PublicationFailure = z.infer<typeof publicationFailureSchema>;
+/** Creates an application failure with a stable public code and HTTP status. */
 function publicationFailure(
   code: string,
   status: PublicationFailure['status'],
 ): PublicationFailure {
   return { kind: 'catalog_publication_failure', code, status };
 }
+/** Recognizes application failures that the catalog routes can safely expose. */
 export function isPublicationFailure(
   value: unknown,
 ): value is PublicationFailure {
@@ -93,6 +99,7 @@ function safelyUnpublished(db: Database) {
   );
 }
 
+/** Saves against the observed revision, rejecting concurrent edits with a retryable conflict. */
 export async function saveCatalogItem(
   db: Database,
   current: Catalog,
@@ -111,6 +118,7 @@ export async function saveCatalogItem(
   if (!saved.length) throw publicationFailure('catalog_changed_retry', 409);
 }
 
+/** Deletes only an unpublished item with no pending operation, preserving detached mapping history. */
 export async function deleteCatalogItem(db: Database, id: number) {
   const deleted = await db
     .delete(productsTable)
@@ -127,6 +135,7 @@ export async function deleteCatalogItem(db: Database, id: number) {
     item ? 409 : 404,
   );
 }
+/** Captures only locally authoritative fields owned by in-person publication. */
 function snapshot(item: Catalog) {
   return JSON.stringify({
     name: item.name,
@@ -137,6 +146,7 @@ function snapshot(item: Catalog) {
     cents: item.inPersonPrice,
   });
 }
+/** Rejects configuration changes that would silently move a stable seller mapping. */
 function assertMapping(mapping: Mapping, config: SquareConfig) {
   if (
     mapping.environment !== config.SQUARE_ENVIRONMENT ||
@@ -145,6 +155,7 @@ function assertMapping(mapping: Mapping, config: SquareConfig) {
   )
     throw publicationFailure('square_mapping_configuration_mismatch', 409);
 }
+/** Builds a versioned Square update while preserving remote fields outside local ownership. */
 function publicationPayload(
   item: Catalog,
   mapping: Mapping,
@@ -233,16 +244,20 @@ function publicationPayload(
 /** One D1-owned publication boundary. Saves never invoke this module's Square operations. */
 export function catalogPublication(env: Bindings) {
   const db = drizzle(env.DB);
+  /** Reads the current local catalog record by its stable identity. */
   const catalog = (id: number) =>
     db.select().from(productsTable).where(eq(productsTable.id, id)).get();
+  /** Reads the stable provider mapping attached to a local item. */
   const mappingFor = (id: number) =>
     db.select().from(mappings).where(eq(mappings.productId, id)).get();
+  /** Finds an unresolved operation whose saved request must be reconciled first. */
   const pendingFor = (id: string) =>
     db
       .select()
       .from(operations)
       .where(and(eq(operations.mappingId, id), eq(operations.state, 'pending')))
       .get();
+  /** Builds the pending-state guard used within transactional completion writes. */
   const unresolved = (id: string) =>
     exists(
       db
@@ -250,6 +265,7 @@ export function catalogPublication(env: Bindings) {
         .from(operations)
         .where(and(eq(operations.id, id), eq(operations.state, 'pending'))),
     );
+  /** Reports persisted publication evidence and whether current local details differ. */
   async function status(id: number) {
     const item = await catalog(id);
     if (!item) throw publicationFailure('catalog_item_not_found', 404);
@@ -258,7 +274,8 @@ export function catalogPublication(env: Bindings) {
     return {
       id,
       price: item.price,
-      inPersonPrice: item.inPersonPrice / 100,
+      inPersonPrice:
+        item.inPersonPrice === null ? null : item.inPersonPrice / 100,
       status: !mapping?.published
         ? 'unpublished'
         : mapping.publishedSnapshot === snapshot(item)
@@ -279,6 +296,7 @@ export function catalogPublication(env: Bindings) {
       error: pending?.error ?? mapping?.error ?? null,
     };
   }
+  /** Reserves or replays a durable operation, persisting confirmed results or retryable uncertainty. */
   async function operate(id: number, kind: Operation['kind']) {
     const item = await catalog(id);
     if (!item) throw publicationFailure('catalog_item_not_found', 404);
@@ -294,27 +312,14 @@ export function catalogPublication(env: Bindings) {
     if (!mapping) {
       await db
         .insert(mappings)
-        .select(
-          db
-            .select({
-              id: sql<string>`${crypto.randomUUID()}`,
-              productId: productsTable.id,
-              catalogId: productsTable.id,
-              environment: sql<
-                Mapping['environment']
-              >`${config.SQUARE_ENVIRONMENT}`,
-              merchantId: sql<string>`${config.SQUARE_MERCHANT_ID}`,
-              locationId: sql<string>`${config.SQUARE_LOCATION_ID}`,
-              itemId: sql<null>`${null}`,
-              variationId: sql<null>`${null}`,
-              published: sql<number>`${0}`,
-              publishedSnapshot: sql<null>`${null}`,
-              generation: sql<number>`${0}`,
-              error: sql<null>`${null}`,
-            })
-            .from(productsTable)
-            .where(eq(productsTable.id, id)),
-        )
+        .values({
+          id: crypto.randomUUID(),
+          productId: id,
+          catalogId: id,
+          environment: config.SQUARE_ENVIRONMENT,
+          merchantId: config.SQUARE_MERCHANT_ID,
+          locationId: config.SQUARE_LOCATION_ID,
+        })
         .onConflictDoNothing({ target: mappings.productId })
         .run();
       mapping = await mappingFor(id);
@@ -328,7 +333,12 @@ export function catalogPublication(env: Bindings) {
       await client.validateLocation();
       if (!operation) {
         if (kind === 'unpublish' && !mapping.published) return status(id);
-        if (kind === 'publish' && (!item.inPersonPrice || !item.name.trim())) {
+        if (
+          kind === 'publish' &&
+          (!Number.isSafeInteger(item.inPersonPrice) ||
+            (item.inPersonPrice ?? 0) <= 0 ||
+            !item.name.trim())
+        ) {
           throw publicationFailure(
             'valid_in_person_price_and_name_required',
             400,
@@ -339,47 +349,15 @@ export function catalogPublication(env: Bindings) {
           : undefined;
         const key = crypto.randomUUID();
         const payload = publicationPayload(item, mapping, remote, kind, key);
-        // A single statement arbitrates concurrent preparations, edits, deletion, and completed operations.
-        const [reserved] = await db
-          .insert(operations)
-          .select(
-            db
-              .select({
-                id: sql<string>`${key}`,
-                mappingId: mappings.id,
-                kind: sql<Operation['kind']>`${kind}`,
-                payload: sql<string>`${payload}`,
-                snapshot: sql<string>`${snapshot(item)}`,
-                state: sql<Operation['state']>`${'pending'}`,
-                error: sql<null>`${null}`,
-                createdAt: sql<string>`${new Date().toISOString()}`,
-                generation: mappings.generation,
-              })
-              .from(mappings)
-              .innerJoin(
-                productsTable,
-                eq(productsTable.id, mappings.productId),
-              )
-              .where(
-                and(
-                  eq(mappings.id, mapping.id),
-                  eq(mappings.generation, mapping.generation),
-                  eq(productsTable.squareRevision, item.squareRevision),
-                  notExists(
-                    db
-                      .select({ id: operations.id })
-                      .from(operations)
-                      .where(
-                        and(
-                          eq(operations.mappingId, mappings.id),
-                          eq(operations.state, 'pending'),
-                        ),
-                      ),
-                  ),
-                ),
-              ),
-          )
-          .returning();
+        const reserved = await reserveCatalogOperation(
+          db,
+          item,
+          mapping,
+          kind,
+          payload,
+          snapshot(item),
+          key,
+        );
         firstAttempt = reserved !== undefined;
         operation = reserved ?? (await pendingFor(mapping.id));
         if (!operation) throw publicationFailure('catalog_changed_retry', 409);
@@ -523,7 +501,9 @@ export function catalogPublication(env: Bindings) {
   }
   return {
     status,
+    /** Publishes current details or replays a pending operation; newer work requires another call. */
     publish: (id: number) => operate(id, 'publish'),
+    /** Archives the offering or replays a pending operation; an opposite action requires another call. */
     unpublish: (id: number) => operate(id, 'unpublish'),
   };
 }

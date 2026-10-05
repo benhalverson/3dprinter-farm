@@ -4,6 +4,7 @@ import type { ContentfulStatusCode } from 'hono/utils/http-status';
 import { describeRoute } from 'hono-openapi';
 import { resolver } from 'hono-openapi/zod';
 import { ZodError, z } from 'zod';
+import { reserveCatalogAssets } from '../modules/productAssets';
 
 type OpenAPISchema = Record<string, unknown>;
 
@@ -160,6 +161,7 @@ const product = factory
                         inPersonPrice: {
                           type: 'number',
                           description: 'In-Person Price in USD',
+                          nullable: true,
                         },
                         filamentType: { type: 'string' },
                         skuNumber: { type: 'string' },
@@ -347,6 +349,7 @@ const product = factory
                         inPersonPrice: {
                           type: 'number',
                           description: 'In-Person Price in USD',
+                          nullable: true,
                         },
                         filamentType: { type: 'string' },
                         skuNumber: { type: 'string' },
@@ -730,6 +733,7 @@ const product = factory
                       inPersonPrice: {
                         type: 'number',
                         description: 'In-Person Price in USD',
+                        nullable: true,
                       },
                       skuNumber: { type: 'string' },
                       publicFileServiceId: { type: 'string' },
@@ -772,6 +776,7 @@ const product = factory
       },
     }),
     zValidator('json', addProductV2Schema),
+    reserveCatalogAssets,
     async c => {
       try {
         const user = c.get('jwtPayload') as
@@ -940,7 +945,7 @@ const product = factory
               id: created.id,
               name: created.name,
               price: created.price,
-              inPersonPrice: created.inPersonPrice / 100,
+              inPersonPrice: productPrices(created).inPersonPrice,
               skuNumber: created.skuNumber,
               publicFileServiceId,
             },

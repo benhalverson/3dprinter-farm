@@ -104,9 +104,9 @@ async function slant3DFileRequest<T>(
   path: string,
   errorMessage: string,
   options: {
-    method?: 'GET' | 'POST';
+    method?: 'GET' | 'POST' | 'DELETE';
     body?: unknown;
-  } = {},
+  },
 ): Promise<T> {
   if (!env.SLANT_API_V2) {
     throw new Slant3DFileApiError(
@@ -142,7 +142,13 @@ async function slant3DFileRequest<T>(
     );
   }
 
-  const data = (await response.json()) as { data: T };
+  const data = (await response.json()) as { data: T; success?: boolean };
+  if (
+    method === 'DELETE' &&
+    (response.status !== 200 || data?.success !== true)
+  ) {
+    throw new Slant3DFileApiError(errorMessage, 502);
+  }
   return data.data;
 }
 
@@ -236,4 +242,34 @@ export async function batchGetSlant3DFiles(
     'Failed to retrieve files from Slant3D V2 API',
     { body: { publicFileServiceIds } },
   );
+}
+
+export async function deleteSlant3DFile(
+  env: Bindings,
+  publicFileServiceId: string,
+): Promise<void> {
+  try {
+    await slant3DFileRequest<void>(
+      env,
+      `files/${encodeURIComponent(publicFileServiceId)}`,
+      'Failed to delete file from Slant3D V2 API',
+      { method: 'DELETE' },
+    );
+  } catch (error) {
+    if (!(error instanceof Slant3DFileApiError) || error.status !== 404)
+      throw error;
+    // DELETE does not document a missing-file response. After an interrupted
+    // deletion, confirm absence through GET's documented file-not-found result.
+    try {
+      await getSlant3DFile(env, publicFileServiceId);
+    } catch (lookupError) {
+      if (
+        lookupError instanceof Slant3DFileApiError &&
+        lookupError.status === 404
+      )
+        return;
+      throw lookupError;
+    }
+    throw error;
+  }
 }

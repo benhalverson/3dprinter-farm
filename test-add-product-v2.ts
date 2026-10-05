@@ -1,5 +1,5 @@
 // Test file for V2 Add Product endpoint
-// Run with: node test-add-product-v2.js
+// Run with: node test-add-product-v2.ts (Node 22.18+)
 
 const BASE_URL = 'http://localhost:8787';
 const AUTH_TOKEN = process.env.AUTH_TOKEN || 'your_jwt_token_here';
@@ -60,7 +60,7 @@ async function testAddProductV2() {
       console.log(`\n❌ Unexpected status code: ${statusCode}`);
     }
   } catch (error) {
-    console.error('\n❌ Error:', error.message);
+    console.error('\n❌ Error:', error instanceof Error ? error.message : error);
     if (error instanceof TypeError) {
       console.error('   Make sure the server is running at', BASE_URL);
     }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import app from '../src/index';
+import app from '../src/app';
 import { mockEnv } from './mocks/env';
 
 type OpenApiDocument = {
@@ -48,8 +48,10 @@ describe('API endpoints', () => {
         '/admin/catalog/readiness',
         '/admin/orders/{id}/cancel-refund',
         '/admin/orders/{id}/reconcile',
-        '/admin/orders/{id}/resend-notification',
       ]),
+    );
+    expect(spec.paths).not.toHaveProperty(
+      '/admin/orders/{id}/resend-notification',
     );
   });
 });

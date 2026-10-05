@@ -1,5 +1,6 @@
 BETTER_AUTH_SECRET=replace-with-a-random-32-byte-secret
 DOMAIN=http://localhost:8787
+AUTH_BASE_URL=http://localhost:8787
 JWT_SECRET=
 RP_ID=localhost
 RP_NAME=
@@ -9,7 +10,7 @@ SLANT_API_V2=
 SLANT_PLATFORM_ID=
 ENCRYPTION_PASSPHRASE=
 R2_PUBLIC_BASE_URL=uploads.benhalverson.dev
-
+AGENT_NETWORK_SECRET=
 
 # Explicit Square catalog publication (#177). Use matching sandbox or production credentials.
 # Leave unconfigured until provisioned; existing catalog saves do not require Square.

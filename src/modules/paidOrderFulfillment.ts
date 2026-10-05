@@ -5,6 +5,7 @@ import type * as schema from '../db/schema';
 import { orderEventsTable, ordersTable } from '../db/schema';
 import type { Bindings } from '../types';
 import { generateOrderNumber } from '../utils/generateOrderNumber';
+import { reservePendingOrderAssets } from './productAssets';
 
 type Database = DrizzleD1Database<typeof schema>;
 
@@ -208,6 +209,7 @@ export function createPaidOrderFulfillment(deps: {
         },
       };
 
+      const releaseAssets = await reservePendingOrderAssets(deps.db, items);
       let draftResponse: Response;
       try {
         draftResponse = await fetch(`${BASE_URL_V2}orders`, {
@@ -221,12 +223,15 @@ export function createPaidOrderFulfillment(deps: {
           error instanceof Error ? error.message : String(error),
         );
       }
-      if (!draftResponse.ok)
+      if (!draftResponse.ok) {
+        if (draftResponse.status >= 400 && draftResponse.status < 500)
+          await releaseAssets();
         throw new PaidOrderFulfillmentError(
           'draft',
           `Slant3D order draft failed with ${draftResponse.status}`,
           draftResponse.status,
         );
+      }
       const publicOrderId = extractSlantOrderId(await draftResponse.json());
       if (!publicOrderId)
         throw new PaidOrderFulfillmentError(
@@ -321,6 +326,7 @@ export function createPaidOrderFulfillment(deps: {
         })
         .returning({ id: ordersTable.id });
       if (!order?.id) throw new Error('Failed to persist processed order');
+      await releaseAssets();
       await deps.db.insert(orderEventsTable).values({
         orderId: order.id,
         type: 'stripe_fulfillment_processed',

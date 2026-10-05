@@ -1,5 +1,4 @@
-import { SQL, sql } from 'drizzle-orm';
-import { SQLiteSyncDialect } from 'drizzle-orm/sqlite-core';
+import { eq, type SQL } from 'drizzle-orm';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import {
   memberTable,
@@ -8,7 +7,7 @@ import {
   squareCatalogMappings,
   squareCatalogOperations,
 } from '../../src/db/schema';
-import app from '../../src/index';
+import app from '../../src/app';
 import {
   priceToCents,
   productPrices,
@@ -41,7 +40,7 @@ vi.mock('drizzle-orm/d1', () => {
       return query(table, fields);
     },
     get: async () => storage.read(table),
-    getSQL: () => sql``,
+    getSQL: () => eq(productsTable.id, 1),
     returning: async () => storage.returning(),
     run: async () => undefined,
     onConflictDoNothing() {
@@ -52,8 +51,8 @@ vi.mock('drizzle-orm/d1', () => {
     drizzle: vi.fn(() => ({
       select: (fields?: Record<string, unknown>) => query(undefined, fields),
       insert: (table: unknown) => ({
-        select: (selection: ReturnType<typeof query>) => {
-          storage.insert(table, selection.fields);
+        values: (values: Record<string, unknown>) => {
+          storage.insert(table, values);
           return query(table);
         },
       }),
@@ -154,14 +153,8 @@ const request = (action = '', id = '1', config = bindings) =>
   );
 const writes = () =>
   vi.mocked(fetch).mock.calls.filter(([, init]) => init?.method === 'POST');
-const readField = (fields: Record<string, unknown>, key: string) => {
-  const value = fields[key];
-  if (!(value instanceof SQL)) {
-    // Fields below are parameterized SQL values produced by the real publication module.
-    throw new Error(`Expected parameterized field ${key}`);
-  }
-  return new SQLiteSyncDialect().sqlToQuery(value).params[0];
-};
+/** Reads the public values passed to Drizzle without inspecting generated SQL. */
+const readField = (fields: Record<string, unknown>, key: string) => fields[key];
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -193,7 +186,7 @@ beforeEach(() => {
         true,
       );
       expect(new Headers(init?.headers).get('Square-Version')).toBe(
-        '2026-08-19',
+        '2026-09-16',
       );
       if (url.endsWith('/locations/location'))
         return Response.json({
@@ -603,5 +596,62 @@ describe('Square catalog HTTP with mocked Drizzle and fetch', () => {
       expect.objectContaining({ price: 19.95, inPersonPrice: 29 }),
     );
     expect(fetch).not.toHaveBeenCalled();
+  });
+});
+
+describe('explicit in-person price backfill', () => {
+  /** Sends a controlled admin request through the public price-backfill endpoint. */
+  const backfill = (body: unknown) =>
+    app.request(
+      '/admin/catalog/1/in-person-price',
+      {
+        method: 'PATCH',
+        headers: { Cookie: 'session=test', 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      },
+      bindings,
+    );
+  test('preserves unknown prices in reads and accepts a distinct explicit price', async () => {
+    rows.set(productsTable, { ...item, inPersonPrice: null });
+    expect((await (await request()).json()).inPersonPrice).toBeNull();
+    const result = await backfill({ inPersonPrice: 7.25 });
+    expect(result.status).toBe(200);
+    expect(await result.json()).toEqual({
+      id: 1,
+      price: 19.95,
+      inPersonPrice: 7.25,
+    });
+    expect(storage.set).toHaveBeenCalledWith(productsTable, {
+      inPersonPrice: 725,
+      squareRevision: 1,
+    });
+    expect(fetch).not.toHaveBeenCalled();
+  });
+  test.each([
+    null,
+    0,
+    -1,
+    1.234,
+  ])('rejects invalid explicit price %s', async inPersonPrice => {
+    expect((await backfill({ inPersonPrice })).status).toBe(400);
+    expect(storage.set).not.toHaveBeenCalled();
+  });
+  test('does not accept unknown prices or unrelated field updates', async () => {
+    expect((await backfill({})).status).toBe(400);
+    expect((await backfill({ inPersonPrice: 7, price: 2 })).status).toBe(400);
+    expect(storage.set).not.toHaveBeenCalled();
+  });
+  test('reports a missing item and concurrent edits without provider effects', async () => {
+    rows.set(productsTable, undefined);
+    expect((await backfill({ inPersonPrice: 7 })).status).toBe(404);
+    rows.set(productsTable, item);
+    storage.returning.mockReturnValue([]);
+    expect((await backfill({ inPersonPrice: 7 })).status).toBe(409);
+    expect(fetch).not.toHaveBeenCalled();
+  });
+  test('denies non-admin price changes', async () => {
+    rows.set(memberTable, { id: 'member', role: 'member' });
+    expect((await backfill({ inPersonPrice: 7 })).status).toBe(403);
+    expect(storage.set).not.toHaveBeenCalled();
   });
 });
