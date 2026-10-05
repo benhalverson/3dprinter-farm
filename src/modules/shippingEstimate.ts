@@ -1,13 +1,41 @@
+import 'zod-openapi/extend';
 import { z } from 'zod';
 import { BASE_URL_V2 } from '../constants';
+
+// Numeric safety bound, not a store price or shipping policy.
+export const MAX_SHIPPING_COST_USD = Math.floor(Number.MAX_SAFE_INTEGER / 100);
+
+/**
+ * Converts confirmed USD major units to exact, safe integer cents.
+ * Rejects fractional cents, unsafe magnitudes and decimal-to-number precision loss.
+ */
+export function shippingUsdCents(value: number | string): number | undefined {
+  const match = /^(\d+)(?:\.(\d{1,2}))?$/.exec(String(value));
+  if (!match) return undefined;
+  const cents = Number(`${match[1]}${(match[2] ?? '').padEnd(2, '0')}`);
+  const dollars = Number(value);
+  if (
+    !Number.isSafeInteger(cents) ||
+    dollars > MAX_SHIPPING_COST_USD ||
+    cents / 100 !== dollars ||
+    Math.round(dollars * 100) !== cents
+  )
+    return undefined;
+  return cents;
+}
 
 export const shippingEstimateSchema = z.object({
   shippingCost: z
     .number()
     .finite()
     .nonnegative()
+    .max(MAX_SHIPPING_COST_USD)
     .describe(
-      'Unconverted V2 deliveryCost from data.order or data.totals. The provider USD example uses major units, but this response does not establish currency for the current account. Do not format as currency or use for payment without verified currency assurance. This is not a payable quote.',
+      'Shipping estimate in USD major units (dollars), with at most two decimal places. Account currency confirmed by the owner. Convert validated values to safe integer cents using Math.round(shippingCost * 100). Not a persisted or payable quote.',
+    )
+    .refine(
+      value => shippingUsdCents(value) !== undefined,
+      'Expected exact USD cents',
     ),
 });
 
@@ -73,23 +101,26 @@ function readPath(source: unknown, path: string[]): unknown {
   return value;
 }
 
-/** Validates documented V2 costs without extrapolating USD example units to other currencies. */
+/** Validates documented V2 USD costs and compares their exact integer cents. */
 export function parseShippingEstimate(source: unknown) {
-  let amount: number | undefined;
+  let amountCents: number | undefined;
   for (const field of amountFields) {
     const raw = readPath(source, field.path);
     if (raw === undefined) continue;
     const value = field.schema.safeParse(raw);
     if (!value.success) throw new Error('Invalid shipping estimate');
-    const candidate = Number(value.data);
-    const parsed =
-      shippingEstimateSchema.shape.shippingCost.safeParse(candidate);
-    if (!parsed.success || (amount !== undefined && amount !== parsed.data)) {
+    const cents = shippingUsdCents(value.data);
+    if (
+      cents === undefined ||
+      (amountCents !== undefined && amountCents !== cents)
+    ) {
       throw new Error('Invalid shipping estimate');
     }
-    amount = parsed.data;
+    amountCents = cents;
   }
-  return shippingEstimateSchema.parse({ shippingCost: amount });
+  return shippingEstimateSchema.parse({
+    shippingCost: amountCents === undefined ? undefined : amountCents / 100,
+  });
 }
 
 export type ShippingDraft = {

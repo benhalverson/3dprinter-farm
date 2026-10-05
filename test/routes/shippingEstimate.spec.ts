@@ -113,7 +113,7 @@ describe('shipping estimate contract', () => {
     });
   });
 
-  test('accepts the documented totals-only response without assuming currency', async () => {
+  test('accepts the documented totals-only USD response', async () => {
     arrange();
     fetchMock.mockResolvedValueOnce(
       Response.json({
@@ -251,6 +251,16 @@ describe('shipping estimate contract', () => {
     },
     { body: JSON.stringify({ secret: 'PII' }), status: 400 },
     { body: '{}', status: 200 },
+    {
+      body: JSON.stringify({ data: { totals: { deliveryCost: 1.005 } } }),
+      status: 200,
+    },
+    {
+      body: JSON.stringify({
+        data: { order: { deliveryCost: '90071992547409.91' } },
+      }),
+      status: 200,
+    },
     { body: JSON.stringify({ shippingCost: 15.99 }), status: 200 },
   ])('sanitizes upstream failure %o', async ({ body, status }) => {
     arrange();
@@ -311,6 +321,12 @@ describe('shipping estimate contract', () => {
       operation.responses['200'].content['application/json'].schema;
     expect(Object.keys(success.properties)).toEqual(['shippingCost']);
     expect(success.required).toEqual(['shippingCost']);
+    expect(success.properties.shippingCost).toMatchObject({
+      type: 'number',
+      minimum: 0,
+      maximum: 90071992547409,
+      description: expect.stringContaining('USD major units (dollars)'),
+    });
     for (const status of ['400', '401', '403', '404', '500', '502']) {
       expect(
         operation.responses[status].content['application/json'].schema.required,

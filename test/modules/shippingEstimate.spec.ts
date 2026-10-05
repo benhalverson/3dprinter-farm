@@ -1,5 +1,8 @@
 import { afterEach, expect, test, vi } from 'vitest';
 import {
+  MAX_SHIPPING_COST_USD,
+  shippingEstimateSchema,
+  shippingUsdCents,
   parseShippingEstimate,
   requestShippingEstimate,
   type ShippingDraft,
@@ -107,7 +110,7 @@ test('rejects historical aliases with unestablished units', () => {
     }
   }
 });
-test('does not infer conversion or currency from unrelated aliases or item currency', () => {
+test('does not use unrelated aliases or item currency to change the USD amount', () => {
   expect(
     parseShippingEstimate({
       shippingCost: 1599,
@@ -172,4 +175,62 @@ test('clears timeout after success and JSON failure', async () => {
     requestShippingEstimate({} as ShippingDraft, 'test'),
   ).rejects.toThrow();
   expect(vi.getTimerCount()).toBe(0);
+});
+
+test.each([
+  [0, 0],
+  [0.01, 1],
+  [0.29, 29],
+  [1.01, 101],
+  [15.99, 1599],
+  [MAX_SHIPPING_COST_USD, MAX_SHIPPING_COST_USD * 100],
+])('converts validated USD %s to safe exact cents %s', (dollars, cents) => {
+  expect(shippingUsdCents(dollars)).toBe(cents);
+  expect(shippingEstimateSchema.parse({ shippingCost: dollars })).toEqual({
+    shippingCost: dollars,
+  });
+  expect(Math.round(dollars * 100)).toBe(cents);
+  expect(cents / 100).toBe(dollars);
+});
+test.each([
+  0.001,
+  1.005,
+  1.001,
+  0.1 + 0.2,
+  MAX_SHIPPING_COST_USD + 1,
+  Number.MAX_SAFE_INTEGER,
+  Infinity,
+  NaN,
+  -0.01,
+])('rejects non-cent or unsafe USD amount %s', dollars => {
+  expect(shippingUsdCents(dollars)).toBeUndefined();
+  expect(
+    shippingEstimateSchema.safeParse({ shippingCost: dollars }).success,
+  ).toBe(false);
+  expect(() =>
+    parseShippingEstimate({ data: { totals: { deliveryCost: dollars } } }),
+  ).toThrow();
+});
+test.each([
+  '90071992547409.91',
+  '9007199254740993.00',
+  '70368744177664.01',
+  '1.005',
+])('rejects unsafe/lossy decimal %s', dollars => {
+  expect(shippingUsdCents(dollars)).toBeUndefined();
+  expect(() =>
+    parseShippingEstimate({ data: { order: { deliveryCost: dollars } } }),
+  ).toThrow();
+});
+test('preserves cent comparison across decimal string and numeric fields', () => {
+  expect(
+    parseShippingEstimate({
+      data: { order: { deliveryCost: '0.29' }, totals: { deliveryCost: 0.29 } },
+    }),
+  ).toEqual({ shippingCost: 0.29 });
+  expect(() =>
+    parseShippingEstimate({
+      data: { order: { deliveryCost: '0.29' }, totals: { deliveryCost: 0.3 } },
+    }),
+  ).toThrow();
 });
