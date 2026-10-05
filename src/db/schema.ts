@@ -468,20 +468,22 @@ export type ProfileData = z.infer<typeof ProfileDataSchema>;
 
 export const ordersTable = sqliteTable('ordersTable', {
   id: integer('id').primaryKey(),
-  userId: text('user_id').references(() => users.id, { onDelete: 'cascade' }), // Online ownership; in-person sales may have no account
+  userId: text('user_id')
+    .references(() => users.id, { onDelete: 'cascade' })
+    .notNull(), // Preserve existing online ownership; future in-person intake requires its own safe storage migration
   orderNumber: text('order_number').notNull().unique(),
   cartId: text('cart_id'),
   filename: text('filename'),
   fileURL: text('file_url').notNull(),
 
   // Shipping address fields specific to each order
-  shipToName: text('ship_to_name'),
-  shipToStreet1: text('ship_to_street_1'),
+  shipToName: text('ship_to_name').notNull(),
+  shipToStreet1: text('ship_to_street_1').notNull(),
   shipToStreet2: text('ship_to_street_2'),
-  shipToCity: text('ship_to_city'),
-  shipToState: text('ship_to_state'),
-  shipToZip: text('ship_to_zip'),
-  shipToCountryISO: text('ship_to_country_iso'),
+  shipToCity: text('ship_to_city').notNull(),
+  shipToState: text('ship_to_state').notNull(),
+  shipToZip: text('ship_to_zip').notNull(),
+  shipToCountryISO: text('ship_to_country_iso').notNull(),
 
   // Billing address fields (if needed)
   billToStreet1: text('bill_to_street_1'),

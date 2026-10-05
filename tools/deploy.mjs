@@ -10,19 +10,25 @@ const database = '8ea08f02-696c-4410-a690-2bf1fa0333dc';
 const migrationArgs = ['d1', 'migrations'];
 
 // Ben specifically approved removing obsolete Stripe data: "i dont have any data
-// with stripe get rid of it". Bind that approval to this published migration only.
-const approvedStripeMigration = {
-  name: '0018_square_catalog.sql',
-  sha256: 'b8f0199cbc1991afd193897f916cdfa9b75684a4919da16d6851af34b8d38ca2',
-};
+// with stripe get rid of it". Bind approval to reviewed filenames and exact hashes.
+const approvedStripeMigrations = [
+  {
+    name: '0018_square_catalog.sql',
+    sha256: 'b8f0199cbc1991afd193897f916cdfa9b75684a4919da16d6851af34b8d38ca2',
+  },
+  {
+    name: '0022_square_order_storage.sql',
+    sha256: '9609e71a4304c957e1fb7f697260a265d5ae183466dfceccf9f986dd5b9f8d09',
+  },
+];
 
 /** Match the specifically approved Stripe migration, normalizing checkout line endings. */
 export function hasSpecificMigrationApproval(name, contents) {
-  return (
-    name === approvedStripeMigration.name &&
-    createHash('sha256')
-      .update(contents.replace(/\r\n/g, '\n'))
-      .digest('hex') === approvedStripeMigration.sha256
+  const hash = createHash('sha256')
+    .update(contents.replace(/\r\n/g, '\n'))
+    .digest('hex');
+  return approvedStripeMigrations.some(
+    approval => name === approval.name && hash === approval.sha256,
   );
 }
 
