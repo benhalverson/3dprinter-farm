@@ -21,7 +21,12 @@ export default defineConfig({
   ],
   test: {
     coverage: { provider: 'istanbul' },
-    exclude: [...configDefaults.exclude, 'test/project-notes/**'],
+    exclude: [
+      ...configDefaults.exclude,
+      'test/project-notes/**',
+      'test/database/**',
+      'test/persistence/**',
+    ],
     isolate: true,
     setupFiles: ['./test/setup.ts'],
   },

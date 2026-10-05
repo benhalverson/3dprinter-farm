@@ -221,7 +221,7 @@ describe('shipping estimate contract', () => {
       env,
     );
     expect(result.status).toBe(500);
-    expect(result.headers.get('Cache-Control')).toBe('no-store');
+    expect(result.headers.get('Cache-Control')).toBe('private, no-store');
     expect(await result.json()).toEqual({
       error: 'Failed to retrieve shipping estimate',
     });

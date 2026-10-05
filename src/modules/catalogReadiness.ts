@@ -6,7 +6,6 @@ const UUID_PATTERN =
 
 export const readinessReasonSchema = z.enum([
   'product_missing',
-  'missing_stripe_price_id',
   'missing_public_file_service_id',
   'invalid_quantity',
   'invalid_filament_id',
@@ -25,7 +24,6 @@ export const catalogProductReadinessSchema = z.object({
   name: z.string().nullable(),
   checkoutReady: z.boolean(),
   reasons: z.array(readinessReasonSchema),
-  stripePriceId: z.string().nullable(),
   publicFileServiceId: z.string().nullable(),
   defaultFilamentId: z.string(),
 });
@@ -49,7 +47,6 @@ export type CheckoutReadinessItem = {
   filamentType?: string | null;
   filamentId: string | null;
   productSkuNumber?: string | null;
-  stripePriceId?: string | null;
   publicFileServiceId?: string | null;
   price?: number | null;
   name?: string | null;
@@ -61,10 +58,10 @@ export type CatalogReadinessProduct = {
   id: number;
   skuNumber: string | null;
   name: string | null;
-  stripePriceId: string | null;
   publicFileServiceId: string | null;
 };
 
+/** Reads cached manufacturing availability for catalog diagnostics. */
 async function loadAvailableFilamentIds(env: {
   COLOR_CACHE?: KVNamespace;
 }): Promise<Set<string> | undefined> {
@@ -93,6 +90,7 @@ async function loadAvailableFilamentIds(env: {
   }
 }
 
+/** Reports invalid or unavailable manufacturing filament identifiers. */
 function filamentReasons(
   filamentId: string,
   availableFilamentIds: Set<string> | undefined,
@@ -108,6 +106,7 @@ function filamentReasons(
   return [];
 }
 
+/** Formats line-level manufacturing diagnostics for API consumers. */
 export function readinessErrorResponse(errors: CartReadinessError[]) {
   return {
     error: 'Cart is not ready for checkout',
@@ -115,6 +114,7 @@ export function readinessErrorResponse(errors: CartReadinessError[]) {
   };
 }
 
+/** Validates manufacturing prerequisites independently of payment-provider catalog state. */
 export async function validateCartReadiness(
   env: { COLOR_CACHE?: KVNamespace },
   items: CheckoutReadinessItem[],
@@ -128,9 +128,6 @@ export async function validateCartReadiness(
 
     if (!item.productSkuNumber) {
       reasons.push('product_missing');
-    }
-    if (!item.stripePriceId) {
-      reasons.push('missing_stripe_price_id');
     }
     if (!item.publicFileServiceId) {
       reasons.push('missing_public_file_service_id');
@@ -152,6 +149,7 @@ export async function validateCartReadiness(
   return errors;
 }
 
+/** Summarizes catalog manufacturing readiness without Stripe price requirements. */
 export async function evaluateCatalogReadiness(
   env: { COLOR_CACHE?: KVNamespace },
   products: CatalogReadinessProduct[],
@@ -160,9 +158,6 @@ export async function evaluateCatalogReadiness(
   const readinessProducts = products.map(product => {
     const reasons: ReadinessReason[] = [];
 
-    if (!product.stripePriceId) {
-      reasons.push('missing_stripe_price_id');
-    }
     if (!product.publicFileServiceId) {
       reasons.push('missing_public_file_service_id');
     }
@@ -176,7 +171,6 @@ export async function evaluateCatalogReadiness(
       name: product.name,
       checkoutReady: reasons.length === 0,
       reasons,
-      stripePriceId: product.stripePriceId,
       publicFileServiceId: product.publicFileServiceId,
       defaultFilamentId: DEFAULT_PLA_BLACK_FILAMENT_ID,
     };

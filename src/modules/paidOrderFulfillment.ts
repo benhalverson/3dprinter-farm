@@ -1,348 +1,357 @@
-import type { DrizzleD1Database } from 'drizzle-orm/d1';
-
+import { and, eq, inArray } from 'drizzle-orm';
+import { z } from 'zod';
 import { BASE_URL_V2 } from '../constants';
-import type * as schema from '../db/schema';
-import { orderEventsTable, ordersTable } from '../db/schema';
-import type { Bindings } from '../types';
-import { generateOrderNumber } from '../utils/generateOrderNumber';
-import { reservePendingOrderAssets } from './productAssets';
+import { cart, orderEventsTable, ordersTable } from '../db/schema';
+import type { WorkerEnv } from '../factory';
+import { quoteSnapshotSchema } from './checkoutQuotes';
+import {
+  reservePendingOrderAssets,
+  releasePaidOrderAssets,
+} from './productAssets';
 
-type Database = DrizzleD1Database<typeof schema>;
-
-const DEFAULT_SLANT_FILAMENT_ID = '76fe1f79-3f1e-43e4-b8f4-61159de5b93c';
-const ALLOWED_COLORS = new Set([
-  'black',
-  'white',
-  'gray',
-  'grey',
-  'yellow',
-  'red',
-  'gold',
-  'purple',
-  'blue',
-  'orange',
-  'green',
-  'pink',
-  'matteBlack',
-  'lunarRegolith',
-  'petgBlack',
-]);
-
-export type PaidOrderItem = {
-  id: number;
-  skuNumber: string | null;
-  quantity: number;
-  color: string | null;
-  filamentType: string | null;
-  filamentId: string | null;
-  productName: string | null;
-  productImage: string | null;
-  productPrice: number | null;
-  stl: string | null;
-  publicFileServiceId: string | null;
-};
-
-export type PaidOrderProfile = {
-  email: string;
-  firstName: string;
-  lastName: string;
-  shippingAddress: string;
-  city: string;
-  state: string;
-  zipCode: string;
-  phone: string;
-};
-
-export type PaidOrderInput = {
-  cartId: string;
-  userId: string;
-  stripeEventId: string;
-  stripeObjectId: string;
-  stripeCheckoutSessionId?: string;
-  stripePaymentIntentId?: string;
-  idempotencyKey: string;
-  customerEmail?: string;
-};
-
-export type PaidOrderFulfillmentResult = {
-  localOrderId: number;
-  publicOrderId: string;
-  orderNumber: string;
-};
-
-export class PaidOrderFulfillmentError extends Error {
-  constructor(
-    public readonly stage: 'draft' | 'process',
-    message: string,
-    public readonly status?: number,
-  ) {
-    super(message);
-    this.name = 'PaidOrderFulfillmentError';
+type Database = WorkerEnv['Variables']['db'];
+type Environment = WorkerEnv['Bindings'];
+/** Distinguishes definitive draft rejection from uncertain external outcomes. */
+class SlantRejection extends Error {}
+/** Reads a Slant response without treating a malformed or lost response as proof of failure. */
+async function slantRequest(env: Environment, path: string, payload?: unknown) {
+  const response = await fetch(`${BASE_URL_V2}orders${path}`, {
+    method: payload === undefined ? 'GET' : 'POST',
+    headers: {
+      Authorization: `Bearer ${env.SLANT_API_V2}`,
+      'Content-Type': 'application/json',
+    },
+    body: payload === undefined ? undefined : JSON.stringify(payload),
+    signal: AbortSignal.timeout(10000),
+  });
+  if (!response.ok) {
+    if (
+      response.status >= 400 &&
+      response.status < 500 &&
+      ![408, 429].includes(response.status)
+    )
+      throw new SlantRejection('Slant rejected request');
+    throw new Error('Slant outcome requires reconciliation');
   }
+  const parsed = z
+    .object({
+      publicOrderId: z.string().min(1).optional(),
+      orderId: z.string().min(1).optional(),
+      status: z.string().optional(),
+      orderNumber: z.string().optional(),
+      data: z
+        .object({
+          publicOrderId: z.string().min(1).optional(),
+          orderId: z.string().min(1).optional(),
+          id: z.string().min(1).optional(),
+          status: z.string().optional(),
+          orderNumber: z.string().optional(),
+        })
+        .optional(),
+    })
+    .parse(await response.json());
+  return parsed;
 }
-
-export interface PaidOrderFulfillment {
-  fulfillPaidOrder(input: {
-    fulfillment: PaidOrderInput;
-    profile: PaidOrderProfile;
-    items: PaidOrderItem[];
-  }): Promise<PaidOrderFulfillmentResult>;
-}
-
-function normalizePhone(value: string) {
-  const digits = (value || '').replace(/\D/g, '');
-  return digits.length >= 10 ? digits : '0000000000';
-}
-
-function normalizeColor(raw: string | null | undefined) {
-  if (!raw) return 'black';
-  const trimmed = raw.trim();
-  if (ALLOWED_COLORS.has(trimmed)) return trimmed;
-  for (const color of ALLOWED_COLORS) {
-    if (color.toLowerCase() === trimmed.toLowerCase()) return color;
-  }
-  return 'black';
-}
-
-function extractSlantOrderId(payload: unknown): string | undefined {
-  if (!payload || typeof payload !== 'object') return undefined;
-  const response = payload as {
-    publicOrderId?: string;
-    orderId?: string;
-    data?: { publicOrderId?: string; orderId?: string; id?: string };
-  };
-  return (
-    response.publicOrderId ||
-    response.orderId ||
-    response.data?.publicOrderId ||
-    response.data?.orderId ||
-    response.data?.id
-  );
-}
-
-function itemSnapshot(items: PaidOrderItem[]) {
-  return items.map(item => ({
-    skuNumber: item.skuNumber,
-    name: item.productName,
-    quantity: item.quantity,
-    color: item.color,
-    filamentType: item.filamentType,
-    filamentId: item.filamentId || DEFAULT_SLANT_FILAMENT_ID,
-    publicFileServiceId: item.publicFileServiceId,
-    image: item.productImage,
-    price: item.productPrice,
-  }));
-}
-
-function totalCents(items: PaidOrderItem[]) {
-  return items.reduce(
-    (sum, item) =>
-      sum + Math.round((item.productPrice || 0) * 100) * item.quantity,
-    0,
-  );
-}
-
+/** Owns durable stage claims. An abandoned claim is ambiguous and never authorizes a second effect. */
 export function createPaidOrderFulfillment(deps: {
   db: Database;
-  env: Pick<Bindings, 'SLANT_API_V2' | 'SLANT_PLATFORM_ID'>;
-  clock?: () => string;
-  orderNumber?: () => string;
-}): PaidOrderFulfillment {
-  const clock = deps.clock ?? (() => new Date().toISOString());
-  const nextOrderNumber = deps.orderNumber ?? generateOrderNumber;
-
+  env: Environment;
+}) {
+  const { db, env } = deps;
   return {
-    async fulfillPaidOrder({ fulfillment, profile, items }) {
-      const orderNumber = nextOrderNumber();
-      const fullName =
-        `${profile.firstName} ${profile.lastName}`.trim() || profile.email;
-      const authHeaders = {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${deps.env.SLANT_API_V2}`,
-      };
-      const payload = {
-        orderNumber,
-        platformId: deps.env.SLANT_PLATFORM_ID,
-        customer: {
-          email:
-            profile.email || fulfillment.customerEmail || 'guest@example.com',
-          phone: normalizePhone(profile.phone),
-          name: fullName,
-        },
-        billingAddress: {
-          street1: profile.shippingAddress,
-          street2: '',
-          city: profile.city,
-          state: profile.state,
-          zipCode: profile.zipCode,
-          country: 'US',
-          isResidential: true,
-        },
-        shippingAddress: {
-          name: fullName,
-          street1: profile.shippingAddress,
-          street2: '',
-          city: profile.city,
-          state: profile.state,
-          zipCode: profile.zipCode,
-          country: 'US',
-          isResidential: true,
-        },
-        items: items.map(item => {
-          if (!item.publicFileServiceId)
-            throw new Error('Missing publicFileServiceId');
-          return {
-            name: item.productName,
-            sku: item.skuNumber,
-            quantity: item.quantity,
-            publicFileServiceId: item.publicFileServiceId,
-            filamentId: item.filamentId || DEFAULT_SLANT_FILAMENT_ID,
-            color: normalizeColor(item.color),
-            profile: item.filamentType,
-          };
-        }),
-        metadata: {
-          cartId: fulfillment.cartId,
-          stripeEventId: fulfillment.stripeEventId,
-          stripeObjectId: fulfillment.stripeObjectId,
-          idempotencyKey: fulfillment.idempotencyKey,
-        },
-      };
-
-      const releaseAssets = await reservePendingOrderAssets(deps.db, items);
-      let draftResponse: Response;
-      try {
-        draftResponse = await fetch(`${BASE_URL_V2}orders`, {
-          method: 'POST',
-          headers: authHeaders,
-          body: JSON.stringify(payload),
-        });
-      } catch (error) {
-        throw new PaidOrderFulfillmentError(
-          'draft',
-          error instanceof Error ? error.message : String(error),
-        );
-      }
-      if (!draftResponse.ok) {
-        if (draftResponse.status >= 400 && draftResponse.status < 500)
-          await releaseAssets();
-        throw new PaidOrderFulfillmentError(
-          'draft',
-          `Slant3D order draft failed with ${draftResponse.status}`,
-          draftResponse.status,
-        );
-      }
-      const publicOrderId = extractSlantOrderId(await draftResponse.json());
-      if (!publicOrderId)
-        throw new PaidOrderFulfillmentError(
-          'draft',
-          'Slant3D draft response missing public order id',
-        );
-
-      let processResponse: Response;
-      try {
-        processResponse = await fetch(`${BASE_URL_V2}orders/${publicOrderId}`, {
-          method: 'POST',
-          headers: authHeaders,
-          body: JSON.stringify({
-            orderNumber,
-            metadata: {
-              stripeEventId: fulfillment.stripeEventId,
-              stripeObjectId: fulfillment.stripeObjectId,
-              idempotencyKey: fulfillment.idempotencyKey,
-            },
-          }),
-        });
-      } catch (error) {
-        throw new PaidOrderFulfillmentError(
-          'process',
-          error instanceof Error ? error.message : String(error),
-        );
-      }
-      if (!processResponse.ok)
-        throw new PaidOrderFulfillmentError(
-          'process',
-          `Slant3D order process failed with ${processResponse.status}`,
-          processResponse.status,
-        );
-
-      const at = clock();
-      const customerSnapshot = {
-        email: profile.email || fulfillment.customerEmail || null,
-        firstName: profile.firstName,
-        lastName: profile.lastName,
-        name: fullName || profile.email || fulfillment.customerEmail || null,
-        phone: normalizePhone(profile.phone),
-        shippingAddress: {
-          street1: profile.shippingAddress,
-          street2: '',
-          city: profile.city,
-          state: profile.state,
-          zipCode: profile.zipCode,
-          country: 'US',
-          isResidential: true,
-        },
-      };
-      const firstItem = items[0];
-      const [order] = await deps.db
-        .insert(ordersTable)
-        .values({
-          userId: fulfillment.userId,
-          orderNumber,
-          cartId: fulfillment.cartId,
-          filename:
-            firstItem?.productName || firstItem?.skuNumber || orderNumber,
-          fileURL:
-            firstItem?.stl ||
-            firstItem?.publicFileServiceId ||
-            `slant3d:${publicOrderId}`,
-          shipToName: fullName,
-          shipToStreet1: profile.shippingAddress,
-          shipToStreet2: '',
-          shipToCity: profile.city,
-          shipToState: profile.state,
-          shipToZip: profile.zipCode,
-          shipToCountryISO: 'US',
-          billToStreet1: profile.shippingAddress,
-          billToStreet2: '',
-          billToCity: profile.city,
-          billToState: profile.state,
-          billToZip: profile.zipCode,
-          billToCountryISO: 'US',
-          status: 'processing',
-          slantStatus: 'PROCESSING',
-          slantPublicOrderId: publicOrderId,
-          stripeCheckoutSessionId: fulfillment.stripeCheckoutSessionId ?? null,
-          stripePaymentIntentId: fulfillment.stripePaymentIntentId ?? null,
-          stripeEventId: fulfillment.stripeEventId,
-          customerEmail: profile.email || fulfillment.customerEmail || null,
-          totalAmountCents: totalCents(items),
-          currency: 'usd',
-          itemSnapshot: JSON.stringify(itemSnapshot(items)),
-          customerSnapshot: JSON.stringify(customerSnapshot),
-          createdAt: at,
-          updatedAt: at,
-          processedAt: at,
-        })
+    /** Manufactures only a persisted verified online order; retains draft IDs before processing. */
+    async fulfillPaidOrder(orderId: number): Promise<void> {
+      const [order] = await db
+        .select()
+        .from(ordersTable)
+        .where(eq(ordersTable.id, orderId))
+        .all();
+      if (
+        !order ||
+        order.paymentStatus !== 'paid' ||
+        order.fulfillmentType !== 'slant'
+      )
+        return;
+      if (order.fulfillmentState === 'processed')
+        return finalizePaidOrder(db, orderId);
+      if (
+        order.fulfillmentState !== 'ready' &&
+        order.fulfillmentState !== 'drafted'
+      )
+        return;
+      if (!env.SLANT_API_V2 || !env.SLANT_PLATFORM_ID) return;
+      const stage =
+        order.fulfillmentState === 'ready' ? 'drafting' : 'processing';
+      const claimed = await db
+        .update(ordersTable)
+        .set({ fulfillmentState: stage })
+        .where(
+          and(
+            eq(ordersTable.id, orderId),
+            eq(ordersTable.fulfillmentState, order.fulfillmentState),
+          ),
+        )
         .returning({ id: ordersTable.id });
-      if (!order?.id) throw new Error('Failed to persist processed order');
-      await releaseAssets();
-      await deps.db.insert(orderEventsTable).values({
-        orderId: order.id,
-        type: 'stripe_fulfillment_processed',
-        detail: `Stripe payment processed into Slant3D order ${publicOrderId}`,
-        actor: 'stripe',
-        externalEventId: fulfillment.stripeEventId,
-        source: 'stripe',
-        previousStatus: 'paid',
-        nextStatus: 'PROCESSING',
-        metadata: JSON.stringify({
-          ...fulfillment,
-          slantPublicOrderId: publicOrderId,
-        }),
-        createdAt: at,
-      });
-      return { localOrderId: order.id, publicOrderId, orderNumber };
+      if (!claimed.length) return;
+      try {
+        const lines = quoteSnapshotSchema.shape.lines.parse(
+          JSON.parse(order.itemSnapshot || 'null'),
+        );
+        if (stage === 'drafting') {
+          const customer = JSON.parse(order.customerSnapshot || 'null') as {
+            email: string;
+            shippingAddress: {
+              name: string;
+              line1: string;
+              line2: string;
+              city: string;
+              state: string;
+              zip: string;
+              country: string;
+            };
+          };
+          const address = customer.shippingAddress;
+          const shippingAddress = {
+            name: address.name,
+            street1: address.line1,
+            street2: address.line2,
+            city: address.city,
+            state: address.state,
+            zipCode: address.zip,
+            country: address.country,
+            isResidential: true,
+          };
+          // Holds print references through uncertain provider outcomes; local immutable order remains authoritative.
+          await reservePendingOrderAssets(
+            db,
+            JSON.parse(order.itemSnapshot || 'null'),
+            `order-attempt:square-${orderId}`,
+          );
+          const draft = await slantRequest(env, '', {
+            orderNumber: order.orderNumber,
+            platformId: env.SLANT_PLATFORM_ID,
+            customer: { email: customer.email, name: address.name },
+            shippingAddress,
+            billingAddress: shippingAddress,
+            items: lines.map(line => ({
+              name: line.name,
+              sku: line.skuNumber,
+              quantity: line.quantity,
+              publicFileServiceId: line.publicFileServiceId,
+              filamentId: line.filamentId,
+              color: line.color,
+              profile: line.filamentType,
+            })),
+            metadata: {
+              checkoutAttemptId: order.checkoutAttemptId,
+              squarePaymentId: order.squarePaymentId,
+            },
+          });
+          const id =
+            draft.publicOrderId ||
+            draft.orderId ||
+            draft.data?.publicOrderId ||
+            draft.data?.orderId ||
+            draft.data?.id;
+          if (!id) throw new Error('Slant draft requires reconciliation');
+          await db
+            .update(ordersTable)
+            .set({ slantPublicOrderId: id, fulfillmentState: 'drafted' })
+            .where(
+              and(
+                eq(ordersTable.id, orderId),
+                eq(ordersTable.fulfillmentState, 'drafting'),
+              ),
+            );
+          return this.fulfillPaidOrder(orderId);
+        }
+        if (!order.slantPublicOrderId)
+          throw new Error('Missing retained draft identity');
+        const processed = await slantRequest(
+          env,
+          `/${encodeURIComponent(order.slantPublicOrderId)}`,
+          {
+            orderNumber: order.orderNumber,
+            metadata: {
+              checkoutAttemptId: order.checkoutAttemptId,
+              squarePaymentId: order.squarePaymentId,
+            },
+          },
+        );
+        if (
+          !['PROCESSING', 'SHIPPED', 'DELIVERED'].includes(
+            (processed.status || processed.data?.status || '').toUpperCase(),
+          )
+        )
+          throw new Error('Slant process confirmation requires reconciliation');
+        const at = new Date().toISOString();
+        await db
+          .update(ordersTable)
+          .set({
+            fulfillmentState: 'processed',
+            status: 'processing',
+            slantStatus: 'PROCESSING',
+            processedAt: at,
+            updatedAt: at,
+          })
+          .where(
+            and(
+              eq(ordersTable.id, orderId),
+              eq(ordersTable.fulfillmentState, 'processing'),
+            ),
+          );
+        await finalizePaidOrder(db, orderId);
+      } catch (error) {
+        if (stage === 'drafting' && error instanceof SlantRejection)
+          await releasePaidOrderAssets(db, orderId);
+        await db
+          .update(ordersTable)
+          .set({
+            fulfillmentState:
+              stage === 'drafting'
+                ? error instanceof SlantRejection
+                  ? 'ready'
+                  : 'draft_unknown'
+                : 'process_unknown',
+            status: 'paid_fulfillment_failed',
+          })
+          .where(
+            and(
+              eq(ordersTable.id, orderId),
+              eq(ordersTable.fulfillmentState, stage),
+            ),
+          );
+      }
+    },
+    /** Reconciles only retained process identities; never repeats ambiguous draft creation or manufacture. */
+    async reconcilePaidOrder(orderId: number, recoveredDraftId?: string) {
+      const [order] = await db
+        .select()
+        .from(ordersTable)
+        .where(eq(ordersTable.id, orderId))
+        .all();
+      if (
+        !order ||
+        order.paymentStatus !== 'paid' ||
+        order.fulfillmentType !== 'slant'
+      )
+        return;
+      if (order.fulfillmentState === 'processed')
+        return finalizePaidOrder(db, orderId);
+      const draftRecovery = ['drafting', 'draft_unknown'].includes(
+        order.fulfillmentState || '',
+      );
+      const externalId =
+        order.slantPublicOrderId ||
+        (draftRecovery ? recoveredDraftId : undefined);
+      if (!externalId) return;
+      if (
+        !draftRecovery &&
+        !['processing', 'process_unknown'].includes(
+          order.fulfillmentState || '',
+        )
+      )
+        return;
+      const response = await slantRequest(
+        env,
+        `/${encodeURIComponent(externalId)}`,
+      );
+      if (
+        (response.orderNumber || response.data?.orderNumber) !==
+        order.orderNumber
+      )
+        throw new Error('Slant association mismatch');
+      const status = response.status || response.data?.status;
+      if (draftRecovery && status?.toUpperCase() === 'DRAFT') {
+        await db
+          .update(ordersTable)
+          .set({ slantPublicOrderId: externalId, fulfillmentState: 'drafted' })
+          .where(
+            and(
+              eq(ordersTable.id, orderId),
+              inArray(ordersTable.fulfillmentState, [
+                'drafting',
+                'draft_unknown',
+              ]),
+            ),
+          );
+        return;
+      }
+      if (
+        !status ||
+        !['PROCESSING', 'SHIPPED', 'DELIVERED'].includes(status.toUpperCase())
+      )
+        return;
+      await db
+        .update(ordersTable)
+        .set({
+          fulfillmentState: 'processed',
+          slantPublicOrderId: externalId,
+          slantStatus: status,
+          status: status.toLowerCase(),
+          processedAt: order.processedAt || new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          ...(status.toUpperCase() === 'SHIPPED'
+            ? { shippedAt: order.shippedAt || new Date().toISOString() }
+            : {}),
+          ...(status.toUpperCase() === 'DELIVERED'
+            ? { deliveredAt: order.deliveredAt || new Date().toISOString() }
+            : {}),
+        })
+        .where(
+          and(
+            eq(ordersTable.id, orderId),
+            inArray(ordersTable.fulfillmentState, [
+              'processing',
+              'process_unknown',
+              'draft_unknown',
+              'drafting',
+            ]),
+          ),
+        );
+      await finalizePaidOrder(db, orderId);
     },
   };
+}
+
+/** Resumes snapshot-aware local cleanup after provider confirmation; external effects are never repeated. */
+async function finalizePaidOrder(db: Database, orderId: number) {
+  const [order] = await db
+    .select()
+    .from(ordersTable)
+    .where(eq(ordersTable.id, orderId))
+    .all();
+  if (!order || order.fulfillmentState !== 'processed') return;
+  const lines = quoteSnapshotSchema.shape.lines.parse(
+    JSON.parse(order.itemSnapshot || 'null'),
+  );
+  for (const line of lines)
+    await db
+      .delete(cart)
+      .where(
+        and(
+          eq(cart.id, line.cartItemId),
+          eq(cart.cartId, order.cartId || ''),
+          eq(cart.userId, order.userId || ''),
+          eq(cart.quantity, line.quantity),
+          eq(cart.skuNumber, line.skuNumber),
+          eq(cart.filamentId, line.filamentId),
+          eq(cart.color, line.color),
+          eq(cart.filamentType, line.filamentType),
+        ),
+      );
+  await db
+    .insert(orderEventsTable)
+    .values({
+      orderId,
+      type: 'square_fulfillment_processed',
+      dedupeKey: `square-fulfilled:${order.checkoutAttemptId}`,
+      source: 'square',
+      actor: 'square',
+      externalEventId: order.squarePaymentId,
+      previousStatus: 'paid',
+      nextStatus: order.slantStatus || 'PROCESSING',
+    })
+    .onConflictDoNothing();
+  await releasePaidOrderAssets(db, orderId);
 }

@@ -2,6 +2,7 @@ import { eq } from 'drizzle-orm';
 import { describeRoute } from 'hono-openapi';
 import { resolver } from 'hono-openapi/zod';
 import Stripe from 'stripe';
+import { createPaidOrderFulfillment } from '../modules/paidOrderFulfillment';
 import { z } from 'zod';
 import { createSchema } from 'zod-openapi';
 import { BASE_URL_V2 } from '../constants';
@@ -24,7 +25,13 @@ import {
 const orderListItemSchema = z.object({
   id: z.number(),
   orderNumber: z.string(),
-  userId: z.string(),
+  userId: z.string().nullable(),
+  source: z.string(),
+  fulfillmentType: z.string(),
+  paymentStatus: z.string().nullable(),
+  squareOrderId: z.string().nullable(),
+  squarePaymentId: z.string().nullable(),
+  fulfillmentState: z.string().nullable(),
   status: z.string().nullable(),
   slantStatus: z.string().nullable(),
   slantPublicOrderId: z.string().nullable(),
@@ -35,22 +42,30 @@ const orderListItemSchema = z.object({
 const orderDetailSchema = z.object({
   id: z.number(),
   orderNumber: z.string(),
-  userId: z.string(),
+  userId: z.string().nullable(),
   filename: z.string().nullable(),
   fileURL: z.string(),
   status: z.string().nullable(),
   slantStatus: z.string().nullable(),
   slantPublicOrderId: z.string().nullable(),
+  source: z.string(),
+  fulfillmentType: z.string(),
+  paymentStatus: z.string().nullable(),
+  squareOrderId: z.string().nullable(),
+  squarePaymentId: z.string().nullable(),
+  checkoutAttemptId: z.string().nullable(),
+  shippingAmountCents: z.number().nullable(),
+  fulfillmentState: z.string().nullable(),
   stripeCheckoutSessionId: z.string().nullable(),
   stripePaymentIntentId: z.string().nullable(),
   customerEmail: z.string().nullable(),
-  shipToName: z.string(),
-  shipToStreet1: z.string(),
+  shipToName: z.string().nullable(),
+  shipToStreet1: z.string().nullable(),
   shipToStreet2: z.string().nullable(),
-  shipToCity: z.string(),
-  shipToState: z.string(),
-  shipToZip: z.string(),
-  shipToCountryISO: z.string(),
+  shipToCity: z.string().nullable(),
+  shipToState: z.string().nullable(),
+  shipToZip: z.string().nullable(),
+  shipToCountryISO: z.string().nullable(),
   billToStreet1: z.string().nullable(),
   billToStreet2: z.string().nullable(),
   billToCity: z.string().nullable(),
@@ -363,14 +378,17 @@ const adminOrders = factory
     requireCatalogMutationRole,
     describeRoute({
       description:
-        'Retry a failed Slant submission for an order. Blocked if already successfully processed.',
+        'Retry eligible fulfillment. Square orders permit only ready/drafted stages, return success/orderId, and reject ambiguous or completed stages with409; reconcile first.',
       tags: ['Admin Orders'],
       responses: {
         200: {
           content: {
             'application/json': {
               schema: resolver(
-                z.object({ success: z.boolean(), event: orderEventSchema }),
+                z.union([
+                  z.object({ success: z.boolean(), event: orderEventSchema }),
+                  z.object({ success: z.boolean(), orderId: z.number() }),
+                ]),
               ),
             },
           },
@@ -379,6 +397,10 @@ const adminOrders = factory
         400: {
           content: { 'application/json': { schema: resolver(errorSchema) } },
           description: 'Retry not allowed',
+        },
+        409: {
+          description:
+            'Square fulfillment is completed or uncertain; reconcile before retry',
         },
         401: {
           content: { 'application/json': { schema: resolver(errorSchema) } },
@@ -401,6 +423,25 @@ const adminOrders = factory
         return c.json({ error: 'Invalid order ID' }, 400);
       }
 
+      const [paid] = await c.var.db
+        .select()
+        .from(ordersTable)
+        .where(eq(ordersTable.id, orderId));
+      if (paid?.squarePaymentId) {
+        if (!['ready', 'drafted'].includes(paid.fulfillmentState || ''))
+          return c.json(
+            {
+              error:
+                'Reconcile uncertain fulfillment before retry; no external effect was repeated',
+            },
+            409,
+          );
+        await createPaidOrderFulfillment({
+          db: c.var.db,
+          env: c.env,
+        }).fulfillPaidOrder(orderId);
+        return c.json({ success: true, orderId });
+      }
       const operations = adminOrderOperationsForDb(c.var.db);
       const result = await operations.requestRetry({
         orderId,
@@ -700,7 +741,21 @@ const adminOrders = factory
     requireCatalogMutationRole,
     describeRoute({
       description:
-        'Reconcile a local order with Slant3D and recover safe fulfillment drift (admin only)',
+        'Reconcile a local order with Slant3D (admin only). For Square, optionally supply slantPublicOrderId to recover a lost draft ID; retrieved orderNumber must match. Ambiguous process is read-only and never re-manufactured.',
+      requestBody: {
+        required: false,
+        content: {
+          'application/json': {
+            schema: {
+              type: 'object',
+              additionalProperties: false,
+              properties: {
+                slantPublicOrderId: { type: 'string', minLength: 1 },
+              },
+            },
+          },
+        },
+      },
       tags: ['Admin Orders'],
       responses: {
         200: {
@@ -750,6 +805,40 @@ const adminOrders = factory
         return c.json({ error: 'Order not found' }, 404);
       }
 
+      if (order.squarePaymentId) {
+        const fulfillment = createPaidOrderFulfillment({
+          db: c.var.db,
+          env: c.env,
+        });
+        const recovery = z
+          .object({ slantPublicOrderId: z.string().min(1).optional() })
+          .strict()
+          .safeParse(await c.req.json().catch(() => ({})));
+        if (!recovery.success)
+          return c.json({ error: 'Invalid recovery input' }, 400);
+        await fulfillment.reconcilePaidOrder(
+          order.id,
+          recovery.data.slantPublicOrderId,
+        );
+        const [current] = await c.var.db
+          .select()
+          .from(ordersTable)
+          .where(eq(ordersTable.id, order.id));
+        return c.json({
+          success: true,
+          orderId: order.id,
+          resultStatus: current.fulfillmentState,
+          localStatus: current.status,
+          slantStatus: current.slantStatus,
+          detectedIssues: [],
+          actionsTaken: [],
+          recommendedAction:
+            current.fulfillmentState === 'processed'
+              ? null
+              : 'Inspect Slant by immutable orderNumber; do not resubmit ambiguous draft or process',
+          order: current,
+        });
+      }
       const detectedIssues: string[] = [];
       const actionsTaken: string[] = [];
       const now = new Date().toISOString();

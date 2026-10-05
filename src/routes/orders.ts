@@ -46,6 +46,13 @@ const customerOrderSchema = z.object({
   updatedAt: z.string().nullable(),
   status: z.string().nullable(),
   slantStatus: z.string().nullable(),
+  source: z.string(),
+  fulfillmentType: z.string(),
+  paymentStatus: z.string().nullable(),
+  squareOrderId: z.string().nullable(),
+  squarePaymentId: z.string().nullable(),
+  shippingAmountCents: z.number().nullable(),
+  fulfillmentState: z.string().nullable(),
   totalAmountCents: z.number().nullable(),
   currency: z.string().nullable(),
   items: z.array(orderItemSchema),
@@ -135,7 +142,12 @@ function safeOrderItems(value: string | null | undefined) {
       filamentType:
         typeof record.filamentType === 'string' ? record.filamentType : null,
       image: typeof record.image === 'string' ? record.image : null,
-      price: typeof record.price === 'number' ? record.price : null,
+      price:
+        typeof record.unitAmountCents === 'number'
+          ? record.unitAmountCents / 100
+          : typeof record.price === 'number'
+            ? record.price
+            : null,
     };
   });
 }
@@ -189,6 +201,13 @@ function toCustomerOrder(order: OrderRow, events: OrderEventRow[] = []) {
     updatedAt: order.updatedAt,
     status: order.status,
     slantStatus: order.slantStatus,
+    source: order.source,
+    fulfillmentType: order.fulfillmentType,
+    paymentStatus: order.paymentStatus,
+    squareOrderId: order.squareOrderId,
+    squarePaymentId: order.squarePaymentId,
+    shippingAmountCents: order.shippingAmountCents,
+    fulfillmentState: order.fulfillmentState,
     totalAmountCents: order.totalAmountCents,
     currency: order.currency,
     items: safeOrderItems(order.itemSnapshot),
@@ -447,6 +466,8 @@ const ordersRouter = factory
     }),
     async c => {
       const configuredSecret = c.env.SLANT_WEBHOOK_SECRET;
+      if (!configuredSecret)
+        return c.json({ error: 'Slant webhook configuration required' }, 503);
       if (configuredSecret) {
         const headerSecret = c.req.header('x-slant-webhook-secret');
         if (headerSecret !== configuredSecret) {

@@ -406,7 +406,7 @@ describe('Product Routes', () => {
     expect(data.products[1]).toMatchObject({
       productId: 2,
       checkoutReady: false,
-      reasons: ['missing_stripe_price_id', 'missing_public_file_service_id'],
+      reasons: ['missing_public_file_service_id'],
     });
   });
 
@@ -707,9 +707,7 @@ describe('Product Routes', () => {
 
   test('DELETE /delete-product/:id deletes a product', async () => {
     mockSessionRole('admin');
-    mockDelete.mockReturnValueOnce({
-      returning: vi.fn().mockResolvedValueOnce([{ id: 1 }]),
-    });
+    mockDelete.mockResolvedValueOnce([{ id: 1 }]);
 
     const request = new Request('http://localhost/delete-product/1', {
       method: 'DELETE',

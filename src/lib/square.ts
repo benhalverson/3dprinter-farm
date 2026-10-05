@@ -152,6 +152,68 @@ export function squareClient(config: SquareConfig) {
     return result.data.catalog_object;
   }
   return {
+    /** Creates or replays a hosted checkout with the persisted immutable payload and key. */
+    async createPaymentLink(payload: unknown) {
+      const result = z
+        .object({
+          payment_link: z.object({
+            id: z.string().min(1),
+            order_id: z.string().min(1),
+            url: z.string().url(),
+          }),
+        })
+        .safeParse(
+          await request(
+            'online-checkout/payment-links',
+            JSON.stringify(payload),
+          ),
+        );
+      if (!result.success) throw squareFailure('square_invalid_response', true);
+      return result.data.payment_link;
+    },
+    /** Retrieves authoritative payment evidence rather than trusting event contents. */
+    async retrievePayment(id: string) {
+      const result = z
+        .object({
+          payment: z.object({
+            id: z.string(),
+            order_id: z.string(),
+            location_id: z.string(),
+            status: z.string(),
+            amount_money: z.object({
+              amount: z.number().int().safe(),
+              currency: z.string(),
+            }),
+            total_money: z.object({
+              amount: z.number().int().safe(),
+              currency: z.string(),
+            }),
+          }),
+        })
+        .safeParse(await request(`payments/${encodeURIComponent(id)}`));
+      if (!result.success || result.data.payment.id !== id)
+        throw squareFailure('square_invalid_response');
+      return result.data.payment;
+    },
+    /** Retrieves the original API order reference, including before a lost checkout response is recovered. */
+    async retrieveOrder(id: string) {
+      const result = z
+        .object({
+          order: z.object({
+            id: z.string(),
+            reference_id: z.string(),
+            location_id: z.string(),
+            total_money: z.object({
+              amount: z.number().int().safe(),
+              currency: z.string(),
+            }),
+          }),
+        })
+        .safeParse(await request(`orders/${encodeURIComponent(id)}`));
+      if (!result.success || result.data.order.id !== id)
+        throw squareFailure('square_invalid_response');
+      return result.data.order;
+    },
     /** Confirms that the configured seller owns an active USD location. */
     async validateLocation() {
       const result = z
@@ -196,4 +258,29 @@ export function squareClient(config: SquareConfig) {
       return parseItem(await request('catalog/object', payload));
     },
   };
+}
+
+/** Verifies Square HMAC over the fixed subscription URL followed by the exact raw body. */
+export async function verifySquareSignature(
+  body: string,
+  signature: string | undefined,
+  env: Bindings,
+) {
+  if (!env.SQUARE_WEBHOOK_SIGNATURE_KEY || !env.SQUARE_WEBHOOK_NOTIFICATION_URL)
+    throw squareFailure('square_configuration_required');
+  if (!signature || !/^[A-Za-z0-9+/]{43}=$/.test(signature)) return false;
+  const key = await crypto.subtle.importKey(
+    'raw',
+    new TextEncoder().encode(env.SQUARE_WEBHOOK_SIGNATURE_KEY),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['verify'],
+  );
+  const bytes = Uint8Array.from(atob(signature), c => c.charCodeAt(0));
+  return crypto.subtle.verify(
+    'HMAC',
+    key,
+    bytes,
+    new TextEncoder().encode(env.SQUARE_WEBHOOK_NOTIFICATION_URL + body),
+  );
 }
