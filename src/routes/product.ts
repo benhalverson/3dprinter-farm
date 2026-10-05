@@ -5,6 +5,11 @@ import { describeRoute } from 'hono-openapi';
 import { resolver } from 'hono-openapi/zod';
 import { ZodError, z } from 'zod';
 import { reserveCatalogAssets } from '../modules/productAssets';
+import {
+  CategoryConflictError,
+  createCategory,
+  readCategories,
+} from '../modules/productCategories';
 
 type OpenAPISchema = Record<string, unknown>;
 
@@ -266,7 +271,7 @@ const product = factory
         const totalItems = totalCountResult.count;
         const totalPages = Math.ceil(totalItems / limit);
 
-        // Get paginated results without Stripe fields
+        // Get paginated results with public catalog fields
         const rawProducts = await c.var.db
           .select({
             id: productsTable.id,
@@ -493,7 +498,7 @@ const product = factory
     requireCatalogMutationRole,
     describeRoute({
       description:
-        'List product checkout readiness diagnostics for admins. The response identifies missing Stripe prices, missing Slant3D file IDs, and default filament availability problems before customers reach checkout.',
+        'List product checkout readiness diagnostics for admins. The response identifies missing Slant3D file IDs, and default filament availability problems before customers reach checkout.',
       tags: ['Products', 'Admin Catalog'],
       responses: {
         200: {
@@ -536,7 +541,6 @@ const product = factory
           id: productsTable.id,
           skuNumber: productsTable.skuNumber,
           name: productsTable.name,
-          stripePriceId: productsTable.stripePriceId,
           publicFileServiceId: productsTable.publicFileServiceId,
         })
         .from(productsTable)
@@ -1321,7 +1325,8 @@ const product = factory
     requireCatalogMutationRole,
     describeRoute({
       summary: 'Add a new product category',
-      description: 'Creates a new category and returns the created record.',
+      description:
+        'Creates a category or returns its existing normalized-name match. Ambiguous legacy names require selecting an existing ID.',
       tags: ['Product'],
       requestBody: {
         content: {
@@ -1340,7 +1345,17 @@ const product = factory
               ) as unknown as OpenAPISchema,
             },
           },
-          description: 'Category created successfully',
+          description: 'Category created or matched successfully',
+        },
+        409: {
+          content: {
+            'application/json': {
+              schema: resolver(
+                z.object({ error: z.string() }),
+              ) as unknown as OpenAPISchema,
+            },
+          },
+          description: 'Ambiguous category name; select an existing identity',
         },
         500: {
           content: {
@@ -1357,15 +1372,18 @@ const product = factory
       },
     }),
     zValidator('json', addCategorySchema),
+    /** Create or resolve one category through the shared normalized identity contract. */
     async c => {
       const categoryData = c.req.valid('json');
       try {
-        const newCategory = await c.var.db
-          .insert(categoryTable)
-          .values(categoryData)
-          .returning();
-        return c.json(newCategory);
+        const newCategory = await createCategory(
+          c.var.db,
+          categoryData.categoryName,
+        );
+        return c.json([newCategory]);
       } catch (error) {
+        if (error instanceof CategoryConflictError)
+          return c.json({ error: error.message }, 409);
         console.error('Error adding category', error);
         return c.json({ error: 'Failed to add category' }, 500);
       }
@@ -1402,9 +1420,10 @@ const product = factory
         },
       },
     }),
+    /** Return public category identities without exposing internal uniqueness keys. */
     async c => {
       try {
-        const categories = await c.var.db.select().from(categoryTable);
+        const categories = await readCategories(c.var.db);
         return c.json(categories);
       } catch (error) {
         console.error('Error fetching categories', error);

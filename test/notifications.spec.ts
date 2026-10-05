@@ -1,7 +1,11 @@
 import { applyD1Migrations, env } from 'cloudflare:test';
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import app from '../src/app';
+import {
+  recordSlantLifecycle,
+  slantEventKey,
+} from '../src/modules/slantLifecycle';
 import * as schema from '../src/db/schema';
 import { mockBetterAuth } from './mocks/auth';
 
@@ -103,6 +107,7 @@ async function order() {
       customerEmail: 'customer@example.com',
       status: 'processing',
       slantStatus: 'PROCESSING',
+      slantPublicOrderId: identity,
     })
     .returning();
   await db.insert(schema.orderEventsTable).values([
@@ -536,8 +541,16 @@ describe('Square persisted-evidence notification integration', () => {
         .where(eq(schema.ordersTable.id, row.id));
     } else if (fault === 'checkout-owner') {
       await db
+        .insert(schema.users)
+        .values({
+          id: 'other-owner',
+          email: 'other@example.com',
+          name: 'Other',
+        })
+        .onConflictDoNothing();
+      await db
         .update(schema.ordersTable)
-        .set({ userId: null })
+        .set({ userId: 'other-owner' })
         .where(eq(schema.ordersTable.id, row.id));
     } else if (fault === 'snapshot-email') {
       await db
@@ -647,4 +660,349 @@ it.each([
   await deliverNotification(db, mail, queued.id);
   expect(await attempt(queued.id)).toMatchObject({ status: 'sending' });
   expect(send).not.toHaveBeenCalled();
+});
+
+/** Invoke the authenticated lifecycle producer with local D1 and a mocked mail binding. */
+function webhook(
+  body: unknown,
+  secret: string | null = 'test-secret',
+  enabled = false,
+) {
+  return app.request(
+    '/webhook/slant3d',
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(secret ? { 'x-slant-webhook-secret': secret } : {}),
+      },
+      body: JSON.stringify(body),
+    },
+    {
+      DB: bindings.NOTIFICATIONS_TEST_DB,
+      ...mail,
+      ORDER_NOTIFICATIONS_ENABLED: enabled ? 'true' : 'false',
+      SLANT_WEBHOOK_SECRET: 'test-secret',
+    },
+  );
+}
+
+/** Read current manufacturing/payment state after an event. */
+async function currentOrder(id: number) {
+  return db
+    .select()
+    .from(schema.ordersTable)
+    .where(eq(schema.ordersTable.id, id))
+    .get();
+}
+
+describe('authenticated Slant lifecycle and notification recovery', () => {
+  it('rejects missing/wrong secrets, absent IDs, unknown and ambiguous mappings', async () => {
+    const row = await order();
+    const event = {
+      eventId: 'event',
+      orderId: row.slantPublicOrderId,
+      status: 'SHIPPED',
+    };
+    expect((await webhook(event, null)).status).toBe(401);
+    expect((await webhook(event, 'wrong')).status).toBe(401);
+    expect((await webhook({ ...event, eventId: '' })).status).toBe(422);
+    expect((await webhook({ ...event, eventId: undefined })).status).toBe(422);
+    expect((await webhook({ ...event, orderId: 'unknown' })).status).toBe(404);
+    const second = await order();
+    await db
+      .update(schema.ordersTable)
+      .set({ slantPublicOrderId: row.slantPublicOrderId })
+      .where(eq(schema.ordersTable.id, second.id));
+    expect((await webhook(event)).status).toBe(409);
+    expect((await currentOrder(row.id))?.slantStatus).toBe('PROCESSING');
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it('records trusted facts and immutable envelopes while disabled, with no caller provenance', async () => {
+    const row = await order();
+    const event = {
+      eventId: 'event',
+      orderId: row.slantPublicOrderId,
+      status: 'SHIPPED',
+      metadata: {
+        provenance: 'forged',
+        tracking: 'PRIVATE',
+        trackingNumber: 'TRACK-123',
+      },
+    };
+    expect((await webhook(event)).status).toBe(200);
+    const fact = await db
+      .select()
+      .from(schema.orderEventsTable)
+      .where(
+        eq(
+          schema.orderEventsTable.dedupeKey,
+          slantEventKey(row.id, row.slantPublicOrderId!, 'event'),
+        ),
+      )
+      .get();
+    expect(fact).toMatchObject({
+      type: 'slant_status_changed',
+      previousStatus: 'PROCESSING',
+      nextStatus: 'SHIPPED',
+    });
+    expect(fact?.metadata).not.toContain('PRIVATE');
+    expect(fact?.metadata).not.toContain('forged');
+    expect(fact?.metadata).toContain('TRACK-123');
+    expect((await currentOrder(row.id))?.paymentStatus).toBe('paid');
+    expect(await db.select().from(attempts)).toHaveLength(2);
+    expect(send).not.toHaveBeenCalled();
+    expect((await webhook(event, 'test-secret', true)).status).toBe(200);
+    expect(send).toHaveBeenCalledTimes(2);
+    expect((await webhook(event, 'test-secret', true)).status).toBe(200);
+    expect(send).toHaveBeenCalledTimes(2);
+  });
+
+  it('rejects ID reuse and regressions, and preserves terminal manufacturing state', async () => {
+    const row = await order();
+    const event = {
+      eventId: 'event',
+      orderId: row.slantPublicOrderId,
+      status: 'SHIPPED',
+    };
+    expect((await webhook(event)).status).toBe(200);
+    expect((await webhook({ ...event, status: 'DELIVERED' })).status).toBe(409);
+    expect(
+      (await webhook({ ...event, eventId: 'backward', status: 'PROCESSING' }))
+        .status,
+    ).toBe(409);
+    expect(
+      (await webhook({ ...event, eventId: 'cancel', status: 'CANCELED' }))
+        .status,
+    ).toBe(409);
+    expect(
+      (await webhook({ ...event, eventId: 'delivered', status: 'DELIVERED' }))
+        .status,
+    ).toBe(200);
+    expect((await webhook({ ...event, eventId: 'late' })).status).toBe(409);
+    expect((await currentOrder(row.id))?.slantStatus).toBe('DELIVERED');
+  });
+
+  it('recovers both lifecycle facts after later advancement without manufacturing new events', async () => {
+    const row = await order();
+    for (const status of ['SHIPPED', 'DELIVERED'] as const)
+      expect(
+        (
+          await recordSlantLifecycle(db, {
+            eventId: status,
+            orderId: row.slantPublicOrderId!,
+            status,
+          })
+        ).status,
+      ).toBe(200);
+    await db
+      .delete(schema.orderEventsTable)
+      .where(
+        and(
+          eq(schema.orderEventsTable.orderId, row.id),
+          eq(schema.orderEventsTable.type, 'square_fulfillment_processed'),
+        ),
+      );
+    await reconcileSquareNotifications(db, mail, row.id);
+    expect(send).toHaveBeenCalledTimes(2);
+    expect(send.mock.calls.map(call => call[0].subject)).toEqual([
+      `Order #${row.id} shipped`,
+      `Order #${row.id} delivered`,
+    ]);
+  });
+
+  it('manufacturing cancellation before processing neither claims nor performs a refund', async () => {
+    const row = await order();
+    await db
+      .update(schema.ordersTable)
+      .set({
+        slantStatus: null,
+        status: 'paid_fulfillment_failed',
+        fulfillmentState: 'drafted',
+      })
+      .where(eq(schema.ordersTable.id, row.id));
+    await db
+      .delete(schema.orderEventsTable)
+      .where(
+        and(
+          eq(schema.orderEventsTable.orderId, row.id),
+          eq(schema.orderEventsTable.type, 'square_fulfillment_processed'),
+        ),
+      );
+    expect(
+      (
+        await webhook(
+          {
+            eventId: 'cancel',
+            orderId: row.slantPublicOrderId,
+            status: 'CANCELED',
+          },
+          'test-secret',
+          true,
+        )
+      ).status,
+    ).toBe(200);
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send.mock.calls[0][0].text).toContain(
+      'does not confirm a payment refund',
+    );
+    expect(await currentOrder(row.id)).toMatchObject({
+      slantStatus: 'CANCELED',
+      paymentStatus: 'paid',
+      squarePaymentId: row.squarePaymentId,
+    });
+  });
+
+  it('does not trust old events even with lookalike caller metadata or external IDs', async () => {
+    const row = await order();
+    await db.insert(schema.orderEventsTable).values({
+      orderId: row.id,
+      source: 'slant3d',
+      actor: 'slant3d',
+      type: 'slant_status_changed',
+      externalEventId: 'historic',
+      nextStatus: 'SHIPPED',
+      metadata: JSON.stringify({
+        provenance: 'configured-secret-v1',
+        slantOrderId: row.slantPublicOrderId,
+      }),
+    });
+    await expect(
+      enqueueOrderNotification(db, row.id, 'shipped'),
+    ).rejects.toThrow('notification_lifecycle_unverified');
+    expect(
+      (
+        await webhook({
+          eventId: row.squarePaymentId,
+          orderId: row.slantPublicOrderId,
+          status: 'SHIPPED',
+        })
+      ).status,
+    ).toBe(200);
+  });
+
+  it('atomically rolls back the event when a later batch statement fails', async () => {
+    const row = await order();
+    const original = db.batch.bind(db);
+    const spy = vi.spyOn(db, 'batch').mockImplementationOnce(queries =>
+      original([
+        queries[0],
+        db.insert(schema.users).values({
+          id: 'test-owner',
+          name: 'Duplicate',
+          email: 'duplicate@example.com',
+        }),
+      ]),
+    );
+    await expect(
+      recordSlantLifecycle(db, {
+        eventId: 'rollback',
+        orderId: row.slantPublicOrderId!,
+        status: 'SHIPPED',
+      }),
+    ).rejects.toThrow();
+    spy.mockRestore();
+    expect((await currentOrder(row.id))?.slantStatus).toBe('PROCESSING');
+    expect(
+      await db
+        .select()
+        .from(schema.orderEventsTable)
+        .where(eq(schema.orderEventsTable.externalEventId, 'rollback')),
+    ).toHaveLength(0);
+  });
+
+  it('recovers intent after an insert outage by replaying the same accepted event', async () => {
+    const row = await order();
+    const event = {
+      eventId: 'recover',
+      orderId: row.slantPublicOrderId!,
+      status: 'SHIPPED' as const,
+    };
+    expect((await recordSlantLifecycle(db, event)).status).toBe(200);
+    const spy = vi.spyOn(db, 'insert').mockImplementationOnce(() => {
+      throw new Error('controlled outage');
+    });
+    await expect(
+      reconcileSquareNotifications(db, mail, row.id),
+    ).rejects.toThrow('controlled outage');
+    spy.mockRestore();
+    expect((await webhook(event, 'test-secret', true)).status).toBe(200);
+    expect(send).toHaveBeenCalledTimes(2);
+  });
+
+  it('concurrent duplicate and advancing events preserve monotonic state and one intent per milestone', async () => {
+    const row = await order();
+    const event = {
+      eventId: 'same',
+      orderId: row.slantPublicOrderId!,
+      status: 'SHIPPED' as const,
+    };
+    await Promise.all(
+      Array.from({ length: 5 }, () => recordSlantLifecycle(db, event)),
+    );
+    expect(
+      await db
+        .select()
+        .from(schema.orderEventsTable)
+        .where(eq(schema.orderEventsTable.externalEventId, 'same')),
+    ).toHaveLength(1);
+    const results = await Promise.all(
+      ['SHIPPED', 'DELIVERED'].map(status =>
+        recordSlantLifecycle(db, {
+          eventId: status,
+          orderId: row.slantPublicOrderId!,
+          status: status as 'SHIPPED' | 'DELIVERED',
+        }),
+      ),
+    );
+    if ((await currentOrder(row.id))?.slantStatus !== 'DELIVERED')
+      await recordSlantLifecycle(db, {
+        eventId: 'DELIVERED',
+        orderId: row.slantPublicOrderId!,
+        status: 'DELIVERED',
+      });
+    expect(results.every(result => [200, 409].includes(result.status))).toBe(
+      true,
+    );
+    expect((await currentOrder(row.id))?.slantStatus).toBe('DELIVERED');
+    await reconcileSquareNotifications(db, mail, row.id);
+    expect(send).toHaveBeenCalledTimes(3);
+  });
+});
+
+describe('authenticated webhook failure boundaries', () => {
+  it('returns retryable sanitized errors without exposing database/provider details', async () => {
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const secret = 'PRIVATE customer@example.com token';
+    const response = await app.request(
+      '/webhook/slant3d',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-slant-webhook-secret': 'secret',
+        },
+        body: JSON.stringify({
+          eventId: 'failed',
+          orderId: 'retained',
+          status: 'SHIPPED',
+        }),
+      },
+      {
+        DB: {
+          prepare() {
+            throw new Error(secret);
+          },
+        },
+        ...mail,
+        SLANT_WEBHOOK_SECRET: 'secret',
+      },
+    );
+    expect(response.status).toBe(503);
+    expect(await response.text()).not.toContain(secret);
+    expect(JSON.stringify(log.mock.calls)).not.toContain(secret);
+    expect(send).not.toHaveBeenCalled();
+    log.mockRestore();
+  });
 });

@@ -24,20 +24,7 @@ CREATE UNIQUE INDEX `checkout_attempts_request_key_unique` ON `checkout_attempts
 CREATE UNIQUE INDEX `checkout_attempts_square_order_id_unique` ON `checkout_attempts` (`square_order_id`);--> statement-breakpoint
 CREATE UNIQUE INDEX `checkout_attempts_payment_link_id_unique` ON `checkout_attempts` (`payment_link_id`);--> statement-breakpoint
 CREATE UNIQUE INDEX `checkout_attempts_square_payment_id_unique` ON `checkout_attempts` (`square_payment_id`);--> statement-breakpoint
-CREATE TABLE `checkout_quotes` (
-	`id` text PRIMARY KEY NOT NULL,
-	`owner_id` text NOT NULL,
-	`cart_id` text NOT NULL,
-	`input_hash` text NOT NULL,
-	`encrypted_snapshot` text NOT NULL,
-	`created_at` integer NOT NULL,
-	`expires_at` integer NOT NULL,
-	`consumed_attempt_id` text,
-	`invalidated` integer DEFAULT false NOT NULL,
-	FOREIGN KEY (`owner_id`) REFERENCES `users`(`id`) ON UPDATE no action ON DELETE cascade
-);
---> statement-breakpoint
-CREATE INDEX `checkout_quotes_owner_cart` ON `checkout_quotes` (`owner_id`,`cart_id`);--> statement-breakpoint
+ALTER TABLE `checkout_quotes` ADD `consumed_attempt_id` text;--> statement-breakpoint
 CREATE UNIQUE INDEX `checkout_quote_consumption` ON `checkout_quotes` (`id`,`consumed_attempt_id`);--> statement-breakpoint
 ALTER TABLE `order_events` ADD `dedupe_key` text;--> statement-breakpoint
 CREATE UNIQUE INDEX `order_events_dedupe_key_unique` ON `order_events` (`dedupe_key`);--> statement-breakpoint

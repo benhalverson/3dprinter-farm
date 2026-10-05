@@ -4,5 +4,5 @@
 .dev.vars
 *.stl
 package-lock.json
-
+.deploy-lock/
 .generated/

@@ -33,6 +33,12 @@ export const productDrafts = sqliteTable(
       .notNull()
       .default('active'),
     attachments: text('attachments', { mode: 'json' }).$type<AttachmentState>(),
+    categoryConfirmationToken: text('category_confirmation_token'),
+    categoryConfirmationName: text('category_confirmation_name'),
+    categoryConfirmationKey: text('category_confirmation_key'),
+    // Drizzle insert-select requires every column, including the generated ID.
+    // This server-only slot is always null so SQLite allocates the category ID.
+    categoryConfirmationId: integer('category_confirmation_id'),
   },
   table => [
     index('product_drafts_owner_updated').on(table.ownerId, table.updatedAt),
@@ -153,7 +159,6 @@ export const productsTable = sqliteTable('products', {
   color: text('color').default('#000000'),
   inPersonPrice: integer('in_person_price_cents'),
   squareRevision: integer('square_revision').notNull().default(0),
-  stripePriceId: text('stripe_price_id'),
   publicFileServiceId: text('public_file_service_id'), // Slant3D file UUID for orders
   // Make optional to allow products without categories during transition
   categoryId: integer().references(() => categoryTable.categoryId),
@@ -227,6 +232,7 @@ export const productRelations = relations(productsTable, ({ many }) => ({
 export const categoryTable = sqliteTable('category', {
   categoryId: integer().primaryKey({ autoIncrement: true }),
   categoryName: text().notNull(),
+  normalizedKey: text('normalized_key').unique(),
 });
 
 export const productsToCategories = sqliteTable(
@@ -273,7 +279,7 @@ export const categoryDataSchema = z.object({
 
 // Input schema for creating categories (ID auto-increments in DB)
 export const addCategorySchema = z.object({
-  categoryName: z.string(),
+  categoryName: z.string().trim().min(1).max(256),
 });
 
 export const ProductsDataSchema = z
@@ -462,20 +468,22 @@ export type ProfileData = z.infer<typeof ProfileDataSchema>;
 
 export const ordersTable = sqliteTable('ordersTable', {
   id: integer('id').primaryKey(),
-  userId: text('user_id').references(() => users.id, { onDelete: 'cascade' }), // Online ownership; in-person sales may have no account
+  userId: text('user_id')
+    .references(() => users.id, { onDelete: 'cascade' })
+    .notNull(), // Preserve existing online ownership; future in-person intake requires its own safe storage migration
   orderNumber: text('order_number').notNull().unique(),
   cartId: text('cart_id'),
   filename: text('filename'),
   fileURL: text('file_url').notNull(),
 
   // Shipping address fields specific to each order
-  shipToName: text('ship_to_name'),
-  shipToStreet1: text('ship_to_street_1'),
+  shipToName: text('ship_to_name').notNull(),
+  shipToStreet1: text('ship_to_street_1').notNull(),
   shipToStreet2: text('ship_to_street_2'),
-  shipToCity: text('ship_to_city'),
-  shipToState: text('ship_to_state'),
-  shipToZip: text('ship_to_zip'),
-  shipToCountryISO: text('ship_to_country_iso'),
+  shipToCity: text('ship_to_city').notNull(),
+  shipToState: text('ship_to_state').notNull(),
+  shipToZip: text('ship_to_zip').notNull(),
+  shipToCountryISO: text('ship_to_country_iso').notNull(),
 
   // Billing address fields (if needed)
   billToStreet1: text('bill_to_street_1'),
@@ -489,9 +497,7 @@ export const ordersTable = sqliteTable('ordersTable', {
   status: text('status').default('pending'),
   slantStatus: text('slant_status'),
   slantPublicOrderId: text('slant_public_order_id'),
-  stripeCheckoutSessionId: text('stripe_checkout_session_id'),
-  stripePaymentIntentId: text('stripe_payment_intent_id'),
-  stripeEventId: text('stripe_event_id'),
+  slantEventKey: text('slant_event_key'),
   source: text('source').notNull().default('online'),
   fulfillmentType: text('fulfillment_type').notNull().default('slant'),
   paymentStatus: text('payment_status'),
@@ -549,9 +555,6 @@ export const orderCancellationAttemptsTable = sqliteTable(
     override: integer('override', { mode: 'boolean' }).default(false).notNull(),
     slantStatus: text('slant_status'),
     slantResult: text('slant_result'),
-    stripeRefundId: text('stripe_refund_id'),
-    stripeRefundStatus: text('stripe_refund_status'),
-    stripeResult: text('stripe_result'),
     finalStatus: text('final_status').notNull(),
     errorMessage: text('error_message'),
     createdAt: text('created_at')

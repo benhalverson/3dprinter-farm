@@ -26,6 +26,7 @@ import admin from '../../src/routes/adminOrders';
 import route from '../../src/routes/checkoutQuotes';
 import notifications from '../../src/routes/notifications';
 import orders from '../../src/routes/orders';
+import { recordSlantLifecycle } from '../../src/modules/slantLifecycle';
 import payments from '../../src/routes/payments';
 
 const cartId = '11111111-1111-4111-8111-111111111111';
@@ -862,4 +863,106 @@ test('eligible admin retry reconciles original failure and new confirmation thro
       .sort(),
   ).toEqual(['admin_failure_alert', 'order_confirmation']);
   expect(send).toHaveBeenCalledTimes(2);
+});
+
+test.each([
+  'resolve',
+  'reject',
+  'reconcile',
+] as const)('retains authenticated cancellation during in-flight Slant %s and prevents manufacturing replay', async outcome => {
+  await prepared();
+  if (outcome === 'reconcile') {
+    processAmbiguous = true;
+    await event();
+  }
+  const original = fetchMock.getMockImplementation()!;
+  let entered!: () => void;
+  const started = new Promise<void>(resolve => {
+    entered = resolve;
+  });
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => {
+    release = resolve;
+  });
+  fetchMock.mockImplementation(async (url, init) => {
+    if (
+      String(url).endsWith('/orders/slant-order') &&
+      (outcome === 'reconcile'
+        ? init?.method === 'GET'
+        : init?.method === 'POST')
+    ) {
+      entered();
+      await gate;
+      if (outcome === 'reject') throw new Error('lost process response');
+    }
+    return original(url, init);
+  });
+  const [existing] = await db.select().from(schema.ordersTable);
+  const operation =
+    outcome === 'reconcile'
+      ? createPaidOrderFulfillment({
+          db: state.db as never,
+          env,
+        }).reconcilePaidOrder(existing.id)
+      : event();
+  await started;
+  const [pending] = await db.select().from(schema.ordersTable);
+  expect(pending.slantStatus).toBeNull();
+  expect(
+    (
+      await recordSlantLifecycle(state.db as never, {
+        eventId: 'cancel-in-flight',
+        orderId: 'slant-order',
+        status: 'CANCELED',
+      })
+    ).status,
+  ).toBe(200);
+  release();
+  await operation;
+  const [canceled] = await db.select().from(schema.ordersTable);
+  expect(canceled).toMatchObject({
+    slantStatus: 'CANCELED',
+    status: 'canceled',
+    fulfillmentState: 'canceled',
+    paymentStatus: 'paid',
+  });
+  const calls = fetchMock.mock.calls.length;
+  await createPaidOrderFulfillment({
+    db: state.db as never,
+    env,
+  }).fulfillPaidOrder(canceled.id);
+  await createPaidOrderFulfillment({
+    db: state.db as never,
+    env,
+  }).reconcilePaidOrder(canceled.id);
+  expect(fetchMock.mock.calls).toHaveLength(calls);
+});
+
+test('Slant shipment during actual process response cannot regress to PROCESSING', async () => {
+  await prepared();
+  const original = fetchMock.getMockImplementation()!;
+  fetchMock.mockImplementation(async (url, init) => {
+    if (
+      String(url).endsWith('/orders/slant-order') &&
+      init?.method === 'POST'
+    ) {
+      expect(
+        (
+          await recordSlantLifecycle(state.db as never, {
+            eventId: 'shipped-in-flight',
+            orderId: 'slant-order',
+            status: 'SHIPPED',
+          })
+        ).status,
+      ).toBe(200);
+    }
+    return original(url, init);
+  });
+  await event();
+  expect((await db.select().from(schema.ordersTable))[0]).toMatchObject({
+    slantStatus: 'SHIPPED',
+    status: 'shipped',
+    fulfillmentState: 'processed',
+    paymentStatus: 'paid',
+  });
 });

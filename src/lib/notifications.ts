@@ -8,6 +8,7 @@ import {
   orderEventsTable,
   ordersTable,
 } from '../db/schema';
+import { isTrustedSlantEvent } from '../modules/slantLifecycle';
 import type { Bindings } from '../types';
 
 type Database = DrizzleD1Database<typeof schema>;
@@ -128,23 +129,23 @@ async function verifiedSquareOrder(db: Database, orderId: number) {
 /**
  * Recover one confirmation from real Square evidence, including later SHIPPED or
  * DELIVERED state. The immutable checkout recipient must match its order snapshot.
- * Slant lifecycle emails remain blocked until authenticated, ordered, atomic
- * lifecycle evidence is available; old Slant rows are not trusted retroactively.
+ * Lifecycle messages require evidence from the atomic authenticated Slant producer;
+ * historical unmarked events are never trusted retroactively.
  */
 export async function enqueueOrderNotification(
   db: Database,
   orderId: number,
   status: OrderNotificationStatus,
 ) {
-  if (status !== 'confirmed')
-    throw new Error('notification_lifecycle_unverified');
+  const notificationType =
+    status === 'confirmed' ? 'order_confirmation' : `order_${status}`;
   const existing = await db
     .select()
     .from(attempts)
     .where(
       eq(
         attempts.deliveryKey,
-        deliveryKey(String(orderId), 'order_confirmation', status),
+        deliveryKey(String(orderId), notificationType, status),
       ),
     )
     .get();
@@ -152,32 +153,47 @@ export async function enqueueOrderNotification(
   const verified = await verifiedSquareOrder(db, orderId);
   if (!verified) throw new Error('notification_square_unverified');
   const { order, checkout } = verified;
-  if (
-    order.fulfillmentState !== 'processed' ||
-    order.slantStatus === 'CANCELED' ||
-    order.status === 'canceled'
-  )
-    throw new Error('notification_order_status_mismatch');
-  const completed = await db
-    .select()
-    .from(orderEventsTable)
-    .where(
-      and(
-        eq(orderEventsTable.orderId, orderId),
-        eq(orderEventsTable.source, 'square'),
-        eq(orderEventsTable.actor, 'square'),
-        eq(orderEventsTable.type, 'square_fulfillment_processed'),
-        eq(orderEventsTable.dedupeKey, `square-fulfilled:${checkout.id}`),
-        eq(orderEventsTable.externalEventId, checkout.squarePaymentId ?? ''),
-        inArray(orderEventsTable.nextStatus, [
-          'PROCESSING',
-          'SHIPPED',
-          'DELIVERED',
-        ]),
-      ),
+  if (status === 'confirmed') {
+    if (
+      order.fulfillmentState !== 'processed' ||
+      order.slantStatus === 'CANCELED' ||
+      order.status === 'canceled'
     )
-    .get();
-  if (!completed) throw new Error('notification_fulfillment_unverified');
+      throw new Error('notification_order_status_mismatch');
+    const completed = await db
+      .select()
+      .from(orderEventsTable)
+      .where(
+        and(
+          eq(orderEventsTable.orderId, orderId),
+          eq(orderEventsTable.source, 'square'),
+          eq(orderEventsTable.actor, 'square'),
+          eq(orderEventsTable.type, 'square_fulfillment_processed'),
+          eq(orderEventsTable.dedupeKey, `square-fulfilled:${checkout.id}`),
+          eq(orderEventsTable.externalEventId, checkout.squarePaymentId ?? ''),
+          inArray(orderEventsTable.nextStatus, [
+            'PROCESSING',
+            'SHIPPED',
+            'DELIVERED',
+          ]),
+        ),
+      )
+      .get();
+    if (!completed) throw new Error('notification_fulfillment_unverified');
+  } else {
+    const facts = await db
+      .select()
+      .from(orderEventsTable)
+      .where(
+        and(
+          eq(orderEventsTable.orderId, orderId),
+          eq(orderEventsTable.nextStatus, status.toUpperCase()),
+        ),
+      )
+      .all();
+    if (!facts.some(event => isTrustedSlantEvent(event, order)))
+      throw new Error('notification_lifecycle_unverified');
+  }
   const recipient = email.safeParse(checkout.customerEmail);
   let snapshotEmail: unknown;
   try {
@@ -191,12 +207,20 @@ export async function enqueueOrderNotification(
   return enqueue(db, {
     orderId,
     reference: String(orderId),
-    notificationType: 'order_confirmation',
+    notificationType,
     recipientEmail: recipient.data,
-    subject: `${reference} confirmed`,
-    textContent: `Thank you for your order. ${reference} was confirmed for fulfillment.`,
-    statusTransition: 'confirmed',
-    source: 'square',
+    subject:
+      status === 'canceled'
+        ? `${reference} manufacturing canceled`
+        : `${reference} ${status}`,
+    textContent:
+      status === 'confirmed'
+        ? `Thank you for your order. ${reference} was confirmed for fulfillment.`
+        : status === 'canceled'
+          ? `${reference}: manufacturing was canceled. This does not confirm a payment refund. Contact support about your payment.`
+          : `${reference} was ${status}.`,
+    statusTransition: status,
+    source: status === 'confirmed' ? 'square' : 'slant3d',
   });
 }
 
@@ -222,7 +246,16 @@ export async function reconcileSquareNotifications(
     order.slantStatus !== 'CANCELED' &&
     order.status !== 'canceled'
   ) {
-    await enqueueOrderNotification(db, orderId, 'confirmed');
+    try {
+      await enqueueOrderNotification(db, orderId, 'confirmed');
+    } catch (error) {
+      // A missing fulfillment receipt must not strand authenticated lifecycle facts.
+      if (
+        !(error instanceof Error) ||
+        error.message !== 'notification_fulfillment_unverified'
+      )
+        throw error;
+    }
   } else if (order.status === 'paid_fulfillment_failed') {
     await enqueueAdminFailure(
       db,
@@ -231,6 +264,22 @@ export async function reconcileSquareNotifications(
       'fulfillment_failed',
       orderId,
     );
+  }
+  const lifecycle = await db
+    .select()
+    .from(orderEventsTable)
+    .where(eq(orderEventsTable.orderId, orderId))
+    .all();
+  for (const status of ['shipped', 'delivered', 'canceled'] as const) {
+    if (
+      lifecycle.some(
+        event =>
+          event.nextStatus === status.toUpperCase() &&
+          isTrustedSlantEvent(event, order),
+      )
+    ) {
+      await enqueueOrderNotification(db, orderId, status);
+    }
   }
   const queued = await db
     .select()
@@ -493,5 +542,35 @@ async function recoverDeliveryAlert(
   } catch {
     // The customer's unknown/sending row remains a durable reconciliation marker.
     console.error('notification.admin_alert_unavailable');
+  }
+}
+
+/** Alert only for a uniquely associated verified Square order after an authenticated webhook fails. */
+export async function alertSlantWebhookFailure(
+  db: Database,
+  env: NotificationEnv,
+  publicId: string,
+  eventId: string,
+) {
+  try {
+    const orders = await db
+      .select({ id: ordersTable.id })
+      .from(ordersTable)
+      .where(eq(ordersTable.slantPublicOrderId, publicId))
+      .limit(2);
+    if (orders.length !== 1 || !(await verifiedSquareOrder(db, orders[0].id)))
+      return;
+    const intent = await enqueueAdminFailure(
+      db,
+      env,
+      JSON.stringify(['slant-webhook', orders[0].id, eventId]),
+      'webhook_failed',
+      orders[0].id,
+    );
+    await deliverNotification(db, env, intent.id);
+  } catch {
+    // A complete storage outage cannot persist an alert. The webhook returns 503
+    // so the authenticated provider can retry; never include raw error details.
+    console.error('notification.slant_alert_pending');
   }
 }

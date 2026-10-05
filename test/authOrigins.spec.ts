@@ -29,6 +29,7 @@ describe('Better Auth origin enforcement', () => {
     ['https://luluspeedworks.com', 'https://api.luluspeedworks.com'],
     ['https://rc-admin.benhalverson.workers.dev', 'https://api.luluspeedworks.com'],
     ['https://rc-store.benhalverson.dev', 'https://api.benhalverson.dev'],
+    ['https://rc-admin.benhalverson.workers.dev', 'https://api.benhalverson.dev'],
   ])('accepts %s signout at %s with the Lulu auth base and RC passkey configuration', async (origin, apiOrigin) => {
     const env = mockEnv();
     const auth = createAuth(env.DB, {

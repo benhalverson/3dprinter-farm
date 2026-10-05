@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "bc485521-de06-4b29-ae9e-b89986b5474b",
+  "id": "39a36209-fa4d-4536-b35c-eb1dc94fc8cb",
   "prevId": "aa934830-6bb2-4026-bc9c-8a75f5f77459",
   "tables": {
     "account": {
@@ -248,309 +248,25 @@
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false
+        },
+        "normalized_key": {
+          "name": "normalized_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
         }
       },
-      "indexes": {},
+      "indexes": {
+        "category_normalized_key_unique": {
+          "name": "category_normalized_key_unique",
+          "columns": [
+            "normalized_key"
+          ],
+          "isUnique": true
+        }
+      },
       "foreignKeys": {},
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "checkConstraints": {}
-    },
-    "checkout_attempts": {
-      "name": "checkout_attempts",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "text",
-          "primaryKey": true,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "owner_id": {
-          "name": "owner_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "cart_id": {
-          "name": "cart_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "quote_id": {
-          "name": "quote_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "request_key": {
-          "name": "request_key",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "snapshot": {
-          "name": "snapshot",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "customer_email": {
-          "name": "customer_email",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "merchant_id": {
-          "name": "merchant_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "location_id": {
-          "name": "location_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "state": {
-          "name": "state",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": "'initiating'"
-        },
-        "square_order_id": {
-          "name": "square_order_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "payment_link_id": {
-          "name": "payment_link_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "payment_url": {
-          "name": "payment_url",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "square_payment_id": {
-          "name": "square_payment_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        }
-      },
-      "indexes": {
-        "checkout_attempts_quote_id_unique": {
-          "name": "checkout_attempts_quote_id_unique",
-          "columns": [
-            "quote_id"
-          ],
-          "isUnique": true
-        },
-        "checkout_attempts_request_key_unique": {
-          "name": "checkout_attempts_request_key_unique",
-          "columns": [
-            "request_key"
-          ],
-          "isUnique": true
-        },
-        "checkout_attempts_square_order_id_unique": {
-          "name": "checkout_attempts_square_order_id_unique",
-          "columns": [
-            "square_order_id"
-          ],
-          "isUnique": true
-        },
-        "checkout_attempts_payment_link_id_unique": {
-          "name": "checkout_attempts_payment_link_id_unique",
-          "columns": [
-            "payment_link_id"
-          ],
-          "isUnique": true
-        },
-        "checkout_attempts_square_payment_id_unique": {
-          "name": "checkout_attempts_square_payment_id_unique",
-          "columns": [
-            "square_payment_id"
-          ],
-          "isUnique": true
-        }
-      },
-      "foreignKeys": {
-        "checkout_attempts_owner_id_users_id_fk": {
-          "name": "checkout_attempts_owner_id_users_id_fk",
-          "tableFrom": "checkout_attempts",
-          "tableTo": "users",
-          "columnsFrom": [
-            "owner_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
-        "checkout_attempts_quote_id_checkout_quotes_id_fk": {
-          "name": "checkout_attempts_quote_id_checkout_quotes_id_fk",
-          "tableFrom": "checkout_attempts",
-          "tableTo": "checkout_quotes",
-          "columnsFrom": [
-            "quote_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
-        "checkout_attempts_quote_id_id_checkout_quotes_id_consumed_attempt_id_fk": {
-          "name": "checkout_attempts_quote_id_id_checkout_quotes_id_consumed_attempt_id_fk",
-          "tableFrom": "checkout_attempts",
-          "tableTo": "checkout_quotes",
-          "columnsFrom": [
-            "quote_id",
-            "id"
-          ],
-          "columnsTo": [
-            "id",
-            "consumed_attempt_id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "checkConstraints": {}
-    },
-    "checkout_quotes": {
-      "name": "checkout_quotes",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "text",
-          "primaryKey": true,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "owner_id": {
-          "name": "owner_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "cart_id": {
-          "name": "cart_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "input_hash": {
-          "name": "input_hash",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "encrypted_snapshot": {
-          "name": "encrypted_snapshot",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "expires_at": {
-          "name": "expires_at",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "consumed_attempt_id": {
-          "name": "consumed_attempt_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "invalidated": {
-          "name": "invalidated",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": false
-        }
-      },
-      "indexes": {
-        "checkout_quotes_owner_cart": {
-          "name": "checkout_quotes_owner_cart",
-          "columns": [
-            "owner_id",
-            "cart_id"
-          ],
-          "isUnique": false
-        },
-        "checkout_quote_consumption": {
-          "name": "checkout_quote_consumption",
-          "columns": [
-            "id",
-            "consumed_attempt_id"
-          ],
-          "isUnique": true
-        }
-      },
-      "foreignKeys": {
-        "checkout_quotes_owner_id_users_id_fk": {
-          "name": "checkout_quotes_owner_id_users_id_fk",
-          "tableFrom": "checkout_quotes",
-          "tableTo": "users",
-          "columnsFrom": [
-            "owner_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        }
-      },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "checkConstraints": {}
@@ -943,13 +659,6 @@
           "notNull": true,
           "autoincrement": false
         },
-        "dedupe_key": {
-          "name": "dedupe_key",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
         "detail": {
           "name": "detail",
           "type": "text",
@@ -1008,15 +717,7 @@
           "autoincrement": false
         }
       },
-      "indexes": {
-        "order_events_dedupe_key_unique": {
-          "name": "order_events_dedupe_key_unique",
-          "columns": [
-            "dedupe_key"
-          ],
-          "isUnique": true
-        }
-      },
+      "indexes": {},
       "foreignKeys": {
         "order_events_order_id_ordersTable_id_fk": {
           "name": "order_events_order_id_ordersTable_id_fk",
@@ -1424,64 +1125,6 @@
           "notNull": false,
           "autoincrement": false
         },
-        "source": {
-          "name": "source",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": "'online'"
-        },
-        "fulfillment_type": {
-          "name": "fulfillment_type",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": "'slant'"
-        },
-        "payment_status": {
-          "name": "payment_status",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "square_order_id": {
-          "name": "square_order_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "square_payment_id": {
-          "name": "square_payment_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "checkout_attempt_id": {
-          "name": "checkout_attempt_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "shipping_amount_cents": {
-          "name": "shipping_amount_cents",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "fulfillment_state": {
-          "name": "fulfillment_state",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
         "customer_email": {
           "name": "customer_email",
           "type": "text",
@@ -1566,27 +1209,6 @@
           "name": "ordersTable_order_number_unique",
           "columns": [
             "order_number"
-          ],
-          "isUnique": true
-        },
-        "ordersTable_square_order_id_unique": {
-          "name": "ordersTable_square_order_id_unique",
-          "columns": [
-            "square_order_id"
-          ],
-          "isUnique": true
-        },
-        "ordersTable_square_payment_id_unique": {
-          "name": "ordersTable_square_payment_id_unique",
-          "columns": [
-            "square_payment_id"
-          ],
-          "isUnique": true
-        },
-        "ordersTable_checkout_attempt_id_unique": {
-          "name": "ordersTable_checkout_attempt_id_unique",
-          "columns": [
-            "checkout_attempt_id"
           ],
           "isUnique": true
         }
@@ -2010,6 +1632,34 @@
         "attachments": {
           "name": "attachments",
           "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "category_confirmation_token": {
+          "name": "category_confirmation_token",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "category_confirmation_name": {
+          "name": "category_confirmation_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "category_confirmation_key": {
+          "name": "category_confirmation_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "category_confirmation_id": {
+          "name": "category_confirmation_id",
+          "type": "integer",
           "primaryKey": false,
           "notNull": false,
           "autoincrement": false

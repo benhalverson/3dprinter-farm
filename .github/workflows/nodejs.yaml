@@ -29,5 +29,7 @@ jobs:
         run: pnpm run check
       - name: Run tests
         run: pnpm run test:ci
+      - name: Run deployment command tests
+        run: pnpm run test:deploy
       - name: Run project notes tests
         run: pnpm test:project-notes

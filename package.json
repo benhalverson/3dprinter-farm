@@ -8,7 +8,7 @@
     "db:migrate:remote": "wrangler d1 migrations apply ecommerce --remote",
     "generate:project-notes": "node --disable-warning=ExperimentalWarning --experimental-strip-types tools/project-notes/generate-project-notes.ts",
     "validate:project-notes-pr": "node --disable-warning=ExperimentalWarning --experimental-strip-types tools/project-notes/validate-pr-notes.ts",
-    "deploy": "wrangler deploy",
+    "deploy": "node tools/deploy.mjs",
     "dev": "wrangler dev",
     "start": "wrangler dev",
     "test": "vitest",
@@ -20,6 +20,7 @@
     "check": "pnpm run check:biome && pnpm run check:types && pnpm run check:sql",
     "cf-typegen": "wrangler types",
     "test:database": "vitest run --config vitest.database.config.mts",
+    "test:deploy": "node --test test/deploy.spec.mjs",
     "test:quotes": "drizzle-kit generate --config test/quotes.drizzle.config.ts && vitest run --config test/quotes.vitest.config.ts"
   },
   "devDependencies": {
@@ -34,6 +35,7 @@
     "@vitest/runner": "4.1.11",
     "@vitest/snapshot": "4.1.11",
     "drizzle-kit": "^0.31.0",
+    "miniflare": "4.20260609.0",
     "typescript": "^5.5.2",
     "vite": "6.4.3",
     "vitest": "4.1.11",
@@ -56,7 +58,6 @@
     "hono-openapi": "^0.4.8",
     "langchain": "^0.3.37",
     "openai": "^4.57.0",
-    "stripe": "^16.6.0",
     "zod": "^3.23.8",
     "zod-openapi": "^4.2.4"
   },

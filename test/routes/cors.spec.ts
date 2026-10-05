@@ -47,6 +47,7 @@ test.each(origins)('preserves preflight and unauthorized profile CORS for %s', a
     'GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS',
   ]);
   expect(preflight.headers.get('Access-Control-Allow-Headers')?.toLowerCase()).toBe('content-type,authorization,x-cart-token');
+  expect(preflight.headers.get('Vary')).toContain('Access-Control-Request-Headers');
   expect(mockBetterAuth.handler).not.toHaveBeenCalled();
   mockBetterAuth.getSession.mockResolvedValueOnce(null);
   const profile = await request('/profile', origin);
