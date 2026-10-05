@@ -105,6 +105,12 @@ export const productDraftContextSchema = z.discriminatedUnion('status', [
           description: z.string(),
           image: z.string().nullable(),
           price: z.number(),
+          inPersonPrice: z
+            .number()
+            .finite()
+            .nonnegative()
+            .nullable()
+            .optional(),
           filamentType: z.string(),
           color: z.string().nullable(),
           skuNumber: z.string().nullable(),

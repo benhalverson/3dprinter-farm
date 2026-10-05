@@ -7,6 +7,7 @@ import {
   productsToCategories,
 } from '../db/schema';
 import type { WorkerEnv } from '../factory';
+import { productPrices } from './catalogPublication';
 import { resolveDraftCategories } from './productCategoryResolution';
 import { productQuestions } from './productInterpretation';
 import { assetCleanupPending } from './productAssets';
@@ -65,6 +66,10 @@ export async function readProductDraftContext(
       description: product.description,
       image: product.image,
       price: product.price,
+      inPersonPrice: productPrices({
+        ...product,
+        inPersonPrice: product.inPersonPrice ?? null,
+      }).inPersonPrice,
       filamentType: product.filamentType,
       color: product.color,
       skuNumber: product.skuNumber,

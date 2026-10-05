@@ -1,8 +1,8 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "aa934830-6bb2-4026-bc9c-8a75f5f77459",
-  "prevId": "4f7a9ba7-c310-4005-8681-db048dba9201",
+  "id": "39a36209-fa4d-4536-b35c-eb1dc94fc8cb",
+  "prevId": "aa934830-6bb2-4026-bc9c-8a75f5f77459",
   "tables": {
     "account": {
       "name": "account",
@@ -248,9 +248,24 @@
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false
+        },
+        "normalized_key": {
+          "name": "normalized_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
         }
       },
-      "indexes": {},
+      "indexes": {
+        "category_normalized_key_unique": {
+          "name": "category_normalized_key_unique",
+          "columns": [
+            "normalized_key"
+          ],
+          "isUnique": true
+        }
+      },
       "foreignKeys": {},
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
@@ -1617,6 +1632,34 @@
         "attachments": {
           "name": "attachments",
           "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "category_confirmation_token": {
+          "name": "category_confirmation_token",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "category_confirmation_name": {
+          "name": "category_confirmation_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "category_confirmation_key": {
+          "name": "category_confirmation_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "category_confirmation_id": {
+          "name": "category_confirmation_id",
+          "type": "integer",
           "primaryKey": false,
           "notNull": false,
           "autoincrement": false

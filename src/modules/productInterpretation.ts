@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { inPersonPriceSchema } from '../db/schema';
 import { slantV2Url } from '../constants';
 import type { Bindings } from '../types';
 import { PRICE, usageSchema } from '../shopping/pricing';
@@ -193,16 +194,17 @@ export function productQuestions(draft: ProductDraft) {
       id: 'markupPercentage',
       prompt: 'What positive online markup percentage should be used?',
     });
+  const inPersonPrice =
+    answers.inPersonPrice ?? product?.inPersonPrice?.toFixed(2);
   if (
-    !answers.inPersonPrice ||
-    !/^\d+(?:\.\d{1,2})?$/.test(answers.inPersonPrice) ||
-    !Number.isFinite(Number(answers.inPersonPrice)) ||
-    Number(answers.inPersonPrice) <= 0
+    !inPersonPrice ||
+    !/^\d+(?:\.\d{1,2})?$/.test(inPersonPrice) ||
+    !inPersonPriceSchema.safeParse(Number(inPersonPrice)).success
   )
     questions.push({
       id: 'inPersonPrice',
       prompt:
-        'What is the separate in-person USD price (positive, at most two decimal places)?',
+        'What is the separate in-person USD price (positive, at most 99,999,999.99 with two decimal places)?',
     });
   if (
     !(

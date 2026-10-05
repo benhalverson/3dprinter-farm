@@ -13,13 +13,19 @@ import productDrafts from './routes/productDrafts';
 import productV2 from './routes/productV2';
 import shoppingAgent from './routes/shoppingAgent';
 import shoppingCart from './routes/shoppingCart';
+import squareCatalog from './routes/squareCatalog';
 import userRouter from './routes/users';
 import { requestLogger } from './utils/requestLogger';
 import { validateBindings } from './utils/validateBindings';
 
 const app = factory
   .createApp()
+  /** Preserves route-specific JSON failures without hiding mounted OpenAPI metadata. */
   .onError((error, c) => {
+    if (c.req.path === '/cart/shipping') {
+      c.header('Cache-Control', 'no-store');
+      return c.json({ error: 'Failed to retrieve shipping estimate' }, 500);
+    }
     // Draft middleware owns the structured log and JSON response. Keep the
     // handler on the parent so mounted OpenAPI metadata remains discoverable.
     if (/^\/admin\/product-drafts(?:\/|$)/.test(c.req.path))
@@ -61,6 +67,7 @@ const app = factory
   .route('/admin/product-drafts', productDrafts)
   .route('/', product)
   .route('/', productV2)
+  .route('/', squareCatalog)
   .route('/', userRouter)
   .route('/', printer)
   .route('/', paymentsRouter)

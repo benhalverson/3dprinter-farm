@@ -229,3 +229,40 @@ it('validates provider options and never treats unavailable or other-provider pa
   );
   await expect(readProductOptions(environment())).rejects.toThrow();
 });
+
+it.each([
+  [undefined, 12.5, false],
+  ['', 12.5, true],
+  ['5.25', 12.5, false],
+  [undefined, null, true],
+  ['100000000', 12.5, true],
+  ['99999999.99', null, false],
+])('retains known USD price and validates explicit overrides %s / %s', (answer, known, missing) => {
+  const value: ProductDraft = {
+    ...draft,
+    target: { kind: 'existing', productId: 1 },
+    context: {
+      status: 'available',
+      product: {
+        id: 1,
+        name: 'Known',
+        description: 'Known',
+        price: 3,
+        inPersonPrice: known,
+        image: null,
+        filamentType: 'PLA',
+        color: 'Blue',
+        skuNumber: null,
+        publicFileServiceId: null,
+      },
+      categories: [],
+    },
+    state: {
+      ...draft.state,
+      answers: { ...draft.state.answers, inPersonPrice: answer },
+    },
+  };
+  expect(
+    productQuestions(value).some(question => question.id === 'inPersonPrice'),
+  ).toBe(missing);
+});
