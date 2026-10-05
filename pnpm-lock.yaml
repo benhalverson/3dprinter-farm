@@ -63,8 +63,8 @@ importers:
         specifier: ^0.9.1
         version: 0.9.48(hono@4.12.25)
       '@simplewebauthn/server':
-        specifier: ^13.1.1
-        version: 13.3.1
+        specifier: ^13.3.2
+        version: 13.3.2
       agents:
         specifier: 0.24.0
         version: 0.24.0(@babel/core@7.29.7)(@babel/runtime@7.29.7)(@modelcontextprotocol/client@2.0.0)(@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(zod@3.25.76))(@modelcontextprotocol/server@2.0.0)(rolldown@1.2.9)(vite@6.4.3(@types/node@22.19.21)(lightningcss@1.32.0)(tsx@4.21.0)(yaml@2.9.0))(zod@3.25.76)
@@ -1844,8 +1844,8 @@ packages:
   '@simplewebauthn/browser@13.3.0':
     resolution: {integrity: sha512-BE/UWv6FOToAdVk0EokzkqQQDOWtNydYlY6+OrmiZ5SCNmb41VehttboTetUM3T/fr6EAFYVXjz4My2wg230rQ==}
 
-  '@simplewebauthn/server@13.3.1':
-    resolution: {integrity: sha512-GV/oM/qeycWn8p42JZIMJBsXWQcNFg+nJFzeQTnMA4gN8mXg0+HZFWJerHg8ZN/zlveMS3iV1wzuFpOVWS/46w==}
+  '@simplewebauthn/server@13.3.2':
+    resolution: {integrity: sha512-KEDhfcGP1PAKRVSDjA3npTQFqS2b/srm+ipoNBNHdkzrHAlaRQUTE+a5f4ywsx6thxAw1NU2rYcLEY1949RGbQ==}
     engines: {node: '>=20.0.0'}
 
   '@simplewebauthn/types@12.0.0':
@@ -3978,7 +3978,7 @@ snapshots:
       '@better-auth/utils': 0.4.1
       '@better-fetch/fetch': 1.2.2
       '@simplewebauthn/browser': 13.3.0
-      '@simplewebauthn/server': 13.3.1
+      '@simplewebauthn/server': 13.3.2
       better-auth: 1.6.16(@cloudflare/workers-types@4.20260702.1)(drizzle-kit@0.31.10)(drizzle-orm@0.45.2(@cloudflare/workers-types@4.20260702.1)(@libsql/client@0.14.0)(kysely@0.29.2))(mongodb@7.1.0)(vitest@3.2.6(@types/node@22.19.21)(lightningcss@1.32.0)(tsx@4.21.0)(yaml@2.9.0))
       better-call: 1.3.6(zod@3.25.76)
       nanostores: 1.2.0
@@ -5020,7 +5020,7 @@ snapshots:
 
   '@simplewebauthn/browser@13.3.0': {}
 
-  '@simplewebauthn/server@13.3.1':
+  '@simplewebauthn/server@13.3.2':
     dependencies:
       '@hexagon/base64': 1.1.28
       '@levischuck/tiny-cbor': 0.2.11
