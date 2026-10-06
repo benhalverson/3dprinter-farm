@@ -74,7 +74,9 @@ test('generated0024 preserves published0023 reservations and replay on D1 SQLite
     const baseline = JSON.parse(
       await readFile('drizzle/migrations/meta/0023_snapshot.json', 'utf8'),
     ) as DrizzleSQLiteSnapshotJSON;
-    const current = await generateSQLiteDrizzleJson(schema);
+    const currentBudget = await generateSQLiteDrizzleJson({
+      budgetAlerts: schema.budgetAlerts,
+    });
     const db = drizzle(await worker.getD1Database('DB'), { schema });
     await migrate(db, {
       migrationsFolder: await migrationFolder(
@@ -107,10 +109,14 @@ test('generated0024 preserves published0023 reservations and replay on D1 SQLite
       await readFile('drizzle/migrations/meta/0024_snapshot.json', 'utf8'),
     ) as DrizzleSQLiteSnapshotJSON;
     expect(snapshot.prevId).toBe(baseline.id);
-    expect(snapshot.tables).toEqual(current.tables);
+    // This published increment is frozen; later catalog migrations legitimately
+    // change the current schema while the budget table must stay compatible.
+    expect(snapshot.tables.budget_alerts).toEqual(
+      JSON.parse(JSON.stringify(currentBudget.tables.budget_alerts)),
+    );
     for (const [name, table] of Object.entries(baseline.tables))
-      expect(current.tables[name]).toEqual(table);
-    const generated = await generateSQLiteMigration(baseline, current);
+      expect(snapshot.tables[name]).toEqual(table);
+    const generated = await generateSQLiteMigration(baseline, snapshot);
     expect(
       (await readFile('drizzle/migrations/0024_budget_alerts.sql', 'utf8'))
         .split('--> statement-breakpoint')
@@ -118,19 +124,17 @@ test('generated0024 preserves published0023 reservations and replay on D1 SQLite
     ).toEqual(generated.map(s => s.trim()));
     const folder = await publishedUpgrade(root);
     await migrate(db, { migrationsFolder: folder });
-    await db
-      .insert(schema.budgetAlerts)
-      .values({
-        id: '2026-09:50',
-        month: '2026-09',
-        threshold: 50,
-        charged: 300,
-        exhausted: false,
-        attempts: 1,
-        nextAttempt: 456,
-        lease: 'lease',
-        messageId: 'ack',
-      });
+    await db.insert(schema.budgetAlerts).values({
+      id: '2026-09:50',
+      month: '2026-09',
+      threshold: 50,
+      charged: 300,
+      exhausted: false,
+      attempts: 1,
+      nextAttempt: 456,
+      lease: 'lease',
+      messageId: 'ack',
+    });
     await migrate(db, { migrationsFolder: folder });
     expect(await db.select().from(schema.reservations)).toEqual([
       { ...reservation, inputTokens: null, outputTokens: null },

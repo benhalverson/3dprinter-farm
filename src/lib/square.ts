@@ -83,7 +83,10 @@ export function squareClient(config: SquareConfig) {
       ? 'https://connect.squareupsandbox.com'
       : 'https://connect.squareup.com';
   /** Owns the request timeout and bounded response read, preserving uncertain outcomes. */
-  async function request(path: string, payload?: string): Promise<unknown> {
+  async function request(
+    path: string,
+    payload?: string | FormData,
+  ): Promise<unknown> {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 10000);
     try {
@@ -92,7 +95,9 @@ export function squareClient(config: SquareConfig) {
         headers: {
           Authorization: `Bearer ${config.SQUARE_ACCESS_TOKEN}`,
           'Square-Version': SQUARE_API_VERSION,
-          'Content-Type': 'application/json',
+          ...(payload instanceof FormData
+            ? {}
+            : { 'Content-Type': 'application/json' }),
         },
         body: payload,
         signal: controller.signal,
@@ -252,6 +257,62 @@ export function squareClient(config: SquareConfig) {
         throw squareFailure('square_mapping_mismatch');
       }
       return item;
+    },
+    /** Uploads the immutable primary image request with a browser-generated multipart boundary. */
+    async createImage(
+      metadata: string,
+      bytes: ArrayBuffer,
+      contentType: string,
+    ) {
+      if (contentType === 'image/webp') {
+        const { PhotonImage } = await import('@cf-wasm/photon/workerd');
+        try {
+          const image = PhotonImage.new_from_byteslice(new Uint8Array(bytes));
+          try {
+            bytes = image.get_bytes().slice().buffer;
+          } finally {
+            image.free();
+          }
+          contentType = 'image/png';
+        } catch {
+          throw squareFailure('square_request_rejected');
+        }
+      }
+      if (
+        !['image/jpeg', 'image/pjpeg', 'image/png', 'image/gif'].includes(
+          contentType,
+        ) ||
+        bytes.byteLength === 0 ||
+        bytes.byteLength > 15_000_000
+      )
+        throw squareFailure('square_request_rejected');
+      const form = new FormData();
+      form.append('request', metadata);
+      form.append(
+        'file',
+        new Blob([bytes], { type: contentType }),
+        'primary-image',
+      );
+      const result = z
+        .object({
+          image: z
+            .object({
+              type: z.literal('IMAGE'),
+              id: z
+                .string()
+                .min(1)
+                .refine(id => !id.startsWith('#')),
+              version,
+              is_deleted: z.boolean().optional(),
+              image_data: z.object({ url: z.string().url() }).passthrough(),
+            })
+            .passthrough(),
+          errors: z.array(z.unknown()).length(0).optional(),
+        })
+        .safeParse(await request('catalog/images', form));
+      if (!result.success || result.data.image.is_deleted)
+        throw squareFailure('square_invalid_response', true);
+      return result.data.image;
     },
     /** Sends the exact persisted payload so retries retain their idempotency key. */
     async upsert(payload: string) {

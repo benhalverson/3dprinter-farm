@@ -5,6 +5,7 @@ import {
   squareCatalogOperations as operations,
 } from '../db/schema';
 import type { drizzle } from 'drizzle-orm/d1';
+import { noPendingProductMutation } from './catalogMutationGuard';
 
 /** Persists an inert candidate, then atomically authorizes it only while its catalog snapshot is current. */
 export async function reserveCatalogOperation(
@@ -39,6 +40,7 @@ export async function reserveCatalogOperation(
       and(
         eq(operations.id, key),
         eq(operations.state, 'prepared'),
+        noPendingProductMutation(db, item.id),
         exists(
           db
             .select({ id: mappings.id })

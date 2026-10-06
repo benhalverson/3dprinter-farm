@@ -1,7 +1,7 @@
-import { eq, relations } from 'drizzle-orm';
+import { and, eq, inArray, or, relations } from 'drizzle-orm';
 import {
-  index,
   foreignKey,
+  index,
   integer,
   primaryKey,
   real,
@@ -15,6 +15,7 @@ import type {
   ProductDraftState,
   ProductDraftTarget,
 } from '../modules/productDraftContracts';
+import type { ProductPreparation } from '../modules/productPreparationContracts';
 
 // No product foreign key: the conversation survives deletion of its target.
 export const productDrafts = sqliteTable(
@@ -33,6 +34,9 @@ export const productDrafts = sqliteTable(
       .notNull()
       .default('active'),
     attachments: text('attachments', { mode: 'json' }).$type<AttachmentState>(),
+    preparation: text('preparation', {
+      mode: 'json',
+    }).$type<ProductPreparation>(),
     categoryConfirmationToken: text('category_confirmation_token'),
     categoryConfirmationName: text('category_confirmation_name'),
     categoryConfirmationKey: text('category_confirmation_key'),
@@ -154,15 +158,123 @@ export const productsTable = sqliteTable('products', {
   imageGallery: text('image_gallery'),
   stl: text('stl').notNull(),
   price: real('price').default(0).notNull(),
+  markupPercentage: real('markup_percentage'),
   filamentType: text('filament_type').notNull().default('PLA'),
   skuNumber: text('sku_number').default(''),
   color: text('color').default('#000000'),
   inPersonPrice: integer('in_person_price_cents'),
   squareRevision: integer('square_revision').notNull().default(0),
+  catalogMutationId: text('catalog_mutation_id').unique(),
   publicFileServiceId: text('public_file_service_id'), // Slant3D file UUID for orders
   // Make optional to allow products without categories during transition
   categoryId: integer().references(() => categoryTable.categoryId),
 });
+
+// Immutable provider requests survive lost responses and local completion failures.
+// No draft foreign key: operator recovery evidence outlives conversation cleanup.
+export const productMutationOperations = sqliteTable(
+  'product_mutation_operations',
+  {
+    id: text('id').primaryKey(),
+    ownerId: text('owner_id').notNull(),
+    draftId: text('draft_id').notNull(),
+    preparationId: text('preparation_id').notNull().unique(),
+    draftRevision: integer('draft_revision').notNull(),
+    action: text('action', { enum: ['create', 'update', 'delete'] }).notNull(),
+    state: text('state', {
+      enum: [
+        'prepared',
+        'pending',
+        'item_confirmed',
+        'square_confirmed',
+        'repair_required',
+        'succeeded',
+        'failed',
+      ],
+    }).notNull(),
+    preparation: text('preparation', { mode: 'json' })
+      .$type<
+        import('../modules/productPreparationContracts').ProductPreparation
+      >()
+      .notNull(),
+    payload: text('payload').notNull(),
+    squareResult: text('square_result', { mode: 'json' }).$type<
+      import('../lib/square').SquareItem
+    >(),
+    environment: text('environment', {
+      enum: ['sandbox', 'production'],
+    }).notNull(),
+    merchantId: text('merchant_id').notNull(),
+    locationId: text('location_id').notNull(),
+    mappingId: text('mapping_id'),
+    mappingGeneration: integer('mapping_generation'),
+    productId: integer('product_id'),
+    error: text('error'),
+    replayed: integer('replayed').notNull().default(0),
+    completionToken: text('completion_token'),
+    imagePayload: text('image_payload'),
+    resultImageId: text('result_image_id'),
+    cleanup: text('cleanup', { mode: 'json' })
+      .$type<
+        import('../modules/productAttachmentContracts').AttachmentCleanup[]
+      >()
+      .notNull()
+      .default([]),
+    localError: text('local_error'),
+    resultItemId: text('result_item_id'),
+    resultVariationId: text('result_variation_id'),
+    localId: integer('local_id'),
+    localName: text('local_name').notNull(),
+    localDescription: text('local_description').notNull(),
+    localImage: text('local_image').notNull(),
+    localImageGallery: text('local_image_gallery').notNull(),
+    localStl: text('local_stl').notNull(),
+    localPrice: real('local_price').notNull(),
+    localMarkupPercentage: real('local_markup_percentage'),
+    localFilamentType: text('local_filament_type').notNull(),
+    localSkuNumber: text('local_sku_number').notNull(),
+    localColor: text('local_color').notNull(),
+    localInPersonPrice: integer('local_in_person_price').notNull(),
+    localPublicFileServiceId: text('local_public_file_service_id').notNull(),
+    localCategoryId: integer('local_category_id'),
+    localSquareRevision: integer('local_square_revision').notNull(),
+    localPublished: integer('local_published').notNull().default(1),
+    localPublishedSnapshot: text('local_published_snapshot').notNull(),
+    localCreatedAt: text('local_created_at').notNull(),
+    localNull: integer('local_null'),
+    createdAt: integer('created_at').notNull(),
+    updatedAt: integer('updated_at').notNull(),
+  },
+  table => [
+    uniqueIndex('product_mutation_one_live_draft')
+      .on(table.draftId)
+      .where(
+        (
+          or(
+            inArray(table.state, [
+              'prepared',
+              'pending',
+              'item_confirmed',
+              'square_confirmed',
+              'repair_required',
+            ]),
+            and(eq(table.action, 'create'), eq(table.state, 'succeeded')),
+          ) ?? eq(table.state, 'prepared')
+        ).inlineParams(),
+      ),
+    uniqueIndex('product_mutation_one_live_product')
+      .on(table.productId)
+      .where(
+        inArray(table.state, [
+          'prepared',
+          'pending',
+          'item_confirmed',
+          'square_confirmed',
+          'repair_required',
+        ]).inlineParams(),
+      ),
+  ],
+);
 
 // Publication operations and mappings are maintained together by catalogPublication.
 // Catalog mutations use conditional Drizzle writes to enforce publication guards.
