@@ -29,7 +29,34 @@ jobs:
         run: pnpm run check
       - name: Run tests
         run: pnpm run test:ci
-      - name: Run deployment command tests
-        run: pnpm run test:deploy
       - name: Run project notes tests
         run: pnpm test:project-notes
+
+  deploy:
+    needs: build
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-22.04
+    concurrency:
+      group: production-deploy
+      cancel-in-progress: false
+    permissions:
+      contents: read
+    env:
+      CI: 'true'
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install pnpm
+        run: npm install -g pnpm@latest-10
+      - name: Use Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'pnpm'
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Apply remote database migrations
+        run: pnpm run db:migrate:remote
+      - name: Deploy Worker
+        run: pnpm run deploy
