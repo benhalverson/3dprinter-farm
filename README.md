@@ -253,7 +253,7 @@ After the dev server starts, you can open:
 Pushes to `main` deploy automatically after CI checks and tests pass. Configure
 `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` as GitHub Actions secrets.
 
-The deployment job runs `pnpm run db:migrate:remote -- -y` before releasing the
+The deployment job runs `pnpm run db:migrate:remote` before releasing the
 Worker. Pending migrations are accepted automatically in CI. If no migrations
 are pending, Wrangler exits successfully and deployment continues. Migration
 failures stop deployment.
@@ -261,7 +261,7 @@ failures stop deployment.
 To migrate and deploy manually:
 
 ```bash
-CI=true pnpm run db:migrate:remote -- -y
+CI=true pnpm run db:migrate:remote
 pnpm run deploy
 ```
 
