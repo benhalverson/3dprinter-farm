@@ -379,7 +379,16 @@ async function hasLegacyReference(db: Database, asset: Asset) {
   // Existence queries select only an id and stop at the first match; JSON legacy
   // fields remain conservatively checked without a row cap or whole-table load.
   for (const identity of identities) {
-    const pattern = `%${identity}%`;
+    // D1 bounds LIKE patterns. A suffix remains conservative: every full
+    // identity reference contains it, while collisions retain rather than delete.
+    let suffix = '';
+    let bytes = 0;
+    for (const character of Array.from(identity).reverse()) {
+      bytes += new TextEncoder().encode(character).length;
+      if (bytes > 48) break;
+      suffix = character + suffix;
+    }
+    const pattern = `%${suffix}%`;
     if (
       await db
         .select({ id: productsTable.id })
@@ -482,4 +491,12 @@ export async function cleanupAsset(
 /** Finishes a persisted asset hold after durable order evidence exists; safe on replay. */
 export async function releasePaidOrderAssets(db: Database, orderId: number) {
   await finishReferenceAttempt(db, `order-attempt:square-${orderId}`);
+}
+
+/** Releases a durable catalog mutation hold only after terminal local evidence. */
+export async function releaseCatalogOperationAssets(
+  db: Database,
+  operationId: string,
+) {
+  await finishReferenceAttempt(db, `catalog-attempt:${operationId}`);
 }

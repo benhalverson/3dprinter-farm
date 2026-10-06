@@ -184,11 +184,13 @@ export function productQuestions(draft: ProductDraft) {
     if (!(answers[field] ?? product?.[field])?.trim())
       questions.push({ id: field, prompt });
   }
+  const markupPercentage =
+    answers.markupPercentage ?? product?.markupPercentage?.toString();
   if (
-    !answers.markupPercentage ||
-    !/^\d+(?:\.\d+)?$/.test(answers.markupPercentage) ||
-    !Number.isFinite(Number(answers.markupPercentage)) ||
-    Number(answers.markupPercentage) <= 0
+    !markupPercentage ||
+    !/^\d+(?:\.\d+)?$/.test(markupPercentage) ||
+    !Number.isFinite(Number(markupPercentage)) ||
+    Number(markupPercentage) <= 0
   )
     questions.push({
       id: 'markupPercentage',

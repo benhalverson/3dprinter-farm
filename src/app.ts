@@ -7,6 +7,7 @@ import {
   privateResponseCache,
 } from './utils/browserSecurity';
 import checkoutQuotes from './routes/checkoutQuotes';
+import catalogPhotos from './routes/catalogPhotos';
 import adminOrders from './routes/adminOrders';
 import auth from './routes/auth';
 import authApi from './routes/authApi';
@@ -66,6 +67,7 @@ const app = factory
   .route('/admin/product-drafts', productDrafts)
   .route('/', product)
   .route('/', productV2)
+  .route('/', catalogPhotos)
   .route('/', squareCatalog)
   .route('/', userRouter)
   .route('/', printer)

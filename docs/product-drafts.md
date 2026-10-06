@@ -220,3 +220,61 @@ JSON attachment requests retain the 256 KiB limit. Mocked Hono endpoint tests
 exercise ownership, revisions, bytes, recovery, and observable provider calls;
 they do not prove live D1 races or provider behavior. This feature has not been
 deployed and makes no live-commerce calls.
+
+## Authoritative pricing preparation
+
+Conversation `POST /:id/prepare` retains its existing answer/interpretation payload.
+Pricing preparation is a separate `POST /:id/pricing/prepare` with
+`{ expectedRevision, action?: "create" | "update" | "delete" }`. The optional
+action chooses preparation only; it grants no mutation authority. Without it,
+the current interpretation intent or draft target determines preparation. It does not advance the draft revision or authorize a
+catalog mutation. `GET /:id/preparation` returns `{ preparation: null }` before
+preparation, or the current `{ preparation }` without calling providers.
+
+`productPreparationContracts.ts` defines the shared contract:
+`id`, `draftRevision`, `preparedAt`, `status` (`ready`, `blocked`, `unavailable`,
+`stale`), `readiness: { ready, submissionAuthorized: false }`, field-specific
+`validation`, `pricing`, and a private immutable `snapshot` when ready. A snapshot also binds its `action`; submission cannot
+reuse an unpriced delete snapshot for creation or update.
+Pricing uses USD numeric `productionCost`, retained nullable `markupPercentage`,
+`onlinePrice`, and independent `inPersonPrice`. Unknown legacy markup stays null
+and needs an explicit answer. The production basis names the confirmed
+`publicFileServiceId`, exact available Slant3D `filamentId`, material, color, and
+quantity 1. A cost of 1 with 50% markup yields 1.50 using existing rounding.
+
+Preparation validates current categories (including normalized name identity),
+required facts, independent channel prices, owned active attachments, primary
+selection and photo order. It reads the confirmed Slant file and estimates the
+selected material/color's exact filament; errors and mismatched estimate identities
+return `unavailable` without creating a Catalog Item. Unsupported or ambiguous
+material/color returns `blocked` without estimating a different configuration.
+
+Preparation binds the draft revision, complete existing product state, current
+category identities/names and active asset revisions, including retained catalog
+assets. Reads and submission invalidate changed inputs as `stale`; callers must
+prepare again. Submission needs the current preparation ID and the explicit
+Create product or Save changes action. Saved history and final answer text are
+never authorization. Preparation snapshots and binding data are private owner/admin
+responses and have no storefront exposure.
+
+Delete preparation binds the current product identity/version and retained assets
+without Slant calls or required markup, photos, or categories. `productionCost`
+and `basis` are null. Known channel values remain independent and nullable.
+The explicit delete submission still requires confirmed Square unpublication;
+missing Square linkage is a reconciliation blocker. Snapshot `assetIds` names
+assets used by the prepared product; `cleanupAssetIds` also includes replaced
+assets. All retained revisions are bound, and cleanup remains reference-guarded.
+
+## Explicit product mutations
+
+The conversation registers three explicit card actions through `POST /admin/product-drafts/:id/submit`: `{ expectedRevision, preparationId, action: 'create' | 'update' | 'delete' }`. The action must match the current persisted preparation snapshot. Draft saves, model interpretation, restored history, preparation, and complete answers never authorize execution. Delete preparation binds the existing product/version without requesting Slant pricing or requiring missing legacy markup. A new-product draft keeps its immutable target after creation; the returned catalog identity can start a separate existing-product draft.
+
+`GET /admin/product-drafts/:id/operation` returns `{ operation, product, readiness, storefrontVisible }`. `POST /admin/product-drafts/:id/reconcile` accepts `{ operationId }` and resumes that saved operation only. Product/readiness are read from the current catalog following a succeeded operation; a pending operation never claims storefront completion. A mappingless existing item remains blocked with `square_mapping_required` rather than guessing a remote identity.
+
+Private operation states are `prepared`, `pending`, `item_confirmed`, `square_confirmed`, `repair_required`, `succeeded`, and `failed`. A prepared record is inert until a conditional authorization checks the draft revision, product revision, mapping generation, categories, and reserved assets. Explicit reconciliation of an interrupted inert record retires it and requires fresh preparation. Provider uncertainty retains the immutable request and idempotency key. An overlapping replay prevents a late rejection from incorrectly retiring an operation. After Square confirmation, recovery retries only the local snapshot commit; a changed catalog/category binding remains visible repair work.
+
+Square receives the item name/description, stable SKU, material/color variation name, configured location, independent USD in-person price, and primary image. Primary photos are uploaded with multipart `CreateCatalogImage`, `object_id`, and `is_primary: true`, using a separate stable key; a readback must confirm that image is first in the item's image IDs. WebP bytes are converted deterministically to PNG for Square, without rewriting the encrypted original. Online price, retained markup, category memberships, Slant file/basis, and full photo gallery/order are local fields with no Square representation in this workflow. Existing remote fields and unrelated variations are preserved.
+
+The local product, categories, and Square linkage commit together through conditional Drizzle writes. Creation uses a unique operation provenance column to prevent duplicate products on reconciliation. Update/delete use the prepared catalog revision and mapping generation. Square failures or unconfirmed item/image results leave the catalog unchanged; a successful Square item is never automatically removed after a local failure. Anonymous `/catalog/assets/:assetId/image` access requires an active photo and an exact current catalog image/gallery reference; private draft URLs remain private.
+
+Asset operation holds protect current and replaced files until terminal evidence. Successful updates retain only assets still used by the catalog and release replaced catalog references. Deletion captures cleanup candidates before removing catalog associations. Cleanup checks remaining orders, products, drafts, and unresolved operations; `operation.cleanup` reports protected, deleted, or retryable pending results separately from product completion. Reconciliation retries failed cleanup without another Square item mutation.

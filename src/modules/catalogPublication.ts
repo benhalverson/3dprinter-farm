@@ -1,4 +1,5 @@
 import { reserveCatalogOperation } from './catalogPublicationReservation';
+import { noPendingProductMutation } from './catalogMutationGuard';
 import { and, eq, exists, isNull, notExists, or } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/d1';
 import { z } from 'zod';
@@ -24,9 +25,17 @@ export function priceToCents(value: number) {
 }
 /** Serializes stored channel prices without exposing the internal publication revision. */
 export function productPrices<
-  T extends { inPersonPrice: number | null; squareRevision?: number },
+  T extends {
+    inPersonPrice: number | null;
+    squareRevision?: number;
+    catalogMutationId?: string | null;
+  },
 >(product: T) {
-  const { squareRevision: _revision, ...fields } = product;
+  const {
+    squareRevision: _revision,
+    catalogMutationId: _mutationId,
+    ...fields
+  } = product;
   return {
     ...fields,
     inPersonPrice:
@@ -112,6 +121,7 @@ export async function saveCatalogItem(
       and(
         eq(productsTable.id, current.id),
         eq(productsTable.squareRevision, current.squareRevision),
+        noPendingProductMutation(db, current.id),
       ),
     )
     .returning({ id: productsTable.id });
@@ -122,7 +132,13 @@ export async function saveCatalogItem(
 export async function deleteCatalogItem(db: Database, id: number) {
   const deleted = await db
     .delete(productsTable)
-    .where(and(eq(productsTable.id, id), safelyUnpublished(db)))
+    .where(
+      and(
+        eq(productsTable.id, id),
+        safelyUnpublished(db),
+        noPendingProductMutation(db, id),
+      ),
+    )
     .returning({ id: productsTable.id });
   if (deleted.length) return;
   const item = await db

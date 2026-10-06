@@ -66,6 +66,9 @@ export async function readProductDraftContext(
       description: product.description,
       image: product.image,
       price: product.price,
+      ...(product.markupPercentage === undefined
+        ? {}
+        : { markupPercentage: product.markupPercentage }),
       inPersonPrice: productPrices({
         ...product,
         inPersonPrice: product.inPersonPrice ?? null,

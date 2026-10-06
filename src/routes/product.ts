@@ -665,6 +665,7 @@ const product = factory
         ...productFields,
         inPersonPrice: priceToCents(data.inPersonPrice),
         price: markupPrice,
+        markupPercentage: requestedMarkupPercentage,
         skuNumber: skuNumber,
 
         imageGallery: JSON.stringify(imageGallery || []),
@@ -909,6 +910,7 @@ const product = factory
           ...productFields,
           inPersonPrice: priceToCents(data.inPersonPrice),
           price: markupPrice,
+          markupPercentage: requestedMarkupPercentage,
           skuNumber: skuNumber,
 
           imageGallery: JSON.stringify(imageGallery || []),

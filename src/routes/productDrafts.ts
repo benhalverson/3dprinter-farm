@@ -36,6 +36,8 @@ import {
 import { logProductDraftError } from '../utils/productDraftError';
 import attachmentsRouter from './productAttachments';
 import interpretationRouter from './productInterpretation';
+import mutationsRouter from './productMutations';
+import preparationRouter from './productPreparation';
 
 const errors = Object.fromEntries(
   [
@@ -134,6 +136,8 @@ const router = factory
     }),
   )
   .route('/', interpretationRouter)
+  .route('/', mutationsRouter)
+  .route('/', preparationRouter)
   .post(
     '/',
     describeRoute({

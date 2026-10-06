@@ -1,0 +1,2 @@
+DROP INDEX `product_mutation_one_live_draft`;--> statement-breakpoint
+CREATE UNIQUE INDEX `product_mutation_one_live_draft` ON `product_mutation_operations` (`draft_id`) WHERE ("product_mutation_operations"."state" in ('prepared', 'pending', 'item_confirmed', 'square_confirmed', 'repair_required') or ("product_mutation_operations"."action" = 'create' and "product_mutation_operations"."state" = 'succeeded'));
