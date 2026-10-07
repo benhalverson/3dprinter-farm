@@ -1,15 +1,13 @@
 import assert from 'node:assert/strict';
-import { test } from 'node:test';
+import { test } from 'vitest';
+import { createMockDemoRuntime } from './adminDemoHarness';
 import type { ProductDraft } from '../../src/modules/productDraftContracts.ts';
 import type { ProductPreparation } from '../../src/modules/productPreparationContracts.ts';
 
-const { createDemoRuntime } = (await import(
-  new URL('../../tools/admin-demo/runtime.ts', import.meta.url).href
-)) as typeof import('../../tools/admin-demo/runtime');
-
-/** Exercise real protected routes, D1, encrypted R2 photos, and provider image confirmation through HTTP. */
+/** Exercise protected routes with local SQLite and mocked API, auth and object-storage boundaries. */
 test('local admin demo performs photo+print create, update, and delete through production routes', async () => {
-  const runtime = await createDemoRuntime();
+  const runtime = await createMockDemoRuntime();
+  const fetch = runtime.request;
   try {
     const base = runtime.url.origin;
     const login = await fetch(new URL('/__fixture/login', runtime.url), {
@@ -269,6 +267,13 @@ test('local admin demo performs photo+print create, update, and delete through p
       'DELETE',
     );
     assert.equal(discarded.status, 'discarded');
+    // Retained edit/delete drafts still own references after the catalog deletion.
+    assert.ok(discarded.cleanup.some(item => item.status === 'protected'));
+    for (const retainedPath of [changedPath, deletePath]) {
+      const retained = await call<ProductDraft>(retainedPath);
+      const result = await call<Cleanup>(`${retainedPath}?expectedRevision=${retained.revision}`, 'DELETE');
+      assert.equal(result.status, 'discarded');
+    }
     const cleaned = await call<Cleanup>(`${path}/cleanup/retry`, 'POST', {
       expectedRevision: discarded.revision,
     });
@@ -278,7 +283,7 @@ test('local admin demo performs photo+print create, update, and delete through p
       JSON.stringify(cleaned.cleanup),
     );
     const photoAssetId = readCreated.attachments.photos[0].assetId;
-    const bucket = await runtime.worker.getR2Bucket('PHOTO_BUCKET');
+    const bucket = runtime.photoBucket;
     assert.equal(await bucket.head(`product-drafts/${photoAssetId}`), null);
     const printFileId = readCreated.attachments.printFile?.publicFileServiceId;
     assert.ok(printFileId);

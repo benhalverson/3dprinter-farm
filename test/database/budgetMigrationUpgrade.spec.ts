@@ -6,9 +6,9 @@ import {
   generateSQLiteMigration,
   type DrizzleSQLiteSnapshotJSON,
 } from 'drizzle-kit/api';
-import { drizzle } from 'drizzle-orm/d1';
-import { migrate } from 'drizzle-orm/d1/migrator';
-import { Miniflare } from 'miniflare';
+import { drizzle } from 'drizzle-orm/libsql';
+import { migrate } from 'drizzle-orm/libsql/migrator';
+import { createClient } from '@libsql/client';
 import { expect, test } from 'vitest';
 import * as schema from '../../src/db/schema';
 
@@ -63,13 +63,9 @@ async function migrationFolder(
   return directory;
 }
 
-test('generated0024 preserves published0023 reservations and replay on D1 SQLite', async () => {
+test('generated0024 preserves published0023 reservations and replay on local SQLite', async () => {
   const root = await mkdtemp(join(tmpdir(), 'budget-upgrade-'));
-  const worker = new Miniflare({
-    modules: true,
-    script: 'export default {fetch(){return new Response("local test")}}',
-    d1Databases: ['DB'],
-  });
+  const client = createClient({url: 'file::memory:'});
   try {
     const baseline = JSON.parse(
       await readFile('drizzle/migrations/meta/0023_snapshot.json', 'utf8'),
@@ -77,7 +73,7 @@ test('generated0024 preserves published0023 reservations and replay on D1 SQLite
     const currentBudget = await generateSQLiteDrizzleJson({
       budgetAlerts: schema.budgetAlerts,
     });
-    const db = drizzle(await worker.getD1Database('DB'), { schema });
+    const db = drizzle(client, { schema });
     await migrate(db, {
       migrationsFolder: await migrationFolder(
         root,
@@ -148,7 +144,7 @@ test('generated0024 preserves published0023 reservations and replay on D1 SQLite
       attempts: 1,
     });
   } finally {
-    await worker.dispose();
+    client.close();
     await rm(root, { recursive: true, force: true });
   }
 }, 30000);

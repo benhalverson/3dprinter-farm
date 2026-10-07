@@ -6,10 +6,10 @@ import {
   generateSQLiteMigration,
   type DrizzleSQLiteSnapshotJSON,
 } from 'drizzle-kit/api';
-import { drizzle } from 'drizzle-orm/d1';
-import { migrate } from 'drizzle-orm/d1/migrator';
+import { drizzle } from 'drizzle-orm/libsql';
+import { migrate } from 'drizzle-orm/libsql/migrator';
 import { integer, sqliteTable, text } from 'drizzle-orm/sqlite-core';
-import { Miniflare } from 'miniflare';
+import { createClient } from '@libsql/client';
 import { expect, test } from 'vitest';
 import * as schema from '../../src/db/schema';
 
@@ -92,11 +92,7 @@ async function migrationFolder(
 
 test('exact published0023 preserves main0022 data and legacy attempts across upgrade and replay', async () => {
   const root = await mkdtemp(join(tmpdir(), 'notification-upgrade-'));
-  const worker = new Miniflare({
-    modules: true,
-    script: 'export default {fetch(){return new Response("local test")}}',
-    d1Databases: ['DB'],
-  });
+  const client = createClient({url: 'file::memory:'});
   try {
     const baseline = JSON.parse(
       await readFile('drizzle/migrations/meta/0022_snapshot.json', 'utf8'),
@@ -104,7 +100,7 @@ test('exact published0023 preserves main0022 data and legacy attempts across upg
     const current = JSON.parse(
       await readFile('drizzle/migrations/meta/0023_snapshot.json', 'utf8'),
     ) as DrizzleSQLiteSnapshotJSON;
-    const db = drizzle(await worker.getD1Database('DB'), { schema });
+    const db = drizzle(client, { schema });
     await migrate(db, {
       migrationsFolder: await migrationFolder(
         root,
@@ -201,7 +197,7 @@ test('exact published0023 preserves main0022 data and legacy attempts across upg
         expect(current.tables[name]).toEqual(table);
     }
   } finally {
-    await worker.dispose();
+    client.close();
     await rm(root, { recursive: true, force: true });
   }
 }, 30000);

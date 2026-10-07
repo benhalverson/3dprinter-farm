@@ -1,9 +1,11 @@
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { Miniflare } from 'miniflare';
-import { build } from 'vite';
-import { expect, test } from 'vitest';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { BudgetLedger } from '../../src/shopping/budget';
+import { BudgetCoordinator } from '../../src/shopping/budget-coordinator';
+import { MemoryBudgetStorage } from '../shopping/storage';
+import { expect, test, vi } from 'vitest';
 import { MONTHLY_CAP, PRICE, RESERVATION } from '../../src/shopping/pricing';
 
 type Snapshot = {
@@ -18,54 +20,142 @@ type Snapshot = {
   alarm: number | null;
 };
 
-/** Restart the entire workerd runtime over the same on-disk SQLite namespace. */
-test('production SHOPPING_LEDGER retains accounting, outbox retries and replay across real SQLite restarts', async () => {
+/** Reconstruct business-rule objects from persisted mock state; no Worker runtime is used. */
+test('ledger recovery retains accounting, outbox retries and replay across mocked runtime restarts', async () => {
   const root = await mkdtemp(join(tmpdir(), 'shopping-ledger-restart-'));
-  await build({
-    configFile: false,
-    logLevel: 'silent',
-    plugins: [
+  const stateFile = join(root, 'mock-storage.json');
+  const create = (accept: boolean) => {
+    const storage = new MemoryBudgetStorage();
+    let alarm: number | null = null;
+    const restore = (saved: Snapshot) => {
+      storage.reservations.clear();
+      storage.alerts.clear();
+      storage.starts.clear();
+      for (const row of saved.reservations)
+        storage.reservations.set(row.id, row as never);
+      for (const row of saved.alerts)
+        storage.alerts.set((row as unknown as { id: string }).id, row as never);
+      for (const row of saved.starts)
+        storage.starts.set((row as { id: string }).id, row as never);
+      alarm = saved.alarm;
+    };
+    const snapshot = () =>
+      structuredClone({
+        reservations: [...storage.reservations.values()],
+        alerts: [...storage.alerts.values()],
+        starts: [...storage.starts.values()],
+        alarm,
+      });
+    if (existsSync(stateFile))
+      restore(JSON.parse(readFileSync(stateFile, 'utf8')));
+    const transaction = <T>(work: () => T): T => {
+      const before = snapshot();
+      try {
+        return work();
+      } catch (error) {
+        restore(before);
+        throw error;
+      }
+    };
+    const ledger = new BudgetLedger(storage);
+    const coordinator = new BudgetCoordinator(
+      ledger,
+      storage,
       {
-        name: 'committed-sql-text',
-        async load(id) {
-          if (id.endsWith('.sql'))
-            return `export default ${JSON.stringify(await readFile(id, 'utf8'))};`;
+        exclusive: work => work(),
+        transaction,
+        getAlarm: async () => alarm,
+        setAlarm: async at => {
+          alarm = at;
+        },
+        deleteAlarm: async () => {
+          alarm = null;
         },
       },
-    ],
-    build: {
-      outDir: join(root, 'bundle'),
-      lib: {
-        entry: 'test/database/shoppingLedger.worker.ts',
-        formats: ['es'],
-        fileName: () => 'worker.js',
+      {
+        AGENT_BUDGET_FROM: 'budget@example.test',
+        AGENT_BUDGET_TO: 'owner@example.test',
+        BUDGET_EMAIL: {
+          send: vi.fn(async () => {
+            if (!accept) throw new Error('controlled_failure');
+            return { messageId: 'controlled-ack' };
+          }),
+        },
       },
-      rollupOptions: { external: ['cloudflare:workers'] },
-      minify: false,
-    },
-  });
-  const create = (accept: boolean) =>
-    new Miniflare({
-      modules: true,
-      modulesRoot: join(root, 'bundle'),
-      scriptPath: join(root, 'bundle/worker.js'),
-      compatibilityDate: '2026-04-01',
-      durableObjects: {
-        SHOPPING_LEDGER: { className: 'RestartLedger', useSQLite: true },
+    );
+    const ready = coordinator.resume();
+    return {
+      async call(operation: string, args: unknown[]) {
+        await ready;
+        const [first, second, third] = args;
+        switch (operation) {
+          case 'inspect':
+            return snapshot();
+          case 'admit':
+            return transaction(() =>
+              ledger.admit(first as string, second as string, third as string),
+            );
+          case 'reserve':
+            return coordinator.reserve(
+              first as Parameters<typeof coordinator.reserve>[0],
+              second as string,
+            );
+          case 'settle':
+            return coordinator.settle(
+              first as string,
+              second as Parameters<typeof coordinator.settle>[1],
+            );
+          case 'runAlarm':
+            return coordinator.alarm();
+          case 'historical':
+            storage.updateReservation(first as string, { month: '2020-01' });
+            return;
+          case 'due':
+            for (const alert of storage.alerts.values()) alert.nextAttempt = 0;
+            return;
+          case 'failReserve': {
+            const original = storage.insertAlert.bind(storage);
+            storage.insertAlert = row => {
+              original(row);
+              throw new Error('injected_after_alert');
+            };
+            try {
+              return await coordinator.reserve(
+                first as Parameters<typeof coordinator.reserve>[0],
+                second as string,
+              );
+            } finally {
+              storage.insertAlert = original;
+            }
+          }
+          case 'failSettle': {
+            const original = storage.updateReservation.bind(storage);
+            storage.updateReservation = (id, row) => {
+              original(id, row);
+              throw new Error('injected_after_settlement');
+            };
+            try {
+              return await coordinator.settle(first as string, {
+                prompt_tokens: 10,
+                completion_tokens: 2,
+              });
+            } finally {
+              storage.updateReservation = original;
+            }
+          }
+          default:
+            throw new Error('Unknown mock command');
+        }
       },
-      durableObjectsPersist: join(root, 'sqlite'),
-      bindings: { ACCEPT_EMAIL: accept },
-      outboundService: () => new Response('network forbidden', { status: 503 }),
-    });
-  let worker = create(false);
-  const call = async (operation: string, ...args: unknown[]) => {
-    const response = await worker.dispatchFetch('http://local.test', {
-      method: 'POST',
-      body: JSON.stringify({ operation, args }),
-    });
-    if (response.status !== 200) throw new Error(await response.text());
-    return response.json();
+      async dispose() {
+        await ready;
+        writeFileSync(stateFile, JSON.stringify(snapshot()));
+      },
+    };
   };
+  let worker = create(false);
+  const call = (operation: string, ...args: unknown[]) =>
+    worker.call(operation, args);
   const inspect = async () => (await call('inspect')) as Snapshot;
   try {
     for (let n = 0; n < 6; n++)
