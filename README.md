@@ -302,3 +302,9 @@ Legacy lines without an authorization version are inaccessible through this cont
 Run `pnpm run test:database` to test ownership, isolation, foreign-key cascades and concurrent mutations against disposable SQLite/libsql databases. The harness uses `drizzle-kit generate` and `drizzle-kit migrate` to create a current-schema database, and separately checks committed-history replay in another disposable database. This Node suite runs as part of `test:ci`, separately from the mocked Hono/Workers suites.
 
 Check migration-replay diagnostics separately from current-schema test results. Before provisioning or migrating a deployment, verify the target database's applied history and required constraints. If replay fails, reconcile the history/bootstrap discrepancy without rewriting applied history; a passing current-schema suite does not establish upgrade compatibility. Remote migration and deployment require separate authorization.
+
+### Retired printer endpoints
+
+The unused Slant V1 endpoints `POST /slice`, `GET /colors`, `POST /estimate`, and `POST /add-product` now return 404. The legacy upload flow `POST /v2/upload`, `GET /v2/uploads`, and `GET /v2/uploads/:id` also returns 404; its unscoped file reader is no longer reachable. `SLANT_API` is no longer a required binding. Historical upload records and migrations are preserved.
+
+Use existing draft attachment preparation and explicit product save routes for catalog work. Active `/v2/colors`, `/v2/estimate`, presigned-upload/confirm, `/v2/add-product`, `/upload`, `/list`, profile, catalog, auth and order routes remain supported. Retirement is based on current source searches in store, rc-admin, and luluspeedworks; before deployment, operators must additionally review access logs and private scripts for these exact retired paths. No production traffic/log access was available during this change.
