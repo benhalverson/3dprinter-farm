@@ -24,22 +24,6 @@ export function normalizeLegacyRole(role?: string | null) {
     .toLowerCase();
 }
 
-export function mapLegacyRoleToOrganizationRole(
-  role?: string | null,
-): SharedOrganizationRole {
-  const normalizedRole = normalizeLegacyRole(role);
-
-  if (normalizedRole === 'owner') {
-    return 'owner';
-  }
-
-  if (normalizedRole === 'admin' || normalizedRole === 'catalog_manager') {
-    return 'admin';
-  }
-
-  return 'member';
-}
-
 export async function ensureSharedOrganization(db: Database) {
   const existing = await db
     .select()
@@ -88,44 +72,3 @@ export async function getSharedOrganizationMembership(db: Database, userId: stri
     .get();
 }
 
-export async function ensureSharedOrganizationMembership(
-  db: Database,
-  {
-    userId,
-    role,
-  }: {
-    userId: string;
-    role: SharedOrganizationRole;
-  },
-) {
-  await ensureSharedOrganization(db);
-
-  const existingMembership = await getSharedOrganizationMembership(db, userId);
-
-  if (existingMembership) {
-    return existingMembership;
-  }
-
-  const memberId = `member:${SHARED_ORGANIZATION_ID}:${userId}`;
-  const createdAt = new Date();
-  const inserted = await db
-    .insert(schema.memberTable)
-    .values({
-      id: memberId,
-      organizationId: SHARED_ORGANIZATION_ID,
-      userId,
-      role,
-      createdAt,
-    })
-    .returning();
-
-  return (
-    inserted?.[0] ?? {
-      id: memberId,
-      organizationId: SHARED_ORGANIZATION_ID,
-      userId,
-      role,
-      createdAt,
-    }
-  );
-}
