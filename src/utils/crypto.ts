@@ -1,5 +1,6 @@
 const ITERATIONS = 100_000;
-const KEY_LENGTH = 32;
+const KEY_LENGTH_BITS = 256;
+export const PASSWORD_VERSION = 'pbkdf2-sha256-v2$';
 const HASH_ALGORITHM = 'SHA-256';
 
 const encode = (str: string): Uint8Array => {
@@ -38,12 +39,12 @@ export const hashPassword = async (password: string): Promise<Salt> => {
       hash: HASH_ALGORITHM,
     },
     baseKey,
-    KEY_LENGTH,
+    KEY_LENGTH_BITS,
   );
 
   return {
     salt: arrayBuffertoBase64(saltBytes),
-    hash: arrayBuffertoBase64(new Uint8Array(derivedBits)),
+    hash: PASSWORD_VERSION + arrayBuffertoBase64(new Uint8Array(derivedBits)),
   };
 };
 
@@ -52,6 +53,14 @@ export const verifyPassword = async (
   saltBase64: string,
   hashBase64: string,
 ): Promise<boolean> => {
+  const versioned = hashBase64.startsWith(PASSWORD_VERSION);
+  const encoded = versioned ? hashBase64.slice(PASSWORD_VERSION.length) : hashBase64;
+  // Strict formats prevent malformed or unknown versions entering the legacy path.
+  if (!/^[A-Za-z0-9+/]{22}==$/.test(saltBase64) ||
+      !(versioned ? /^[A-Za-z0-9+/]{43}=$/ : /^[A-Za-z0-9+/]{6}==$/).test(encoded)) {
+    return false;
+  }
+  const expected = new Uint8Array(base64ToArrayBuffer(encoded));
   const salt = base64ToArrayBuffer(saltBase64);
   const saltBytes = new Uint8Array(salt);
 
@@ -71,9 +80,12 @@ export const verifyPassword = async (
       hash: HASH_ALGORITHM,
     },
     baseKey,
-    KEY_LENGTH,
+    versioned ? KEY_LENGTH_BITS : 32,
   );
-  return arrayBuffertoBase64(new Uint8Array(derivedBits)) === hashBase64;
+  const actual = new Uint8Array(derivedBits);
+  let difference = 0;
+  for (let i = 0; i < actual.length; i++) difference |= actual[i] ^ expected[i];
+  return difference === 0;
 };
 
 export const base64url = (input: Uint8Array | string): string => {
