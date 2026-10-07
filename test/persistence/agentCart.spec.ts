@@ -1,3 +1,5 @@
+import {eq} from 'drizzle-orm';
+import {clearCartLines} from '../../src/modules/cartMutations';
 import { createClient } from '@libsql/client';
 import { drizzle } from 'drizzle-orm/libsql';
 import { migrate } from 'drizzle-orm/libsql/migrator';
@@ -309,4 +311,13 @@ test('budget exhaustion before the mutation turn leaves deterministic cart contr
   expect((await authoritativeCart(db, cartId, caller)).items[0].quantity).toBe(
     1,
   );
+});
+
+test('paid-order cart cleanup supersedes pending agent actions without replaying removed purchases',async()=>{
+ const access=await requireCartAccess(db,cartId,caller);await addCartLine(db,access,selection());
+ input.cart!.revision=1;const tools=(await build())!;await tools.execute(options);
+ await clearCartLines(db,cartId,eq(schema.cart.cartId,cartId));
+ await expect(tools.execute(add)).rejects.toMatchObject({status:409});
+ const state=await authoritativeCart(db,cartId,caller);expect(state.revision).toBe(2);expect(state.items).toEqual([]);
+ await clearCartLines(db,cartId,eq(schema.cart.cartId,cartId));expect((await authoritativeCart(db,cartId,caller)).revision).toBe(2);
 });
