@@ -38,7 +38,8 @@ import {
   isPublicationFailure,
   priceToCents,
   productPrices,
-  saveCatalogItem,
+  saveCatalogItemWithCategories,
+  createCatalogItem,
 } from '../modules/catalogPublication';
 import {
   catalogReadinessResponseSchema,
@@ -825,6 +826,13 @@ const product = factory
           }
         }
 
+        if (normalizedCategoryIds?.length) {
+          const categories = await c.var.db.select({ id: categoryTable.categoryId }).from(categoryTable)
+            .where(inArray(categoryTable.categoryId, normalizedCategoryIds)).all();
+          if (categories.length !== normalizedCategoryIds.length)
+            return c.json({ error: 'One or more categories do not exist' }, 400);
+        }
+
         const skuNumber = generateSkuNumber(data.name);
 
         // The browser has already uploaded and confirmed the STL with Slant3D.
@@ -922,27 +930,7 @@ const product = factory
         console.log('Product data to insert:', productDataToInsert);
 
         c.set('catalogWriteStarted', true);
-        const insertResponse = await c.var.db
-          .insert(productsTable)
-          .values(productDataToInsert)
-          .returning();
-
-        const created = insertResponse[0];
-
-        // Insert category links
-        if (
-          created &&
-          Array.isArray(normalizedCategoryIds) &&
-          normalizedCategoryIds.length > 0
-        ) {
-          await c.var.db.insert(productsToCategories).values(
-            normalizedCategoryIds.map((catId, idx) => ({
-              productId: created.id,
-              categoryId: catId,
-              orderIndex: idx,
-            })),
-          );
-        }
+        const created = await createCatalogItem(c.var.db, productDataToInsert, normalizedCategoryIds || []);
 
         return c.json(
           {
@@ -1235,24 +1223,7 @@ const product = factory
           updateData.categoryId = normalizedCategoryIds[0];
         // Update the product
         c.set('catalogWriteStarted', true);
-        await saveCatalogItem(c.var.db, existingProduct, updateData);
-
-        // Update category associations when categories are provided.
-        if (normalizedCategoryIds && normalizedCategoryIds.length > 0) {
-          // Delete existing category associations in join table
-          await c.var.db
-            .delete(productsToCategories)
-            .where(eq(productsToCategories.productId, parsedData.id));
-
-          // Insert new category associations
-          await c.var.db.insert(productsToCategories).values(
-            normalizedCategoryIds.map((catId, idx) => ({
-              productId: parsedData.id,
-              categoryId: catId,
-              orderIndex: idx,
-            })),
-          );
-        }
+        await saveCatalogItemWithCategories(c.var.db, existingProduct, updateData, normalizedCategoryIds);
 
         return c.json({
           success: true,

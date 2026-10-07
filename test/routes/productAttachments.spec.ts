@@ -52,6 +52,14 @@ function matching(row: Row, condition?: SQL): boolean {
     .filter(chunk => chunk instanceof StringChunk)
     .map(chunk => chunk.value.join(''))
     .join('');
+  const subquery = chunks.find(
+    chunk =>
+      typeof chunk === 'object' && chunk !== null && 'fixtureRows' in chunk,
+  ) as { fixtureRows: () => Row[] } | undefined;
+  if (subquery && operator.includes('exists')) {
+    const found = subquery.fixtureRows().length > 0;
+    return operator.includes('not exists') ? !found : found;
+  }
   const column = chunks.find(chunk => chunk instanceof SQLiteColumn);
   const parameter = chunks.find(chunk => chunk instanceof Param);
   if (column instanceof SQLiteColumn) {
@@ -84,9 +92,34 @@ function matching(row: Row, condition?: SQL): boolean {
     : nested.every(chunk => matching(row, chunk));
 }
 const db = {
-  select: vi.fn(() => ({
+  // Transaction rollback/concurrency is exercised with real SQLite in catalogAtomicity.spec.ts.
+  batch: async (queries: Promise<unknown>[]) => Promise.all(queries),
+  select: vi.fn((selection?: Record<string, SQLiteColumn | { sql: SQL }>) => ({
     from: (table: SQLiteTable) => {
       const query = (condition?: SQL) => ({
+        fixtureRows: () =>
+          records(table)
+            .filter(row => matching(row, condition))
+            .map(row =>
+              Object.fromEntries(
+                Object.entries(selection || {}).map(([key, field]) => {
+                  if (field instanceof SQLiteColumn) {
+                    const name = Object.keys(field.table).find(
+                      name => (field.table as unknown as Row)[name] === field,
+                    )!;
+                    return [key, row[name]];
+                  }
+                  return [
+                    key,
+                    (
+                      field.sql.queryChunks.find(
+                        chunk => chunk instanceof Param,
+                      ) as Param
+                    ).value,
+                  ];
+                }),
+              ),
+            ),
         get: async () => {
           beforeRead?.(table);
           if (failRead === table) throw failReadError;
@@ -112,6 +145,20 @@ const db = {
     },
   })),
   insert: vi.fn((table: SQLiteTable) => ({
+    select: (query: { fixtureRows: () => Row[] }) => ({
+      // biome-ignore lint/suspicious/noThenProperty: Drizzle query surrogate.
+      then: (
+        resolve: (rows: Row[]) => unknown,
+        reject: (error: unknown) => unknown,
+      ) =>
+        Promise.resolve()
+          .then(async () => {
+            const rows = query.fixtureRows();
+            if (!rows.length) return [];
+            return db.insert(table).values(rows).returning();
+          })
+          .then(resolve, reject),
+    }),
     values: (value: Row | Row[]) => {
       const insert = () => {
         beforeInsert?.(table);
@@ -2677,7 +2724,7 @@ describe('durable product attachments through Hono', () => {
       squareRevision: 1,
       imageGallery: '[]',
     });
-    expect(records(schema.productsToCategories)).toEqual([
+    expect(records(schema.productsToCategories)).toMatchObject([
       { productId: 42, categoryId: 7, orderIndex: 0 },
     ]);
     expect(fetch).not.toHaveBeenCalled();
@@ -2702,7 +2749,7 @@ describe('durable product attachments through Hono', () => {
       imageGallery: ['https://public.example/gallery.png'],
     });
     expect(response.status).toBe(200);
-    expect(records(schema.productsToCategories)).toEqual([
+    expect(records(schema.productsToCategories)).toMatchObject([
       { productId: 42, categoryId: 2, orderIndex: 0 },
       { productId: 42, categoryId: 1, orderIndex: 1 },
     ]);

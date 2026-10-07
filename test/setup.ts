@@ -190,6 +190,7 @@ vi.mock('drizzle-orm/d1', () => {
 
   return {
     drizzle: vi.fn(() => ({
+      batch: async (queries: Promise<unknown>[]) => Promise.all(queries),
       select: () => ({
         from: () => ({
           where: mocks.drizzle.mockWhere.mockReturnValue(whereResult),

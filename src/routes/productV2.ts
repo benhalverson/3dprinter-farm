@@ -1,7 +1,7 @@
 import {
   isPublicationFailure,
   priceToCents,
-  saveCatalogItem,
+  saveCatalogItemWithCategories,
 } from '../modules/catalogPublication';
 import { zValidator } from '@hono/zod-validator';
 import { eq, inArray } from 'drizzle-orm';
@@ -170,23 +170,7 @@ const productV2 = factory.createApp().put(
         updateData.categoryId = normalizedCategoryIds[0];
       }
       c.set('catalogWriteStarted', true);
-      await saveCatalogItem(c.var.db, existingProduct, updateData);
-
-      if (normalizedCategoryIds) {
-        // Delete existing category associations in join table
-        await c.var.db
-          .delete(productsToCategories)
-          .where(eq(productsToCategories.productId, parsedData.id));
-
-        // Insert new category associations
-        await c.var.db.insert(productsToCategories).values(
-          normalizedCategoryIds.map((catId, idx) => ({
-            productId: parsedData.id,
-            categoryId: catId,
-            orderIndex: idx,
-          })),
-        );
-      }
+      await saveCatalogItemWithCategories(c.var.db, existingProduct, updateData, normalizedCategoryIds);
 
       return c.json({ success: true, message: 'Product updated successfully' });
     } catch (error) {
