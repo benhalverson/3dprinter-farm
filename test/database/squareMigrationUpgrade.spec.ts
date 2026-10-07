@@ -7,10 +7,10 @@ import {
   type DrizzleSQLiteSnapshotJSON,
 } from 'drizzle-kit/api';
 import { eq, getTableColumns } from 'drizzle-orm';
-import { drizzle } from 'drizzle-orm/d1';
-import { migrate } from 'drizzle-orm/d1/migrator';
+import { drizzle } from 'drizzle-orm/libsql';
+import { migrate } from 'drizzle-orm/libsql/migrator';
 import { integer, sqliteTable, text } from 'drizzle-orm/sqlite-core';
-import { Miniflare } from 'miniflare';
+import { createClient } from '@libsql/client';
 import { expect, test } from 'vitest';
 import * as schema from '../../src/db/schema';
 
@@ -101,18 +101,11 @@ async function forwardFolder(root: string, tags: string[]) {
   return folder;
 }
 
-test('committed Square increments preserve real D1 orders, dependent history and payment identities', async () => {
+test('committed Square increments preserve local SQLite orders, dependent history and payment identities', async () => {
   const root = await mkdtemp(join(tmpdir(), 'square-d1-upgrade-'));
-  const worker = new Miniflare({
-    modules: true,
-    script:
-      'export default { fetch() { return new Response("migration probe"); } };',
-    compatibilityDate: '2026-04-01',
-    d1Databases: { DB: 'square-d1-upgrade' },
-  });
+  const client = createClient({url: 'file::memory:'});
   try {
-    const binding = await worker.getD1Database('DB');
-    const db = drizzle(binding as unknown as D1Database, { schema });
+    const db = drizzle(client, { schema });
     await migrate(db, { migrationsFolder: await baselineFolder(root) });
     await db.insert(schema.users).values({
       id: 'upgrade-owner',
@@ -249,7 +242,7 @@ test('committed Square increments preserve real D1 orders, dependent history and
       }),
     ).rejects.toThrow();
   } finally {
-    await worker.dispose();
+    client.close();
     await rm(root, { recursive: true, force: true });
   }
 }, 30000);

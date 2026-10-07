@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { hashPassword, signJWT, verifyPassword } from '../../src/utils/crypto';
+import { hashPassword, PASSWORD_VERSION, signJWT, verifyPassword } from '../../src/utils/crypto';
 
 vi.unmock('../../src/utils/crypto');
 
@@ -11,7 +11,8 @@ describe('Password hashing and vertification', () => {
     expect(typeof salt).toBe('string');
     expect(typeof hash).toBe('string');
     expect(salt.length).toBeGreaterThan(10);
-    expect(hash.length).toEqual(8);
+    expect(hash.startsWith(PASSWORD_VERSION)).toBe(true);
+    expect(Buffer.from(hash.slice(PASSWORD_VERSION.length), 'base64').length).toBe(32);
   });
 
   it('should return true for a valid password', async () => {

@@ -70,14 +70,6 @@ function mockSessionRole(role: string) {
 
   mockWhere.mockReturnValueOnce({
     get: vi.fn().mockResolvedValueOnce({
-      id: 'org_shared_catalog',
-      name: '3D Printer Web API',
-      slug: '3dprinter-web-api',
-    }),
-  });
-
-  mockWhere.mockReturnValueOnce({
-    get: vi.fn().mockResolvedValueOnce({
       id: 'member:org_shared_catalog:user_123',
       organizationId: 'org_shared_catalog',
       userId: 'user_123',
@@ -111,6 +103,7 @@ function mockV2AddProductDependencies() {
 describe('Product Routes', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(fetch).mockReset().mockImplementation(async () => Response.json({}));
     mockAll.mockResolvedValue([]);
     capturedInserts.length = 0;
   });
@@ -131,7 +124,7 @@ describe('Product Routes', () => {
     expect(globalThis.fetch).not.toHaveBeenCalled();
   });
 
-  test('GET /products hydrates STL URLs from Slant file IDs', async () => {
+  test('GET /products returns stable preview URLs without provider reads', async () => {
     mockAll.mockResolvedValueOnce([
       {
         id: 1,
@@ -165,21 +158,13 @@ describe('Product Routes', () => {
       publicFileServiceId: string;
     }>;
     expect(data[0]).toMatchObject({
-      stl: 'https://slant3d.com/files/fresh-model.stl',
+      stl: 'http://localhost/product/1/print-file',
       publicFileServiceId: 'file_123',
     });
-    expect(globalThis.fetch).toHaveBeenCalledWith(
-      'https://slant3dapi.com/v2/api/files/file_123',
-      expect.objectContaining({
-        method: 'GET',
-        headers: expect.objectContaining({
-          Authorization: 'Bearer fake-api-key-v2',
-        }),
-      }),
-    );
+    expect(globalThis.fetch).not.toHaveBeenCalled();
   });
 
-  test('GET /products falls back to stored STL when Slant hydration fails', async () => {
+  test('GET /products returns catalog metadata even when the provider is unavailable', async () => {
     const consoleError = vi
       .spyOn(console, 'error')
       .mockImplementation(() => undefined);
@@ -208,11 +193,9 @@ describe('Product Routes', () => {
 
     expect(res.status).toBe(200);
     const data = (await res.json()) as Array<{ stl: string }>;
-    expect(data[0].stl).toBe('legacy-or-file-id');
-    expect(consoleError).toHaveBeenCalledWith(
-      'Failed to hydrate Slant3D file URL:',
-      expect.objectContaining({ publicFileServiceId: 'file_123' }),
-    );
+    expect(data[0].stl).toBe('http://localhost/product/1/print-file');
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+    expect(consoleError).not.toHaveBeenCalled();
     consoleError.mockRestore();
   });
 
@@ -236,7 +219,7 @@ describe('Product Routes', () => {
     expect(data).toMatchObject({ id: 1 });
   });
 
-  test('GET /product/:id hydrates STL URL from Slant file ID', async () => {
+  test('GET /product/:id returns a stable preview URL without provider reads', async () => {
     mockWhere.mockReturnValueOnce({
       all: vi.fn().mockResolvedValueOnce([
         {
@@ -269,7 +252,8 @@ describe('Product Routes', () => {
 
     expect(res.status).toBe(200);
     const data = (await res.json()) as { stl: string };
-    expect(data.stl).toBe('https://slant3d.com/files/detail-model.stl');
+    expect(data.stl).toBe('http://localhost/product/1/print-file');
+    expect(globalThis.fetch).not.toHaveBeenCalled();
   });
 
   test('GET /product/:id returns 404 if not found', async () => {
@@ -304,7 +288,7 @@ describe('Product Routes', () => {
     expect(data.error).toContain('at least 2 characters');
   });
 
-  test('GET /products/search hydrates STL URLs from Slant file IDs', async () => {
+  test('GET /products/search returns stable preview URLs without provider reads', async () => {
     mockWhere.mockResolvedValueOnce([{ count: 1 }]);
     mockWhere.mockReturnValueOnce({
       limit: () => ({
@@ -342,8 +326,9 @@ describe('Product Routes', () => {
     expect(res.status).toBe(200);
     const data = (await res.json()) as { products: Array<{ stl: string }> };
     expect(data.products[0].stl).toBe(
-      'https://slant3d.com/files/search-model.stl',
+      'http://localhost/product/1/print-file',
     );
+    expect(globalThis.fetch).not.toHaveBeenCalled();
   });
 
   test('GET /admin/catalog/readiness returns checkout diagnostics for admins', async () => {
@@ -468,166 +453,6 @@ describe('Product Routes', () => {
     expect(res.status).toBe(403);
   });
 
-  test('POST /add-product returns 401 when not authenticated', async () => {
-    const request = new Request('http://localhost/add-product', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        inPersonPrice: 12.34,
-        name: 'New Product',
-        description: 'desc',
-        stl: 'url/to.stl',
-        price: 15,
-        image: 'url/to/image.jpg',
-        filamentType: 'PLA',
-        color: '#ffffff',
-      }),
-    });
-
-    const res = await app.fetch(request, mockEnv());
-
-    expect(res.status).toBe(401);
-  });
-
-  test('POST /add-product adds a product without categories', async () => {
-    mockSessionRole('admin');
-    (
-      globalThis.fetch as unknown as ReturnType<typeof vi.fn>
-    ).mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({
-        data: { price: 10 },
-      }),
-    });
-
-    mockInsert.mockResolvedValueOnce([{ id: 1 }]);
-    const request = new Request('http://localhost/add-product', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Cookie: fakeSignedCookie,
-      },
-      body: JSON.stringify({
-        inPersonPrice: 12.34,
-        name: 'New Product',
-        description: 'desc',
-        stl: 'url/to.stl',
-        price: 15,
-        image: 'url/to/image.jpg',
-        filamentType: 'PLA',
-        color: '#ffffff',
-      }),
-    });
-
-    const res = await app.fetch(request, mockEnv());
-
-    expect(res.status).toBe(200);
-    const data = (await res.json()) as Array<{ id: number }>;
-    expect(Array.isArray(data)).toBe(true);
-    expect(data[0]).toHaveProperty('id');
-    // One insert for product only; no join rows because categoryIds omitted
-    expect(capturedInserts.length).toBe(1);
-    // Inserted product should have null categoryId during transition
-    const [productInsertOnly] = capturedInserts as Array<{
-      categoryId: number | null;
-      price: number;
-    }>;
-    expect(productInsertOnly).toHaveProperty('categoryId', null);
-    expect(productInsertOnly.price).toBe(11.5);
-  });
-
-  test('POST /add-product handles slicer API failure', async () => {
-    mockSessionRole('admin');
-    (
-      globalThis.fetch as unknown as ReturnType<typeof vi.fn>
-    ).mockResolvedValueOnce({
-      ok: false,
-      json: async () => ({
-        message: 'slicer failed',
-      }),
-    });
-
-    const request = new Request('http://localhost/add-product', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Cookie: fakeSignedCookie,
-      },
-      body: JSON.stringify({
-        inPersonPrice: 12.34,
-        name: 'Bad Product',
-        description: 'desc',
-        stl: 'url/to.stl',
-        image: 'url/to/image.jpg',
-        price: 15,
-        filamentType: 'PLA',
-        color: '#ffffff',
-      }),
-    });
-
-    const res = await app.fetch(request, mockEnv());
-
-    expect(res.status).toBe(500);
-    const data = (await res.json()) as { error: string };
-    expect(data.error).toBe('Failed to slice file');
-  });
-
-  test('POST /add-product adds a product with multiple categories', async () => {
-    mockSessionRole('admin');
-    (
-      globalThis.fetch as unknown as ReturnType<typeof vi.fn>
-    ).mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({
-        data: { price: 12 },
-      }),
-    });
-
-    mockInsert.mockResolvedValueOnce([{ id: 42 }]);
-
-    const request = new Request('http://localhost/add-product', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Cookie: fakeSignedCookie,
-      },
-      body: JSON.stringify({
-        inPersonPrice: 12.34,
-        name: 'Categorized Product',
-        description: 'desc',
-        stl: 'url/to.stl',
-        price: 25,
-        image: 'url/to/image.jpg',
-        filamentType: 'PLA',
-        color: '#123456',
-        categoryIds: [2, 3, 5],
-      }),
-    });
-
-    const res = await app.fetch(request, mockEnv());
-
-    expect(res.status).toBe(200);
-    const data = (await res.json()) as Array<{ id: number }>;
-    expect(Array.isArray(data)).toBe(true);
-    expect(data[0]).toHaveProperty('id');
-
-    // First insert is product; second insert is batch insert of join rows
-    expect(capturedInserts.length).toBe(2);
-    const [productInsert, batchJoinInsert] = capturedInserts as unknown as [
-      { id?: number; categoryId: number | null; price: number },
-      Array<{ productId: number; categoryId: number; orderIndex: number }>,
-    ];
-    expect(productInsert).toMatchObject({ categoryId: 2 });
-    expect(productInsert.price).toBe(15);
-    // Batch insert should contain all three category joins
-    expect(Array.isArray(batchJoinInsert)).toBe(true);
-    expect(batchJoinInsert.length).toBe(3);
-    const joinCategoryIds = batchJoinInsert.map(v => v.categoryId);
-    expect(joinCategoryIds).toEqual([2, 3, 5]);
-  });
-
   test('PUT /update-product updates a product', async () => {
     mockSessionRole('admin');
     mockUpdate.mockResolvedValueOnce([{ id: 1 }]);
@@ -747,31 +572,6 @@ describe('Product Routes', () => {
     const res = await app.fetch(request, mockEnv());
 
     expect(res.status).toBe(401);
-  });
-
-  test('POST /add-product returns 403 for authenticated non-admin users', async () => {
-    const request = new Request('http://localhost/add-product', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Cookie: fakeSignedCookie,
-      },
-      body: JSON.stringify({
-        inPersonPrice: 12.34,
-        name: 'New Product',
-        description: 'desc',
-        stl: 'url/to.stl',
-        price: 15,
-        image: 'url/to/image.jpg',
-        filamentType: 'PLA',
-        color: '#ffffff',
-      }),
-    });
-
-    const res = await app.fetch(request, mockEnv());
-
-    expect(res.status).toBe(403);
-    expect(globalThis.fetch).not.toHaveBeenCalled();
   });
 
   test('POST /v2/add-product returns 403 for authenticated non-admin users', async () => {
@@ -1060,4 +860,29 @@ describe('Product Routes', () => {
       categoryName: 'Accessories',
     });
   });
+});
+
+test('explicit STL preview resolves only on demand and follows the existing loader URL contract', async () => {
+  vi.clearAllMocks();
+  vi.mocked(fetch).mockReset().mockResolvedValue(Response.json({ data: { publicFileServiceId: 'file', fileURL: 'https://files.example.com/fresh.stl' } }));
+  mockWhere.mockReturnValueOnce({ get: vi.fn().mockResolvedValue({ id: 1, publicFileServiceId: 'file' }) });
+  const response = await app.request('/product/1/print-file', {}, mockEnv());
+  expect(response.status).toBe(302);
+  expect(response.headers.get('location')).toBe('https://files.example.com/fresh.stl');
+  expect(response.headers.get('cache-control')).toBe('no-store');
+  expect(fetch).toHaveBeenCalledOnce();
+  expect(vi.mocked(fetch).mock.calls[0][1]?.signal).toBeInstanceOf(AbortSignal);
+});
+
+test('list category membership comes from D1 even with a permanently slow provider', async () => {
+  vi.clearAllMocks();
+  vi.mocked(fetch).mockReset().mockImplementation(() => new Promise(() => {}));
+  mockAll.mockReset().mockResolvedValueOnce([{ id: 1, name: 'Fixture', publicFileServiceId: 'file', imageGallery: '[]' }]).mockResolvedValueOnce([
+    { productId: 1, categoryId: 2, categoryName: 'Second', orderIndex: 1 },
+    { productId: 1, categoryId: 1, categoryName: 'First', orderIndex: 0 },
+  ]);
+  const response = await app.request('/products', {}, mockEnv());
+  expect(response.status).toBe(200);
+  expect(await response.json()).toMatchObject([{ categories: [{ categoryId: 1, categoryName: 'First' }, { categoryId: 2, categoryName: 'Second' }] }]);
+  expect(fetch).not.toHaveBeenCalled();
 });

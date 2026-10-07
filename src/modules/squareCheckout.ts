@@ -1,3 +1,4 @@
+import { acceptInPersonPayment } from './inPersonSales';
 import {
   and,
   eq,
@@ -259,6 +260,8 @@ export async function acceptSquarePayment(
   if (!['COMPLETED', 'FAILED', 'CANCELED'].includes(payment.status)) return { received: true };
   await provider.validateLocation();
   const external = await provider.retrieveOrder(payment.order_id);
+  if (external.reference_id.startsWith('qr:')) return acceptInPersonPayment(db, env, merchantId, payment, external);
+  if (payment.status !== 'COMPLETED') return { received: true };
   const [attempt] = await db
     .select()
     .from(checkoutAttempts)

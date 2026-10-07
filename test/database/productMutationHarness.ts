@@ -1,5 +1,6 @@
 import { eq } from 'drizzle-orm';
-import { drizzle } from 'drizzle-orm/d1';
+import type { drizzle } from 'drizzle-orm/libsql';
+import type { WorkerEnv } from '../../src/factory';
 import * as schema from '../../src/db/schema';
 import { reconcileProductMutation } from '../../src/modules/productMutations';
 import type { Bindings } from '../../src/types';
@@ -17,10 +18,16 @@ type Command = {
   revision?: number;
 };
 export default {
-  /** Runs actual production reconciliation and D1 batches against a persisted local database. */
-  async fetch(request: Request, env: Bindings) {
+  /** Runs production reconciliation and local SQLite batches against a persisted local database. */
+  async fetch(
+    request: Request,
+    env: { db: ReturnType<typeof drizzle<typeof schema>> } & Record<
+      string,
+      unknown
+    >,
+  ) {
     const input = (await request.json()) as Command;
-    const db = drizzle(env.DB, { schema });
+    const db = env.db;
     if (input.command === 'seed') {
       if (input.assets)
         await db.insert(schema.productAssets).values(input.assets);
@@ -67,8 +74,8 @@ export default {
       if (!operation)
         return Response.json({ error: 'missing operation' }, { status: 404 });
       await reconcileProductMutation(
-        db,
-        env,
+        db as unknown as WorkerEnv['Variables']['db'],
+        env as unknown as Bindings,
         operation.ownerId,
         operation.draftId,
         operation.id,

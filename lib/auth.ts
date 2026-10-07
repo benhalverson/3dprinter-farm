@@ -1,13 +1,16 @@
+import { authConfiguration } from '../src/config/auth';
 import { passkey } from '@better-auth/passkey';
 import { betterAuth } from 'better-auth';
 import { drizzleAdapter } from 'better-auth/adapters/drizzle';
 import { createAuthMiddleware } from 'better-auth/api';
 import { openAPI, organization } from 'better-auth/plugins';
+import { and, eq } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/d1';
 import * as schema from '../src/db/schema';
 import { BROWSER_ORIGINS } from '../src/config/browserOrigins';
 import type { Bindings } from '../src/types';
 import {
+  PASSWORD_VERSION,
   hashPassword as hashLegacyPassword,
   verifyPassword as verifyLegacyPassword,
 } from '../src/utils/crypto';
@@ -22,67 +25,6 @@ export type AuthBindings = Pick<
   | 'PASSKEY_ORIGIN'
 >;
 
-function getAuthSecret(env?: AuthBindings) {
-  const secret = env?.BETTER_AUTH_SECRET?.trim();
-
-  if (!secret) {
-    throw new Error('BETTER_AUTH_SECRET is required');
-  }
-
-  if (secret.length < 32) {
-    throw new Error('BETTER_AUTH_SECRET must be at least 32 characters long');
-  }
-
-  return secret;
-}
-
-function getCookieAttributes(baseURL: string) {
-  const isSecure = new URL(baseURL).protocol === 'https:';
-
-  return {
-    sameSite: isSecure ? ('none' as const) : ('lax' as const),
-    secure: isSecure,
-  };
-}
-
-function isLocalHost(hostname: string) {
-  return (
-    hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1'
-  );
-}
-
-function getPasskeyRpId(baseURL: string, env?: AuthBindings) {
-  const configuredRpId = env?.RP_ID?.trim();
-
-  if (configuredRpId) {
-    return configuredRpId;
-  }
-
-  const baseHost = new URL(baseURL).hostname;
-
-  if (isLocalHost(baseHost)) {
-    return 'localhost';
-  }
-
-  throw new Error('RP_ID is required for non-local environments');
-}
-
-function validatePasskeyOrigin(rpID: string, passkeyOrigin?: string) {
-  if (!passkeyOrigin) {
-    return;
-  }
-
-  const originHost = new URL(passkeyOrigin).hostname;
-  const isValidRpRelation =
-    originHost === rpID || originHost.endsWith(`.${rpID}`);
-
-  if (!isValidRpRelation) {
-    throw new Error(
-      `PASSKEY_ORIGIN host (${originHost}) must equal RP_ID (${rpID}) or be its subdomain`,
-    );
-  }
-}
-
 async function hashWorkerPassword(password: string) {
   const { salt, hash } = await hashLegacyPassword(password);
   return `${salt}:${hash}`;
@@ -95,9 +37,9 @@ async function verifyWorkerPassword({
   hash: string;
   password: string;
 }) {
-  const [salt, derivedHash] = hash.split(':');
+  const [salt, derivedHash, extra] = hash.split(':');
 
-  if (!salt || !derivedHash) {
+  if (!salt || !derivedHash || extra !== undefined) {
     return false;
   }
 
@@ -110,11 +52,7 @@ export function createAuth(
   env?: AuthBindings,
 ) {
   const db = drizzle(database, { schema });
-  const baseURL = env?.AUTH_BASE_URL || 'http://localhost:8787';
-  const passkeyOrigin = env?.PASSKEY_ORIGIN?.trim();
-  const rpID = getPasskeyRpId(baseURL, env);
-
-  validatePasskeyOrigin(rpID, passkeyOrigin);
+  const { baseURL, rpID, passkeyOrigin, secret, cookieAttributes } = authConfiguration(env);
 
   return betterAuth({
     database: drizzleAdapter(db, {
@@ -127,9 +65,23 @@ export function createAuth(
         invitation: schema.invitationTable,
       },
     }),
-    secret: getAuthSecret(env),
+    secret,
     baseURL,
     hooks: {
+      after: createAuthMiddleware(async ctx => {
+        const userId = ctx.context.newSession?.user.id;
+        if (ctx.path !== '/sign-in/email' || !userId || typeof ctx.body?.password !== 'string') return;
+        const credential = await db.select().from(schema.account).where(and(
+          eq(schema.account.userId, userId), eq(schema.account.providerId, 'credential'),
+        )).get();
+        if (!credential?.password || credential.password.includes(PASSWORD_VERSION)) return;
+        if (!await verifyWorkerPassword({ hash: credential.password, password: ctx.body.password })) return;
+        const upgraded = await hashWorkerPassword(ctx.body.password);
+        // Compare-and-swap: a concurrent password reset/change must win.
+        await db.update(schema.account).set({ password: upgraded, updatedAt: new Date() }).where(and(
+          eq(schema.account.id, credential.id), eq(schema.account.password, credential.password),
+        ));
+      }),
       before: createAuthMiddleware(async ctx => {
         if (ctx.path !== '/request-password-reset') return;
         // Better Auth 1.6 catches errors in its default await helper. Override
@@ -223,7 +175,7 @@ export function createAuth(
     advanced: {
       // Keep redirect validation enabled in integration tests as well as production.
       disableOriginCheck: false,
-      defaultCookieAttributes: getCookieAttributes(baseURL),
+      defaultCookieAttributes: cookieAttributes,
     },
     // Better Auth errors can include request data (e.g. rejected callback URLs).
     logger: {

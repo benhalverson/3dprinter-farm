@@ -42,7 +42,7 @@ const orderDetailSchema = z.object({
   orderNumber: z.string(),
   userId: z.string().nullable(),
   filename: z.string().nullable(),
-  fileURL: z.string(),
+  fileURL: z.string().nullable(),
   status: z.string().nullable(),
   slantStatus: z.string().nullable(),
   slantPublicOrderId: z.string().nullable(),
@@ -52,6 +52,9 @@ const orderDetailSchema = z.object({
   squareOrderId: z.string().nullable(),
   squarePaymentId: z.string().nullable(),
   checkoutAttemptId: z.string().nullable(),
+  totalAmountCents: z.number().nullable(),
+  currency: z.string().nullable(),
+  itemSnapshot: z.string().nullable(),
   shippingAmountCents: z.number().nullable(),
   fulfillmentState: z.string().nullable(),
   customerEmail: z.string().nullable(),
@@ -488,6 +491,10 @@ const adminOrders = factory
 
       if (!order) {
         return c.json({ error: 'Order not found' }, 404);
+      }
+
+      if (order.fulfillmentType === 'in_person') {
+        return c.json({success:true,orderId:order.id,resultStatus:order.fulfillmentState,localStatus:order.status,slantStatus:null,detectedIssues:[],actionsTaken:[],recommendedAction:null,order});
       }
 
       if (order.squarePaymentId) {

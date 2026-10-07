@@ -13,10 +13,8 @@ import {
 
 type OpenAPISchema = Record<string, unknown>;
 
-import { BASE_URL } from '../constants';
 import {
   addCategorySchema,
-  addProductSchema,
   addProductV2Schema,
   categoryDataSchema,
   categoryTable,
@@ -26,7 +24,7 @@ import {
   productsToCategories,
   updateProductSchema,
 } from '../db/schema';
-import factory from '../factory';
+import factory, { type WorkerEnv } from '../factory';
 import {
   estimateSlant3DFile,
   getSlant3DFile,
@@ -38,13 +36,14 @@ import {
   isPublicationFailure,
   priceToCents,
   productPrices,
-  saveCatalogItem,
+  saveCatalogItemWithCategories,
+  createCatalogItem,
 } from '../modules/catalogPublication';
 import {
   catalogReadinessResponseSchema,
   evaluateCatalogReadiness,
 } from '../modules/catalogReadiness';
-import type { Bindings } from '../types';
+
 import {
   authMiddleware,
   requireCatalogMutationRole,
@@ -67,66 +66,23 @@ function parseImageGallery(imageGallery: string | null): string[] {
   }
 }
 
-type HydratableProduct = {
-  stl?: string | null;
-  publicFileServiceId?: string | null;
-};
-
-function formatHydrationError(error: unknown): unknown {
-  if (error instanceof Slant3DFileApiError) {
-    return {
-      message: error.message,
-      status: error.status,
-      details: error.details,
-    };
-  }
-
-  return error instanceof Error ? error.message : String(error);
+/** Stable preview URL keeps existing STL consumers working without eager provider IO. */
+function withPreview<T extends { id: number; stl?: string | null; publicFileServiceId?: string | null }>(requestURL: string, product: T): T {
+  return product.publicFileServiceId ? { ...product, stl: new URL(`/product/${product.id}/print-file`, requestURL).href } : product;
 }
+let activePreviewResolutions = 0;
 
-async function hydrateProductStlUrls<T extends HydratableProduct>(
-  env: Bindings,
-  products: T[],
-): Promise<T[]> {
-  const freshUrlByFileId = new Map<string, Promise<string | null>>();
-
-  const getFreshUrl = (publicFileServiceId: string) => {
-    const cached = freshUrlByFileId.get(publicFileServiceId);
-    if (cached) return cached;
-
-    const request = getSlant3DFile(env, publicFileServiceId)
-      .then(file => {
-        if (file.fileURL) return file.fileURL;
-
-        console.error('Slant3D file hydration returned no fileURL:', {
-          publicFileServiceId,
-        });
-        return null;
-      })
-      .catch((error: unknown) => {
-        console.error('Failed to hydrate Slant3D file URL:', {
-          publicFileServiceId,
-          error: formatHydrationError(error),
-        });
-        return null;
-      });
-
-    freshUrlByFileId.set(publicFileServiceId, request);
-    return request;
-  };
-
-  return Promise.all(
-    products.map(async product => {
-      const publicFileServiceId =
-        typeof product.publicFileServiceId === 'string'
-          ? product.publicFileServiceId.trim()
-          : '';
-      if (!publicFileServiceId) return product;
-
-      const freshStlUrl = await getFreshUrl(publicFileServiceId);
-      return freshStlUrl ? { ...product, stl: freshStlUrl } : product;
-    }),
-  );
+/** Load category membership in one D1 query for the current page. */
+async function withCategories<T extends { id: number }>(db: WorkerEnv['Variables']['db'], products: T[]) {
+  if (!products.length) return [];
+  const links: Array<{ productId: number; categoryId: number; categoryName: string; orderIndex: number | null }> = [];
+  // Paginated callers need one query; legacy array callers stay below D1's bind limit.
+  for (let offset = 0; offset < products.length; offset += 100) {
+    links.push(...await db.select({ productId: productsToCategories.productId, categoryId: categoryTable.categoryId, categoryName: categoryTable.categoryName, orderIndex: productsToCategories.orderIndex })
+      .from(productsToCategories).innerJoin(categoryTable, eq(productsToCategories.categoryId, categoryTable.categoryId))
+      .where(inArray(productsToCategories.productId, products.slice(offset, offset + 100).map(product => product.id))).all());
+  }
+  return products.map(product => ({ ...product, categories: links.filter(link => link.productId === product.id).sort((a, b) => (a.orderIndex ?? 0) - (b.orderIndex ?? 0)).map(({ categoryId, categoryName }) => ({ categoryId, categoryName })) }));
 }
 
 const product = factory
@@ -240,7 +196,7 @@ const product = factory
             ...productPrices(product),
             imageGallery: parseImageGallery(product.imageGallery),
           }));
-          const products = await hydrateProductStlUrls(c.env, parsedProducts);
+          const products = await withCategories(c.var.db, parsedProducts.map(item => withPreview(c.req.url, item)));
 
           return c.json(products);
         }
@@ -298,7 +254,7 @@ const product = factory
           ...productPrices(product),
           imageGallery: parseImageGallery(product.imageGallery),
         }));
-        const products = await hydrateProductStlUrls(c.env, parsedProducts);
+        const products = await withCategories(c.var.db, parsedProducts.map(item => withPreview(c.req.url, item)));
 
         const pagination = {
           page,
@@ -471,7 +427,7 @@ const product = factory
           ...productPrices(product),
           imageGallery: parseImageGallery(product.imageGallery),
         }));
-        const products = await hydrateProductStlUrls(c.env, parsedProducts);
+        const products = await withCategories(c.var.db, parsedProducts.map(item => withPreview(c.req.url, item)));
 
         const pagination = {
           page,
@@ -547,161 +503,6 @@ const product = factory
         .all();
 
       return c.json(await evaluateCatalogReadiness(c.env, products));
-    },
-  )
-  .post(
-    '/add-product',
-    authMiddleware,
-    requireCatalogMutationRole,
-    describeRoute({
-      description: 'Add a new product',
-      tags: ['Products'],
-      requestBody: {
-        content: {
-          'application/json': {
-            schema: resolver(addProductSchema) as unknown as OpenAPISchema,
-          },
-        },
-        required: true,
-      },
-      responses: {
-        201: {
-          content: {
-            'application/json': {
-              schema: resolver(addProductSchema) as unknown as OpenAPISchema,
-            },
-          },
-          description: 'The product was created successfully',
-        },
-        400: {
-          content: {
-            'application/json': {
-              schema: resolver(addProductSchema) as unknown as OpenAPISchema,
-            },
-          },
-          description: 'Missing or invalid parameters',
-        },
-      },
-    }),
-    zValidator('json', addProductSchema),
-    async c => {
-      const user = c.get('jwtPayload') as
-        | { id: string; email: string }
-        | undefined;
-      if (!user) return c.json({ error: 'Unauthorized' }, 401);
-      const data = await c.req.valid('json');
-      const {
-        categoryIds,
-        categoryId,
-        imageGallery,
-        price: legacyMarkupPercentage,
-        markupPercentage,
-        ...productFields
-      } = data;
-      const requestedMarkupPercentage =
-        markupPercentage ?? legacyMarkupPercentage;
-      if (requestedMarkupPercentage === undefined) {
-        return c.json({ error: 'Markup percentage is required' }, 400);
-      }
-      // Normalize category inputs: accept categoryIds array, categoryId number, or categoryId array
-      let normalizedCategoryIds: number[] | undefined;
-      if (Array.isArray(categoryIds)) {
-        normalizedCategoryIds = categoryIds;
-      } else if (Array.isArray(categoryId)) {
-        normalizedCategoryIds = categoryId;
-      } else if (typeof categoryId === 'number') {
-        normalizedCategoryIds = [categoryId];
-      }
-
-      // Check for duplicate category IDs
-      if (normalizedCategoryIds && normalizedCategoryIds.length > 0) {
-        const uniqueCategoryIds = new Set(normalizedCategoryIds);
-        if (uniqueCategoryIds.size !== normalizedCategoryIds.length) {
-          return c.json(
-            { error: 'Duplicate category IDs are not allowed' },
-            400,
-          );
-        }
-      }
-
-      const skuNumber = generateSkuNumber(data.name);
-
-      const slicingResponse = await fetch(`${BASE_URL}slicer`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'api-key': c.env.SLANT_API,
-        },
-        body: JSON.stringify({ fileURL: data.stl, sku_number: skuNumber }),
-      });
-
-      if (!slicingResponse.ok) {
-        const error = (await slicingResponse.json()) as Error;
-        console.log('slicing error', JSON.stringify(error));
-        return c.json(
-          { error: 'Failed to slice file', details: error.message },
-          500,
-        );
-      }
-
-      const slicingResult = (await slicingResponse.json()) as {
-        data: { price: number };
-      };
-      console.log('slicing result', slicingResult);
-      const basePrice = slicingResult.data.price;
-      const markupPrice = calculateMarkupPrice(
-        basePrice,
-        requestedMarkupPercentage,
-      );
-
-      console.log('data.imageGallery before insertion', imageGallery);
-      // Use first category as primary if provided; otherwise leave null
-      const primaryCategoryId =
-        normalizedCategoryIds && normalizedCategoryIds.length > 0
-          ? normalizedCategoryIds[0]
-          : null;
-
-      const productDataToInsert = {
-        ...productFields,
-        inPersonPrice: priceToCents(data.inPersonPrice),
-        price: markupPrice,
-        markupPercentage: requestedMarkupPercentage,
-        skuNumber: skuNumber,
-
-        imageGallery: JSON.stringify(imageGallery || []),
-        categoryId: primaryCategoryId,
-      };
-
-      console.log('Inserting product:', productDataToInsert);
-
-      try {
-        const response = await c.var.db
-          .insert(productsTable)
-          .values(productDataToInsert)
-          .returning();
-        console.log('response', response);
-
-        // Insert category links into join table (if any provided)
-        const created = response[0];
-        if (
-          created &&
-          Array.isArray(normalizedCategoryIds) &&
-          normalizedCategoryIds.length > 0
-        ) {
-          await c.var.db.insert(productsToCategories).values(
-            normalizedCategoryIds.map((catId, idx) => ({
-              productId: created.id,
-              categoryId: catId,
-              orderIndex: idx,
-            })),
-          );
-        }
-
-        return c.json(response.map(productPrices));
-      } catch (error) {
-        console.error('Error adding product', error);
-        return c.json({ error: 'Failed to add product' }, 500);
-      }
     },
   )
   .post(
@@ -825,6 +626,13 @@ const product = factory
           }
         }
 
+        if (normalizedCategoryIds?.length) {
+          const categories = await c.var.db.select({ id: categoryTable.categoryId }).from(categoryTable)
+            .where(inArray(categoryTable.categoryId, normalizedCategoryIds)).all();
+          if (categories.length !== normalizedCategoryIds.length)
+            return c.json({ error: 'One or more categories do not exist' }, 400);
+        }
+
         const skuNumber = generateSkuNumber(data.name);
 
         // The browser has already uploaded and confirmed the STL with Slant3D.
@@ -921,27 +729,8 @@ const product = factory
 
         console.log('Product data to insert:', productDataToInsert);
 
-        const insertResponse = await c.var.db
-          .insert(productsTable)
-          .values(productDataToInsert)
-          .returning();
-
-        const created = insertResponse[0];
-
-        // Insert category links
-        if (
-          created &&
-          Array.isArray(normalizedCategoryIds) &&
-          normalizedCategoryIds.length > 0
-        ) {
-          await c.var.db.insert(productsToCategories).values(
-            normalizedCategoryIds.map((catId, idx) => ({
-              productId: created.id,
-              categoryId: catId,
-              orderIndex: idx,
-            })),
-          );
-        }
+        c.set('catalogWriteStarted', true);
+        const created = await createCatalogItem(c.var.db, productDataToInsert, normalizedCategoryIds || []);
 
         return c.json(
           {
@@ -971,6 +760,26 @@ const product = factory
     },
   )
 
+  .get('/product/:id/print-file', describeRoute({
+    summary: 'Resolve a catalog STL preview on demand', tags: ['Products'],
+    description: 'One provider lookup with a 5-second timeout; maximum four concurrent resolutions per Worker isolate. Returns a non-cacheable redirect; metadata reads never call Slant.',
+    responses: { 302: { description: 'Fresh STL download redirect' }, 404: { description: 'Catalog print file not found' }, 502: { description: 'Preview unavailable' }, 503: { description: 'Preview resolver busy' } },
+  }), async c => {
+    const id = Number(c.req.param('id'));
+    if (!Number.isSafeInteger(id) || id < 1) return c.json({ error: 'Product not found' }, 404);
+    const item = await c.var.db.select().from(productsTable).where(eq(productsTable.id, id)).get();
+    if (!item?.publicFileServiceId) return c.json({ error: 'Print file not found' }, 404);
+    c.header('Cache-Control', 'no-store');
+    if (activePreviewResolutions >= 4) return c.json({ error: 'Preview resolver busy' }, 503);
+    activePreviewResolutions++;
+    try {
+      const file = await getSlant3DFile(c.env, item.publicFileServiceId, AbortSignal.timeout(5000));
+      const url = new URL(file.fileURL || '');
+      if (url.protocol !== 'https:' || url.username || url.password) throw new Error('Invalid preview URL');
+      return c.redirect(url.href, 302);
+    } catch { return c.json({ error: 'Preview unavailable' }, 502); }
+    finally { activePreviewResolutions--; }
+  })
   .get(
     '/product/:id',
     describeRoute({
@@ -985,7 +794,7 @@ const product = factory
         .from(productsTable)
         .where(eq(productsTable.id, parsedData.id))
         .all();
-      const [rawProduct] = await hydrateProductStlUrls(c.env, response);
+      const rawProduct = response[0] ? withPreview(c.req.url, response[0]) : undefined;
 
       if (!rawProduct) {
         return c.json({ error: 'Product not found' }, 404);
@@ -1233,24 +1042,8 @@ const product = factory
         if (normalizedCategoryIds?.length)
           updateData.categoryId = normalizedCategoryIds[0];
         // Update the product
-        await saveCatalogItem(c.var.db, existingProduct, updateData);
-
-        // Update category associations when categories are provided.
-        if (normalizedCategoryIds && normalizedCategoryIds.length > 0) {
-          // Delete existing category associations in join table
-          await c.var.db
-            .delete(productsToCategories)
-            .where(eq(productsToCategories.productId, parsedData.id));
-
-          // Insert new category associations
-          await c.var.db.insert(productsToCategories).values(
-            normalizedCategoryIds.map((catId, idx) => ({
-              productId: parsedData.id,
-              categoryId: catId,
-              orderIndex: idx,
-            })),
-          );
-        }
+        c.set('catalogWriteStarted', true);
+        await saveCatalogItemWithCategories(c.var.db, existingProduct, updateData, normalizedCategoryIds);
 
         return c.json({
           success: true,
