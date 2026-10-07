@@ -168,7 +168,7 @@ The application uses a single shared organization for catalog administration:
 - organization name: `3D Printer Web API`
 - organization slug: `3dprinter-web-api`
 
-Catalog mutation routes check the caller's shared-organization role, not only the legacy `users.role` field.
+Catalog mutation routes require an `admin` or `owner` membership in the shared organization. The legacy `users.role` field does not grant access.
 
 ### First admin bootstrap
 
@@ -221,8 +221,7 @@ If Better Auth organization endpoints fail, verify all of the following in the t
 - the `invitation` table exists
 - the `session` table has `active_organization_id`
 - the shared organization row exists
-- the intended admin user has a `member` row for `org_shared_catalog`
-- the intended admin user also has `users.role = 'admin'` during the transition period
+- the intended admin user has a `member` row for `org_shared_catalog` with `role` set to `admin` or `owner`
 
 ### Troubleshooting
 
