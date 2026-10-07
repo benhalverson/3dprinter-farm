@@ -1,3 +1,4 @@
+import { catalogAttachments, catalogGallery } from './catalogAttachments';
 import { and, asc, desc, eq, inArray, or } from 'drizzle-orm';
 import {
   categoryTable,
@@ -65,6 +66,11 @@ export async function readProductDraftContext(
       name: product.name,
       description: product.description,
       image: product.image,
+      ...(product.imageGallery === undefined
+        ? {}
+        : {
+            imageGallery: catalogGallery(product.image, product.imageGallery),
+          }),
       price: product.price,
       ...(product.markupPercentage === undefined
         ? {}
@@ -173,6 +179,10 @@ export async function beginProductDraft(
 ) {
   const context = await readProductDraftContext(db, input.target);
   if (context.status === 'unavailable') return undefined;
+  const attachments =
+    context.status === 'available'
+      ? await catalogAttachments(db, context.product)
+      : undefined;
   const now = Date.now();
   const [row] = await db
     .insert(productDrafts)
@@ -180,6 +190,7 @@ export async function beginProductDraft(
       id: crypto.randomUUID(),
       ownerId,
       target: input.target,
+      ...(attachments ? { attachments } : {}),
       state: input.state ?? { answers: {}, pendingQuestions: [], history: [] },
       revision: 1,
       createdAt: now,

@@ -464,7 +464,10 @@ async function finishAttachment(
   } else {
     next.printFile = saved;
   }
-  if (transfer.replacesId)
+  const replacedPhoto = state.photos.find(
+    item => item.id === transfer.replacesId,
+  );
+  if (transfer.replacesId && replacedPhoto?.catalogSource?.managed !== false)
     next.cleanup = [
       ...next.cleanup,
       {
@@ -705,6 +708,9 @@ export async function removeAttachment(
       409,
       'Resolve the pending transfer before removing this attachment',
     );
+  const externalPhoto =
+    state.photos.find(item => item.id === attachmentId)?.catalogSource
+      ?.managed === false;
   const photos = state.photos.filter(item => item.id !== attachmentId);
   const primaryRemoved = state.primaryPhotoId === attachmentId;
   row = await writeAttachments(db, row, {
@@ -726,15 +732,17 @@ export async function removeAttachment(
       ...(state.abandonedTransfers ?? []),
       ...(transfer ? [transfer] : []),
     ],
-    cleanup: [
-      ...state.cleanup,
-      {
-        id: attachmentId,
-        assetId: attachmentId,
-        status: 'pending',
-        reason: null,
-      },
-    ],
+    cleanup: externalPhoto
+      ? state.cleanup
+      : [
+          ...state.cleanup,
+          {
+            id: attachmentId,
+            assetId: attachmentId,
+            status: 'pending',
+            reason: null,
+          },
+        ],
   });
   const asset = await readAsset(db, attachmentId);
   if (asset && asset.status === 'active')
@@ -760,7 +768,9 @@ export async function discardAttachments(
   if (row.status === 'discarded') return row;
   const state = row.attachments ?? emptyAttachments();
   const ids = new Set([
-    ...state.photos.map(item => item.assetId),
+    ...state.photos
+      .filter(item => item.catalogSource?.managed !== false)
+      .map(item => item.assetId),
     ...state.transfers.map(item => item.attachmentId),
     ...(state.printFile ? [state.printFile.assetId] : []),
     ...state.cleanup.map(item => item.assetId),
