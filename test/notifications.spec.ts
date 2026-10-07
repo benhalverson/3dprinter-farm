@@ -348,6 +348,13 @@ async function session(role: string) {
       name: 'Operator',
     })
     .onConflictDoNothing();
+  await db.insert(schema.organizationTable).values({
+    id: 'org_shared_catalog', name: 'Staff', slug: 'staff', createdAt: new Date(),
+  }).onConflictDoNothing();
+  await db.insert(schema.memberTable).values({
+    id: 'staff-operator', organizationId: 'org_shared_catalog', userId: 'admin-user',
+    role: role === 'user' ? 'member' : role, createdAt: new Date(),
+  }).onConflictDoUpdate({ target: schema.memberTable.id, set: { role: role === 'user' ? 'member' : role } });
   mockBetterAuth.getSession.mockResolvedValue({
     session: { id: 'session', expiresAt: new Date(Date.now() + 60_000) },
     user: {
