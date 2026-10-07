@@ -162,7 +162,7 @@ test('exact published0023 preserves main0022 data and legacy attempts across upg
     const folder = await publishedUpgrade(root);
     await migrate(db, { migrationsFolder: folder });
     await migrate(db, { migrationsFolder: folder });
-    expect((await db.select().from(schema.ordersTable))[0]).toMatchObject({
+    expect((await db.select({id: schema.ordersTable.id, squarePaymentId: schema.ordersTable.squarePaymentId, paymentStatus: schema.ordersTable.paymentStatus, slantStatus: schema.ordersTable.slantStatus, slantEventKey: schema.ordersTable.slantEventKey}).from(schema.ordersTable))[0]).toMatchObject({
       id: 700,
       squarePaymentId: 'retained-payment',
       paymentStatus: 'paid',
