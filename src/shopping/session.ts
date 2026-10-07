@@ -1,3 +1,4 @@
+import type { CommerceTools } from './commerce';
 import { type Event, EventType } from '@ag-ui/core';
 import { EventEncoder } from '@ag-ui/encoder';
 import { z } from 'zod';
@@ -31,6 +32,13 @@ export type SessionDependencies = {
     | undefined;
   read(query: CatalogQuery): Promise<CatalogItem[]>;
   infer?: Inference;
+  commerce?(
+    request: Request,
+    input: RunInput,
+    sessionId: string,
+    active: () => boolean,
+    publish: (value: unknown) => void,
+  ): Promise<CommerceTools | undefined>;
   waitUntil(task: Promise<void>): void;
 };
 type LiveRun = {
@@ -61,7 +69,7 @@ export class SessionHandler {
           visitor: z.string().length(64),
         })
         .parse(await request.json());
-      if (this.session()) return new Response(null, { status: 409 });
+      if (this.storage.getVisit()) return new Response(null, { status: 409 });
       const now = Date.now();
       this.storage.insertVisit({ ...init, created: now, touched: now });
       return Response.json({
@@ -72,7 +80,7 @@ export class SessionHandler {
     const supplied =
       request.headers.get('authorization')?.replace(/^Bearer /, '') ?? '';
     const hash = await digest(supplied);
-    const session = this.session();
+    const session = this.storage.getVisit();
     if (
       !session ||
       !crypto.subtle.timingSafeEqual(
@@ -102,7 +110,7 @@ export class SessionHandler {
         },
         true,
       );
-      const known = this.run(cancel[1]);
+      const known = this.storage.getRun(cancel[1]);
       return Response.json({
         runId: known?.id,
         uiRevision: known?.revision,
@@ -123,7 +131,7 @@ export class SessionHandler {
         { status: error instanceof RangeError ? 413 : 400 },
       );
     }
-    const known = this.run(input.runId);
+    const known = this.storage.getRun(input.runId);
     if (known)
       return Response.json({
         runId: known.id,
@@ -243,7 +251,16 @@ export class SessionHandler {
         }
         if (!admitted) throw new ShoppingFailure('rate_limited');
         if (closed) return;
+        const active = () => !closed && this.live?.id === input.runId;
+        const commerce = await this.deps.commerce?.(
+          request,
+          input,
+          session.id,
+          active,
+          value => custom('lulu.cart.v1', { result: value }),
+        );
         const result = await runInference(input, session.id, {
+          commerce,
           read: query => this.deps.read(query),
           accounting: ledger,
           signal: abort.signal,
@@ -278,12 +295,5 @@ export class SessionHandler {
         'X-Accel-Buffering': 'no',
       },
     });
-  }
-
-  private session() {
-    return this.storage.getVisit();
-  }
-  private run(id: string) {
-    return this.storage.getRun(id);
   }
 }

@@ -9,6 +9,21 @@ export const runSchema = z
     runId: z.string().uuid(),
     uiRevision: z.number().int().nonnegative().safe(),
     message: z.string().trim().min(1).max(8192),
+    selection: z
+      .object({
+        productId: z.number().int().positive().safe(),
+        quantity: z.number().int().min(1).max(69),
+        filamentId: z.string().uuid().optional(),
+      })
+      .strict()
+      .optional(),
+    cart: z
+      .object({
+        id: z.string().uuid(),
+        revision: z.number().int().nonnegative().safe(),
+      })
+      .strict()
+      .optional(),
     context: z
       .array(
         z
