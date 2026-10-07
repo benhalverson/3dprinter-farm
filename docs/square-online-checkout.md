@@ -59,5 +59,4 @@ with `{success:true,ignored:true}`. Without a provider event ID, deduplication u
 a digest of normalized order facts excluding delivery timestamps, so re-signing a
 redelivery does not duplicate lifecycle events or emails. Existing monotonic
 transitions and atomic persistence remain in force. Operators must separately
-review and deliberately replay failed historical provider deliveries after rollout;
-this change performs no replay, manufacture, charge, or email delivery.
+review and deliberately replay failed historical provider deliveries after rollout.
