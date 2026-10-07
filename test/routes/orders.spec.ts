@@ -239,6 +239,97 @@ describe('Customer Orders API', () => {
     expect(body).not.toHaveProperty('stripePaymentIntentId');
   });
 
+  test.each([
+    'ready',
+    'draft_unknown',
+    'process_unknown',
+    'drafted',
+    'drafting',
+    'processing',
+    'processed',
+  ])('keeps paid orders visible with fulfillment state %s without manufacturing side effects', async fulfillmentState => {
+    const paid = makeOrder({
+      status: fulfillmentState === 'ready' || fulfillmentState.endsWith('_unknown') ? 'paid_fulfillment_failed' : 'paid',
+      paymentStatus: 'paid',
+      fulfillmentState,
+      source: 'online',
+      fulfillmentType: 'slant',
+      squareOrderId: 'square-order',
+      squarePaymentId: 'square-payment',
+      slantStatus: null,
+      slantPublicOrderId: null,
+      shippedAt: null,
+      deliveredAt: null,
+      itemSnapshot: JSON.stringify([
+        {
+          name: 'Widget',
+          quantity: 2,
+          unitAmountCents: 1999,
+          publicFileServiceId: 'private-file',
+          filamentId: 'private-filament',
+        },
+      ]),
+    });
+    mockWhere
+      .mockReturnValueOnce({ get: vi.fn().mockResolvedValue(paid) })
+      .mockReturnValueOnce({ all: vi.fn().mockResolvedValue([]) });
+    vi.mocked(fetch).mockClear();
+    const response = await app.fetch(
+      new Request('http://localhost/orders/42', {
+        headers: { Cookie: 'better-auth.session_token=mock-session-token' },
+      }),
+      env,
+    );
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body).toMatchObject({
+      paymentStatus: 'paid',
+      fulfillmentState,
+      totalAmountCents: 3998,
+      currency: 'usd',
+      items: [{ name: 'Widget', quantity: 2, price: 19.99 }],
+      cancellation: null,
+      fulfillment: {
+        trackingNumber: null,
+        trackingUrl: null,
+        shippedAt: null,
+        deliveredAt: null,
+      },
+    });
+    expect(body).not.toHaveProperty('customerSnapshot');
+    expect(body).not.toHaveProperty('itemSnapshot');
+    expect(body.items[0]).not.toHaveProperty('publicFileServiceId');
+    expect(body.items[0]).not.toHaveProperty('filamentId');
+    expect(body).not.toHaveProperty('refund');
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  test('cancellation evidence does not imply a completed refund', async () => {
+    mockWhere
+      .mockReturnValueOnce({
+        get: vi
+          .fn()
+          .mockResolvedValue(
+            makeOrder({
+              status: 'canceled',
+              paymentStatus: 'paid',
+              canceledAt: '2026-10-01T12:00:00Z',
+            }),
+          ),
+      })
+      .mockReturnValueOnce({ all: vi.fn().mockResolvedValue([]) });
+    const response = await app.fetch(
+      new Request('http://localhost/orders/42', {
+        headers: { Cookie: 'better-auth.session_token=mock-session-token' },
+      }),
+      env,
+    );
+    const body = await response.json();
+    expect(body.paymentStatus).toBe('paid');
+    expect(body.cancellation).toEqual({ canceledAt: '2026-10-01T12:00:00Z' });
+    expect(body).not.toHaveProperty('refund');
+  });
+
   test('forbids access to another customer order', async () => {
     mockWhere.mockReturnValueOnce({
       get: vi.fn().mockResolvedValue(makeOrder({ userId: 'other_user' })),
@@ -300,5 +391,4 @@ describe('POST /webhook/slant3d', () => {
     expect(await res.json()).toEqual({ error: 'Invalid request body' });
     expect(capturedInserts).toHaveLength(0);
   });
-
 });
