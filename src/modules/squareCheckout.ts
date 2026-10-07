@@ -266,12 +266,11 @@ export async function acceptSquarePayment(
   }
   const external = await provider.retrieveOrder(payment.order_id);
   if (external.reference_id.startsWith('qr:')) return acceptInPersonPayment(db, env, merchantId, payment, external);
-  if (payment.status !== 'COMPLETED') return { received: true };
   const [attempt] = await db
     .select()
     .from(checkoutAttempts)
     .where(eq(checkoutAttempts.id, external.reference_id));
-  if (!attempt) return acceptSquarePhoneSale(db, env, payment, external);
+  if (!attempt) return payment.status==='COMPLETED'?acceptSquarePhoneSale(db, env, payment, external):{received:true};
   const snapshot = quoteSnapshotSchema.parse(JSON.parse(attempt.snapshot));
   if (
     attempt.merchantId !== merchantId ||
