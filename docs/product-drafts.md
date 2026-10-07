@@ -284,3 +284,12 @@ Asset operation holds protect current and replaced files until terminal evidence
 Before `POST /admin/product-drafts`, persist a fresh UUID `requestKey` with the exact initial `{target, state?}` in the client. Include that optional key in the request. The server enforces uniqueness per authenticated owner: identical input replays return the current draft without overwriting later edits; changed initial input or a discarded draft returns 409. Omitting the key preserves the existing non-idempotent creation contract.
 
 After an interrupted response or reload, `GET /admin/product-drafts/by-request-key/:requestKey` returns the owned active draft, including its server-generated ID and current revision/state. It returns 404 when that account has no such request, 410 after explicit discard, and 400 for an invalid key. A 404 permits retrying the original create request with the same key and initial input. Another account can use its own identical key but cannot recover the first account's draft. No inference or product publication is replayed by this lookup.
+
+
+### Existing product galleries
+
+Beginning a draft for an existing product snapshots its full ordered gallery into `attachments.photos` and `photoOrder`, with the independently selected `primaryPhotoId`. `context.product.imageGallery` exposes that current catalog order. Each retained photo includes server-owned `catalogSource: { productId, url, managed }`; clients must preserve returned IDs and use the ordinary attachment edit/remove/replace operations, never construct source links.
+
+Adding a photo preserves retained entries. Draft edits do not change the published gallery; Save uses the prepared snapshot and the existing Square-confirmation/atomic catalog commit flow. A changed source catalog invalidates preparation. Removing all photos requires a replacement before Save. Managed images retain their asset identities and normal reference protection; external legacy images have stable draft identities but are never queued for bucket deletion. To make a different external legacy image the Square primary, upload its bytes first, since the API has no owned bytes to publish to Square.
+
+Drafts created before gallery hydration can still update non-photo fields. If such a draft already contains photo edits, preparation returns `reopen_catalog`: start a new existing-product draft to load the complete gallery before editing photos. This prevents an old empty-gallery draft from silently replacing the published gallery.

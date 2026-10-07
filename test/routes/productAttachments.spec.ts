@@ -1,3 +1,4 @@
+import { catalogAttachments } from '../../src/modules/catalogAttachments';
 import { Param, SQL, StringChunk } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/d1';
 import { SQLiteColumn, type SQLiteTable } from 'drizzle-orm/sqlite-core';
@@ -40,6 +41,14 @@ function matching(row: Row, condition?: SQL): boolean {
     .filter(chunk => chunk instanceof StringChunk)
     .map(chunk => chunk.value.join(''))
     .join('');
+  const subquery = chunks.find(
+    chunk =>
+      typeof chunk === 'object' && chunk !== null && 'fixtureRows' in chunk,
+  ) as { fixtureRows: () => Row[] } | undefined;
+  if (subquery && operator.includes('exists')) {
+    const found = subquery.fixtureRows().length > 0;
+    return operator.includes('not exists') ? !found : found;
+  }
   const column = chunks.find(chunk => chunk instanceof SQLiteColumn);
   const parameter = chunks.find(chunk => chunk instanceof Param);
   if (column instanceof SQLiteColumn) {
@@ -72,9 +81,34 @@ function matching(row: Row, condition?: SQL): boolean {
     : nested.every(chunk => matching(row, chunk));
 }
 const db = {
-  select: vi.fn(() => ({
+  // Transaction rollback/concurrency is exercised with real SQLite in catalogAtomicity.spec.ts.
+  batch: async (queries: Promise<unknown>[]) => Promise.all(queries),
+  select: vi.fn((selection?: Record<string, SQLiteColumn | { sql: SQL }>) => ({
     from: (table: SQLiteTable) => {
       const query = (condition?: SQL) => ({
+        fixtureRows: () =>
+          records(table)
+            .filter(row => matching(row, condition))
+            .map(row =>
+              Object.fromEntries(
+                Object.entries(selection || {}).map(([key, field]) => {
+                  if (field instanceof SQLiteColumn) {
+                    const name = Object.keys(field.table).find(
+                      name => (field.table as unknown as Row)[name] === field,
+                    )!;
+                    return [key, row[name]];
+                  }
+                  return [
+                    key,
+                    (
+                      field.sql.queryChunks.find(
+                        chunk => chunk instanceof Param,
+                      ) as Param
+                    ).value,
+                  ];
+                }),
+              ),
+            ),
         get: async () => {
           beforeRead?.(table);
           if (failRead === table) throw failReadError;
@@ -100,6 +134,20 @@ const db = {
     },
   })),
   insert: vi.fn((table: SQLiteTable) => ({
+    select: (query: { fixtureRows: () => Row[] }) => ({
+      // biome-ignore lint/suspicious/noThenProperty: Drizzle query surrogate.
+      then: (
+        resolve: (rows: Row[]) => unknown,
+        reject: (error: unknown) => unknown,
+      ) =>
+        Promise.resolve()
+          .then(async () => {
+            const rows = query.fixtureRows();
+            if (!rows.length) return [];
+            return db.insert(table).values(rows).returning();
+          })
+          .then(resolve, reject),
+    }),
     values: (value: Row | Row[]) => {
       const insert = () => {
         beforeInsert?.(table);
@@ -113,7 +161,7 @@ const db = {
               structuredClone({
                 ...value,
                 ...(table === schema.productDrafts
-                  ? { status: 'active', attachments: null }
+                  ? { status: 'active', attachments: value.attachments ?? null }
                   : {}),
               }),
             );
@@ -452,6 +500,86 @@ describe('durable product attachments through Hono', () => {
       },
     ]);
     authorize();
+  });
+  it('hydrates public context and editable identities when starting an existing-product draft', async () => {
+    existingProduct({image:'https://external.example/b.png',imageGallery:JSON.stringify(['https://external.example/a.png','https://external.example/b.png'])});
+    tables.set(schema.productDrafts,[]);
+    const response=await app.request('/admin/product-drafts',{method:'POST',headers:{cookie:'session=yes','Content-Type':'application/json'},body:JSON.stringify({target:{kind:'existing',productId:42}})},env);
+    expect(response.status,await response.clone().text()).toBe(201);
+    const body=await response.json();
+    expect(body.context.product.imageGallery).toEqual(['https://external.example/a.png','https://external.example/b.png']);
+    expect(body.attachments.photos).toHaveLength(2);
+    expect(body.attachments.primaryPhotoId).toBe(body.attachments.photos[1].id);
+    expect(body.attachments.photoOrder).toEqual(body.attachments.photos.map((photo:{id:string})=>photo.id));
+  });
+  it('retains a catalog gallery while adding, reordering and replacing draft photos', async () => {
+    const original = existingProduct({
+      image: 'https://public.example/second.png',
+      imageGallery: JSON.stringify([
+        'https://public.example/first.png',
+        'https://public.example/second.png',
+        'https://public.example/third.png',
+      ]),
+    });
+    draft().target = { kind: 'existing', productId: 42 };
+    draft().attachments = await catalogAttachments(db as never, {
+      ...original,
+      imageGallery: JSON.parse(original.imageGallery),
+    });
+    const before = structuredClone(original);
+    const initial = structuredClone(draft().attachments!);
+    expect(initial.photos).toHaveLength(3);
+    expect(initial.primaryPhotoId).toBe(initial.photos[1].id);
+    const added = (await upload()).draft.attachments;
+    expect(added.photos).toHaveLength(4);
+    expect(added.photoOrder.slice(0, 3)).toEqual(initial.photoOrder);
+    expect(added.primaryPhotoId).toBe(initial.primaryPhotoId);
+    const reversed = [...added.photoOrder].reverse();
+    expect(
+      (
+        await request('/attachments', 'PATCH', {
+          expectedRevision: revision(),
+          photoOrder: reversed,
+        })
+      ).status,
+    ).toBe(200);
+    expect(draft().attachments?.primaryPhotoId).toBe(initial.primaryPhotoId);
+    const replaced = (await upload({ replacesId: initial.photos[0].id })).draft
+      .attachments;
+    expect(replaced.photos).toHaveLength(4);
+    expect(replaced.cleanup).toEqual([]);
+    expect(
+      (
+        await request(`/attachments/${initial.photos[1].id}?expectedRevision=${revision()}`, 'DELETE')
+      ).status,
+    ).toBe(200);
+    expect(draft().attachments?.primaryPhotoId).toBeNull();
+    expect(draft().attachments?.cleanup).toEqual([]);
+    expect(records(schema.productsTable)[0]).toEqual(before);
+    expect(fetch).not.toHaveBeenCalled();
+  });
+  it('preserves managed catalog IDs and never queues external images for bucket deletion on discard', async () => {
+    const uploaded = (await upload()).draft.attachments.photos[0];
+    const url = `/catalog/assets/${uploaded.assetId}/image`;
+    const state = await catalogAttachments(db as never, {
+      id: 42,
+      name: 'Part',
+      image: url,
+      imageGallery: ['https://external.example/old.png', url],
+    });
+    expect(state.photos[1]).toMatchObject({
+      id: uploaded.id,
+      catalogSource: { managed: true, productId: 42, url },
+    });
+    expect(state.photos[0].catalogSource?.managed).toBe(false);
+    draft().attachments = state;
+    expect(
+      (await request(`?expectedRevision=${revision()}`, 'DELETE'))
+        .status,
+    ).toBe(200);
+    expect(draft().attachments?.cleanup.map(item => item.assetId)).toEqual([
+      uploaded.assetId,
+    ]);
   });
   it.each([
     'image/png',
@@ -2477,9 +2605,9 @@ describe('durable product attachments through Hono', () => {
     expect((await discarded.json()).cleanup[0].status).toBe('pending');
     expect(remove).not.toHaveBeenCalled();
     vi.mocked(fetch).mockResolvedValueOnce(
-      Response.json({ status: 'PROCESSING' }),
+      Response.json({ success: true, data: { publicId: 'order', status: 'PAID', processedAt: '2026-10-07T00:00:00Z', paymentId: 'slant-payment' } }),
     );
-    resolve(new Response(JSON.stringify({ publicOrderId: 'order' })));
+    resolve(new Response(JSON.stringify({ success: true, data: { order: { publicId: 'order', status: 'DRAFT' } } })));
     expect((await pending).status).toBe(200);
     expect(records(schema.productAssets)[0].references).toEqual([]);
     expect(records(schema.ordersTable)[0].itemSnapshot).toContain(
@@ -2659,7 +2787,7 @@ describe('durable product attachments through Hono', () => {
       squareRevision: 1,
       imageGallery: '[]',
     });
-    expect(records(schema.productsToCategories)).toEqual([
+    expect(records(schema.productsToCategories)).toMatchObject([
       { productId: 42, categoryId: 7, orderIndex: 0 },
     ]);
     expect(fetch).not.toHaveBeenCalled();
@@ -2682,7 +2810,7 @@ describe('durable product attachments through Hono', () => {
       imageGallery: ['https://public.example/gallery.png'],
     });
     expect(response.status).toBe(200);
-    expect(records(schema.productsToCategories)).toEqual([
+    expect(records(schema.productsToCategories)).toMatchObject([
       { productId: 42, categoryId: 2, orderIndex: 0 },
       { productId: 42, categoryId: 1, orderIndex: 1 },
     ]);
@@ -2789,7 +2917,30 @@ describe('durable product attachments through Hono', () => {
       'released',
     );
   });
-  it('retains uncertain V2 writes and releases known provider rejections', async () => {
+  it.each(['lost', '503', 'release bookkeeping'])('cleans a print after a pre-write %s failure', async failure => {
+    const print = await savedPrint();
+    if (failure === '503') vi.mocked(fetch).mockResolvedValueOnce(new Response('{}', { status: 503 }));
+    else vi.mocked(fetch).mockRejectedValueOnce(new Error('Lost estimate response'));
+    if (failure === 'release bookkeeping') beforeUpdate = (table, changes) => {
+      if (table === schema.productAssetReferenceAttempts && changes.state === 'released') {
+        beforeUpdate = undefined;
+        throw new Error('Transient completion write failure');
+      }
+    };
+    expect((await catalogRequest({ publicFileServiceId: print.providerId }, 'POST')).status).toBeGreaterThanOrEqual(500);
+    expect(records(schema.productsTable)).toHaveLength(0);
+    expect(records(schema.productAssetReferenceAttempts)[0].state).toBe(failure === 'release bookkeeping' ? 'release_pending' : 'released');
+    vi.mocked(fetch).mockResolvedValue(Response.json({ success: true, message: 'File deleted' }));
+    await request(`?expectedRevision=${revision()}`, 'DELETE');
+    await request('/cleanup/retry', 'POST', { expectedRevision: revision() });
+    expect(records(schema.productAssetReferenceAttempts)[0].state).toBe('released');
+    expect(records(schema.productAssets)[0].status).toBe('deleted');
+    const deletions = vi.mocked(fetch).mock.calls.filter(([, init]) => init?.method === 'DELETE').length;
+    await request('/cleanup/retry', 'POST', { expectedRevision: revision() });
+    expect(vi.mocked(fetch).mock.calls.filter(([, init]) => init?.method === 'DELETE')).toHaveLength(deletions);
+  });
+
+  it('retains uncertain V2 writes and releases all pre-write estimate failures', async () => {
     const print = await savedPrint();
     vi.mocked(fetch).mockResolvedValueOnce(new Response('{}', { status: 400 }));
     expect(
@@ -2805,7 +2956,7 @@ describe('durable product attachments through Hono', () => {
         .status,
     ).toBe(502);
     expect(records(schema.productAssetReferenceAttempts)[1].state).toBe(
-      'unresolved',
+      'released',
     );
     vi.mocked(fetch).mockResolvedValueOnce(
       Response.json({ data: { total: 10 } }),
@@ -3022,8 +3173,8 @@ describe('durable product attachments through Hono', () => {
       }
     };
     vi.mocked(fetch)
-      .mockResolvedValueOnce(Response.json({ publicOrderId: 'accepted-order' }))
-      .mockResolvedValueOnce(Response.json({ status: 'PROCESSING' }));
+      .mockResolvedValueOnce(Response.json({ success: true, data: { order: { publicId: 'order', status: 'DRAFT' } } }))
+      .mockResolvedValueOnce(Response.json({ success: true, data: { publicId: 'order', status: 'PAID', processedAt: '2026-10-07T00:00:00Z', paymentId: 'slant-payment' } }));
     expect((await orderRequest(photo.id)).status).toBe(200);
     expect(records(schema.ordersTable)).toHaveLength(1);
     expect(records(schema.orderEventsTable)).toHaveLength(1);

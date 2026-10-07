@@ -76,6 +76,7 @@ function mockV2AddProductDependencies() {
 describe('Product Routes', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(fetch).mockReset().mockImplementation(async () => Response.json({}));
     mockAll.mockResolvedValue([]);
     capturedInserts.length = 0;
   });
@@ -96,7 +97,7 @@ describe('Product Routes', () => {
     expect(globalThis.fetch).not.toHaveBeenCalled();
   });
 
-  test('GET /products hydrates STL URLs from Slant file IDs', async () => {
+  test('GET /products returns stable preview URLs without provider reads', async () => {
     mockAll.mockResolvedValueOnce([
       {
         id: 1,
@@ -130,21 +131,13 @@ describe('Product Routes', () => {
       publicFileServiceId: string;
     }>;
     expect(data[0]).toMatchObject({
-      stl: 'https://slant3d.com/files/fresh-model.stl',
+      stl: 'http://localhost/product/1/print-file',
       publicFileServiceId: 'file_123',
     });
-    expect(globalThis.fetch).toHaveBeenCalledWith(
-      'https://slant3dapi.com/v2/api/files/file_123',
-      expect.objectContaining({
-        method: 'GET',
-        headers: expect.objectContaining({
-          Authorization: 'Bearer fake-api-key-v2',
-        }),
-      }),
-    );
+    expect(globalThis.fetch).not.toHaveBeenCalled();
   });
 
-  test('GET /products falls back to stored STL when Slant hydration fails', async () => {
+  test('GET /products returns catalog metadata even when the provider is unavailable', async () => {
     const consoleError = vi
       .spyOn(console, 'error')
       .mockImplementation(() => undefined);
@@ -173,11 +166,9 @@ describe('Product Routes', () => {
 
     expect(res.status).toBe(200);
     const data = (await res.json()) as Array<{ stl: string }>;
-    expect(data[0].stl).toBe('legacy-or-file-id');
-    expect(consoleError).toHaveBeenCalledWith(
-      'Failed to hydrate Slant3D file URL:',
-      expect.objectContaining({ publicFileServiceId: 'file_123' }),
-    );
+    expect(data[0].stl).toBe('http://localhost/product/1/print-file');
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+    expect(consoleError).not.toHaveBeenCalled();
     consoleError.mockRestore();
   });
 
@@ -201,7 +192,7 @@ describe('Product Routes', () => {
     expect(data).toMatchObject({ id: 1 });
   });
 
-  test('GET /product/:id hydrates STL URL from Slant file ID', async () => {
+  test('GET /product/:id returns a stable preview URL without provider reads', async () => {
     mockWhere.mockReturnValueOnce({
       all: vi.fn().mockResolvedValueOnce([
         {
@@ -234,7 +225,8 @@ describe('Product Routes', () => {
 
     expect(res.status).toBe(200);
     const data = (await res.json()) as { stl: string };
-    expect(data.stl).toBe('https://slant3d.com/files/detail-model.stl');
+    expect(data.stl).toBe('http://localhost/product/1/print-file');
+    expect(globalThis.fetch).not.toHaveBeenCalled();
   });
 
   test('GET /product/:id returns 404 if not found', async () => {
@@ -269,7 +261,7 @@ describe('Product Routes', () => {
     expect(data.error).toContain('at least 2 characters');
   });
 
-  test('GET /products/search hydrates STL URLs from Slant file IDs', async () => {
+  test('GET /products/search returns stable preview URLs without provider reads', async () => {
     mockWhere.mockResolvedValueOnce([{ count: 1 }]);
     mockWhere.mockReturnValueOnce({
       limit: () => ({
@@ -307,8 +299,9 @@ describe('Product Routes', () => {
     expect(res.status).toBe(200);
     const data = (await res.json()) as { products: Array<{ stl: string }> };
     expect(data.products[0].stl).toBe(
-      'https://slant3d.com/files/search-model.stl',
+      'http://localhost/product/1/print-file',
     );
+    expect(globalThis.fetch).not.toHaveBeenCalled();
   });
 
   test('GET /admin/catalog/readiness returns checkout diagnostics for admins', async () => {
@@ -837,4 +830,29 @@ describe('Product Routes', () => {
       categoryName: 'Accessories',
     });
   });
+});
+
+test('explicit STL preview resolves only on demand and follows the existing loader URL contract', async () => {
+  vi.clearAllMocks();
+  vi.mocked(fetch).mockReset().mockResolvedValue(Response.json({ data: { publicFileServiceId: 'file', fileURL: 'https://files.example.com/fresh.stl' } }));
+  mockWhere.mockReturnValueOnce({ get: vi.fn().mockResolvedValue({ id: 1, publicFileServiceId: 'file' }) });
+  const response = await app.request('/product/1/print-file', {}, mockEnv());
+  expect(response.status).toBe(302);
+  expect(response.headers.get('location')).toBe('https://files.example.com/fresh.stl');
+  expect(response.headers.get('cache-control')).toBe('no-store');
+  expect(fetch).toHaveBeenCalledOnce();
+  expect(vi.mocked(fetch).mock.calls[0][1]?.signal).toBeInstanceOf(AbortSignal);
+});
+
+test('list category membership comes from D1 even with a permanently slow provider', async () => {
+  vi.clearAllMocks();
+  vi.mocked(fetch).mockReset().mockImplementation(() => new Promise(() => {}));
+  mockAll.mockReset().mockResolvedValueOnce([{ id: 1, name: 'Fixture', publicFileServiceId: 'file', imageGallery: '[]' }]).mockResolvedValueOnce([
+    { productId: 1, categoryId: 2, categoryName: 'Second', orderIndex: 1 },
+    { productId: 1, categoryId: 1, categoryName: 'First', orderIndex: 0 },
+  ]);
+  const response = await app.request('/products', {}, mockEnv());
+  expect(response.status).toBe(200);
+  expect(await response.json()).toMatchObject([{ categories: [{ categoryId: 1, categoryName: 'First' }, { categoryId: 2, categoryName: 'Second' }] }]);
+  expect(fetch).not.toHaveBeenCalled();
 });

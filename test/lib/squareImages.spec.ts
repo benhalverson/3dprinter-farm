@@ -14,7 +14,7 @@ const image = {
   version: 10,
   image_data: { url: 'https://example.com/image.png' },
 };
-beforeEach(() => vi.mocked(fetch).mockReset());
+beforeEach(() => { vi.mocked(fetch).mockReset(); });
 
 test('uploads exact metadata and bytes without overriding multipart boundary', async () => {
   vi.mocked(fetch).mockResolvedValue(new Response(JSON.stringify({ image })));

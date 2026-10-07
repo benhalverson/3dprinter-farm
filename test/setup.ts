@@ -190,6 +190,7 @@ vi.mock('drizzle-orm/d1', () => {
 
   return {
     drizzle: vi.fn(() => ({
+      batch: async (queries: Promise<unknown>[]) => Promise.all(queries),
       select: () => ({
         from: () => ({
           where: mocks.drizzle.mockWhere.mockReturnValue(whereResult),
@@ -231,22 +232,8 @@ vi.mock('drizzle-orm/d1', () => {
   };
 });
 
-globalThis.fetch = vi.fn().mockImplementation(() =>
-  Promise.resolve({
-    ok: true,
-    status: 200,
-    statusText: 'OK',
-    type: 'basic' as const,
-    url: '',
-    redirected: false,
-    body: null,
-    bodyUsed: false,
-    headers: new Headers(),
-    json: () => Promise.resolve({}),
-    text: () => Promise.resolve(''),
-    arrayBuffer: () => Promise.resolve(new ArrayBuffer(0)),
-    blob: () => Promise.resolve(new Blob([])),
-    formData: () => Promise.resolve(new FormData()),
-    clone: vi.fn(),
-  } as unknown as Response),
-);
+
+vi.mock('agents', () => ({
+  Agent: class {},
+  getAgentByName: async (namespace: DurableObjectNamespace, name: string) => namespace.get(namespace.idFromName(name)),
+}));

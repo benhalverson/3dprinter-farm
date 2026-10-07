@@ -1,58 +1,27 @@
-/**
- * Validates that all required Cloudflare Worker bindings are present in the
- * runtime environment.  Call this once during Worker startup (e.g. in the
- * `fetch` handler or a top-level middleware) so misconfiguration fails fast
- * with a clear error message rather than producing cryptic runtime errors
- * deep inside request handlers.
- */
+import { authConfiguration } from '../config/auth';
+import { squareConfig, squareWebhookConfig } from '../lib/square';
+import type { Bindings } from '../types';
 
-/**
- * Binding names that must be present for the worker to function.
- *
- * Keep this list in sync with the required (non-optional) fields of the
- * `Bindings` type in `src/types.ts` and the bindings declared in
- * `wrangler.toml` / `worker-configuration.d.ts`.
- * Optional bindings (`DB_PREVIEW`, `PASSKEY_ORIGIN`) are omitted.
- */
-const REQUIRED_BINDINGS = [
-  'DB',
-  'BUCKET',
-  'PHOTO_BUCKET',
-  'COLOR_CACHE',
-  'RATE_LIMIT_KV',
-  'BETTER_AUTH_SECRET',
-  'JWT_SECRET',
-  'DOMAIN',
-  'RP_ID',
-  'RP_NAME',
-  'SLANT_API_V2',
-  'SLANT_PLATFORM_ID',
-  'SQUARE_ENVIRONMENT',
-  'SQUARE_ACCESS_TOKEN',
-  'SQUARE_MERCHANT_ID',
-  'SQUARE_LOCATION_ID',
-  'SQUARE_WEBHOOK_SIGNATURE_KEY',
-  'SQUARE_WEBHOOK_NOTIFICATION_URL',
-  'ENCRYPTION_PASSPHRASE',
-  'R2_PUBLIC_BASE_URL',
-  'R2_PHOTO_BASE_URL',
-] as const;
-
-/**
- * Throws an error listing every missing required binding.
- * If all required bindings are present, this is a no-op.
- *
- * @param env - The runtime environment object (e.g. `c.env` in a Hono handler)
- */
+const CORE = ['DB', 'BUCKET', 'PHOTO_BUCKET', 'COLOR_CACHE', 'RATE_LIMIT_KV', 'AUTH_BASE_URL', 'ENCRYPTION_PASSPHRASE', 'R2_PUBLIC_BASE_URL', 'R2_PHOTO_BASE_URL'] as const;
+function configured(value: unknown) { return typeof value === 'string' ? value.trim().length > 0 : value !== null && value !== undefined; }
+/** Checks configuration only; no provider calls or readiness side effects. */
+export function featureReadiness(env: Record<string, unknown>) {
+  const feature = (keys: string[], validate?: () => unknown) => {
+    if (!keys.some(key => configured(env[key]))) return 'disabled';
+    if (!keys.every(key => configured(env[key]))) return 'unready';
+    try { validate?.(); return 'ready'; } catch { return 'unready'; }
+  };
+  return {
+    square: feature(['SQUARE_ENVIRONMENT', 'SQUARE_ACCESS_TOKEN', 'SQUARE_MERCHANT_ID', 'SQUARE_LOCATION_ID'], () => squareConfig(env as unknown as Bindings)),
+    squareWebhook: feature(['SQUARE_WEBHOOK_SIGNATURE_KEY', 'SQUARE_WEBHOOK_NOTIFICATION_URL'], () => squareWebhookConfig(env as unknown as Bindings)),
+    slant: feature(['SLANT_API_V2', 'SLANT_PLATFORM_ID']),
+    slantWebhook: configured(env.SLANT_WEBHOOK_SECRET) ? (configured(env.SLANT_PLATFORM_ID) ? 'ready' : 'unready') : 'disabled',
+  };
+}
+/** Authenticated core readiness; fully absent integrations are explicitly disabled. */
 export function validateBindings(env: Record<string, unknown>): void {
-  const missing = REQUIRED_BINDINGS.filter(
-    key => env[key] === undefined || env[key] === null,
-  );
-
-  if (missing.length > 0) {
-    throw new Error(
-      `Worker misconfiguration – missing required bindings: ${missing.join(', ')}. ` +
-        'Check wrangler.toml and ensure all secrets are set via `wrangler secret put`.',
-    );
-  }
+  const missing = CORE.filter(key => !configured(env[key]));
+  if (missing.length) throw new Error(`Missing required bindings: ${missing.join(', ')}`);
+  authConfiguration(env as unknown as Bindings);
+  if (Object.values(featureReadiness(env)).includes('unready')) throw new Error('Incomplete or invalid integration configuration');
 }
