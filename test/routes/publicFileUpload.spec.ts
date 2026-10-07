@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import printer from '../../src/routes/printer';
+import { mockBetterAuth } from '../mocks/auth';
 import { productPhotoBase64 } from '../fixtures/productPhotoBytes';
 import { mockEnv } from '../mocks/env';
 
@@ -99,23 +100,53 @@ describe('legacy public upload asset contract', () => {
     expect(stlPut).not.toHaveBeenCalled();
   });
 
-  it('preserves the STL storage contract', async () => {
-    const response = await upload(
-      new File(['solid test\nendsolid test'], 'Test Model.stl', {
-        type: 'model/stl',
-      }),
-    );
-    expect(await response.json()).toEqual({
-      message: 'File uploaded',
-      key: 'test-model.stl',
-      url: 'https://uploads.example.com/test-model.stl',
+  it('stores STL files under immutable owned identities', async () => {
+    const response = await upload(new File(['solid test\nendsolid test'], 'Test Model.stl', { type: 'model/stl' }));
+    expect(response.status).toBe(200);
+    const body = await response.json() as { key: string; url: string };
+    expect(body.key).toMatch(/^users\/user_123\/[a-f0-9-]{36}\.stl$/);
+    expect(body.url).toBe(`https://uploads.example.com/${encodeURIComponent(body.key)}`);
+    expect(stlPut).toHaveBeenCalledWith(body.key, expect.any(ReadableStream), {
+      onlyIf: { etagDoesNotMatch: '*' }, customMetadata: { ownerId: 'user_123' },
+      httpMetadata: { contentType: 'model/stl' },
     });
-    expect(stlPut).toHaveBeenCalledWith(
-      'test-model.stl',
-      expect.any(ReadableStream),
-      { httpMetadata: { contentType: 'model/stl' } },
-    );
-    expect(photoPut).not.toHaveBeenCalled();
+  });
+
+  it('isolates same-filename uploads and listings between users', async () => {
+    const first = await (await upload(new File(['original'], 'same.stl'))).json() as { key: string };
+    mockBetterAuth.getSession.mockResolvedValueOnce({
+      session: { id: 'session-b', expiresAt: new Date(Date.now() + 60000) },
+      user: { id: 'other-user', name: 'Other', email: 'other@example.com', role: 'user' },
+    });
+    const second = await (await upload(new File(['replacement'], 'same.stl'))).json() as { key: string };
+    expect(second.key).toMatch(/^users\/other-user\//);
+    expect(second.key).not.toBe(first.key);
+    const list = vi.fn().mockResolvedValue({ objects: [] });
+    env.BUCKET = { list } as unknown as R2Bucket;
+    const response = await printer.request('/list', { headers: { cookie: 'session' } }, env);
+    expect(response.status).toBe(200);
+    expect(list).toHaveBeenCalledWith({ prefix: 'users/user_123/' });
+  });
+
+  it('does not overwrite bytes when generated identities collide concurrently', async () => {
+    vi.spyOn(crypto, 'randomUUID').mockReturnValue('11111111-1111-4111-8111-111111111111');
+    const contents = new Map<string, string>();
+    stlPut.mockImplementation(async (key: string, stream: ReadableStream, options: R2PutOptions) => {
+      expect(options.onlyIf).toEqual({ etagDoesNotMatch: '*' });
+      const bytes = await new Response(stream).text();
+      if (contents.has(key)) return null;
+      contents.set(key, bytes);
+      return { key };
+    });
+    try {
+      const responses = await Promise.all([
+        upload(new File(['original'], 'same.stl')),
+        upload(new File(['replacement'], 'same.stl')),
+      ]);
+      expect(responses.map(response => response.status).sort()).toEqual([200, 409]);
+      expect(contents.size).toBe(1);
+      expect([...contents.values()]).toEqual(['original']);
+    } finally { vi.restoreAllMocks(); }
   });
 
   it.each([

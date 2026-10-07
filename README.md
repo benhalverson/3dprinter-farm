@@ -302,3 +302,13 @@ Legacy lines without an authorization version are inaccessible through this cont
 Run `pnpm run test:database` to test ownership, isolation, foreign-key cascades and concurrent mutations against disposable SQLite/libsql databases. The harness uses `drizzle-kit generate` and `drizzle-kit migrate` to create a current-schema database, and separately checks committed-history replay in another disposable database. This Node suite runs as part of `test:ci`, separately from the mocked Hono/Workers suites.
 
 Check migration-replay diagnostics separately from current-schema test results. Before provisioning or migrating a deployment, verify the target database's applied history and required constraints. If replay fails, reconcile the history/bootstrap discrepancy without rewriting applied history; a passing current-schema suite does not establish upgrade compatibility. Remote migration and deployment require separate authorization.
+
+### Legacy STL upload ownership
+
+Authenticated customers may continue using `POST /upload` for personal STL
+uploads. New objects use `users/<encoded-user-id>/<uuid>.stl`, persist owner ID
+metadata, and use an R2 create-only condition. A collision returns 409 and never
+overwrites bytes. `GET /list` lists only the caller's namespace. Filenames are
+labels, not storage identities; clients must retain the returned key/URL. Existing
+legacy objects and public URLs are neither renamed nor deleted. Photo storage
+continues using its existing unique identities and byte validation.

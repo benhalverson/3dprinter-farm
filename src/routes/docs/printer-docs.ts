@@ -20,8 +20,8 @@ import {
 
 // List 3D models documentation
 export const listModelsDoc = {
-  summary: 'List all 3D models',
-  description: 'Retrieves a list of all 3D models available for printing.',
+  summary: 'List your uploaded 3D models',
+  description: 'Lists STL objects in the authenticated user namespace. Legacy shared keys are excluded.',
   tags: ['Printer'],
   responses: {
     200: {
@@ -46,7 +46,7 @@ export const listModelsDoc = {
 // Upload file documentation
 export const uploadFileDoc = {
   description:
-    'Upload a public JPEG, PNG, or WebP photo (decoded bytes, maximum 5,000,000 bytes) or an STL file. Photos receive unique keys and detected MIME metadata. Requires a configured public URL for the selected bucket.',
+    'Upload a public JPEG, PNG, or WebP photo (decoded bytes, maximum 5,000,000 bytes) or an STL file. Photos receive unique keys and detected MIME metadata. STL uploads receive immutable owner-scoped keys; identity collisions return 409. Requires a configured public URL for the selected bucket.',
   tags: ['Printer'],
   requestBody: {
     content: {
@@ -70,8 +70,8 @@ export const uploadFileDoc = {
           schema: resolver(UploadResponseSchema),
           example: {
             message: 'File uploaded',
-            key: 'dragon-model.stl',
-            url: 'https://pub-example.r2.dev/dragon-model.stl',
+            key: 'users/user-id/11111111-1111-4111-8111-111111111111.stl',
+            url: 'https://pub-example.r2.dev/users%2Fuser-id%2F11111111-1111-4111-8111-111111111111.stl',
           },
         },
       },

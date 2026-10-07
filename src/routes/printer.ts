@@ -50,7 +50,8 @@ const printer = factory
   .use('/estimate', authMiddleware)
   .use('/upload', authMiddleware)
   .get('/list', describeRoute(listModelsDoc), async (c: Context) => {
-    const list = await c.env.BUCKET.list();
+    const ownerId = c.get('userId');
+    const list = await c.env.BUCKET.list({ prefix: `users/${encodeURIComponent(ownerId)}/` });
     const data = list.objects.map((o: ListResponse) => {
       return {
         stl: o.key,
