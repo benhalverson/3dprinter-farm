@@ -287,6 +287,12 @@ export async function acceptSquarePayment(
     (attempt.squarePaymentId && attempt.squarePaymentId !== payment.id)
   )
     throw new HTTPException(400, { message: 'Payment association mismatch' });
+  if (payment.status !== 'COMPLETED') {
+    await db.update(checkoutAttempts).set({ state: payment.status === 'CANCELED' ? 'cancelled' : 'failed' }).where(and(
+      eq(checkoutAttempts.id, attempt.id), notInArray(checkoutAttempts.state, ['paid']),
+    ));
+    return { received: true };
+  }
   await db
     .update(checkoutAttempts)
     .set({
@@ -297,7 +303,7 @@ export async function acceptSquarePayment(
     .where(
       and(
         eq(checkoutAttempts.id, attempt.id),
-        eq(checkoutAttempts.state, 'initiating'),
+        notInArray(checkoutAttempts.state, ['paid']),
       ),
     );
   const [confirmed] = await db
