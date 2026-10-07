@@ -256,7 +256,7 @@ export async function acceptSquarePayment(
     throw new HTTPException(400, { message: 'Seller mismatch' });
   const provider = squareClient(config);
   const payment = await provider.retrievePayment(paymentId);
-  if (payment.status !== 'COMPLETED') return { received: true };
+  if (!['COMPLETED', 'FAILED', 'CANCELED'].includes(payment.status)) return { received: true };
   await provider.validateLocation();
   const external = await provider.retrieveOrder(payment.order_id);
   const [attempt] = await db
@@ -279,6 +279,12 @@ export async function acceptSquarePayment(
     (attempt.squarePaymentId && attempt.squarePaymentId !== payment.id)
   )
     throw new HTTPException(400, { message: 'Payment association mismatch' });
+  if (payment.status !== 'COMPLETED') {
+    await db.update(checkoutAttempts).set({ state: payment.status === 'CANCELED' ? 'cancelled' : 'failed' }).where(and(
+      eq(checkoutAttempts.id, attempt.id), notInArray(checkoutAttempts.state, ['paid']),
+    ));
+    return { received: true };
+  }
   await db
     .update(checkoutAttempts)
     .set({
@@ -289,7 +295,7 @@ export async function acceptSquarePayment(
     .where(
       and(
         eq(checkoutAttempts.id, attempt.id),
-        eq(checkoutAttempts.state, 'initiating'),
+        notInArray(checkoutAttempts.state, ['paid']),
       ),
     );
   const [confirmed] = await db
