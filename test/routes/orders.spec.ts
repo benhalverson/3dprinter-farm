@@ -1,3 +1,4 @@
+import { signedSlant, slantEnvelope } from '../fixtures/slantWebhook';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import app from '../../src/app';
 import { mockAuth } from '../mocks/auth';
@@ -52,19 +53,8 @@ const itemSnapshot = JSON.stringify([
   },
 ]);
 
-function makeWebhookRequest(body: unknown, secret?: string): Request {
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
-  };
-  if (secret) {
-    headers['x-slant-webhook-secret'] = secret;
-  }
-
-  return new Request('http://localhost/webhook/slant3d', {
-    method: 'POST',
-    headers,
-    body: JSON.stringify(body),
-  });
+async function makeWebhookRequest(body: unknown, secret?: string): Promise<Request> {
+  return new Request('http://localhost/webhook/slant3d', await signedSlant(slantEnvelope(body), secret ?? null));
 }
 
 function makeOrder(overrides: Record<string, unknown> = {}) {
@@ -388,17 +378,17 @@ describe('POST /webhook/slant3d', () => {
 
   test('returns 401 when the configured webhook secret is missing', async () => {
     const res = await app.fetch(
-      makeWebhookRequest({ orderId: slantOrderId, status: 'SHIPPED' }),
+      await makeWebhookRequest({ orderId: slantOrderId, status: 'SHIPPED' }),
       env,
     );
 
     expect(res.status).toBe(401);
-    expect(await res.json()).toEqual({ error: 'Invalid webhook secret' });
+    expect(await res.json()).toEqual({ error: 'Invalid webhook signature' });
   });
 
   test('returns 422 for an invalid webhook body', async () => {
     const res = await app.fetch(
-      makeWebhookRequest({ orderId: slantOrderId, status: 'BAD' }, validSecret),
+      await makeWebhookRequest({ orderId: slantOrderId, status: 'BAD' }, validSecret),
       env,
     );
 

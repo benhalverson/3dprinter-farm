@@ -44,6 +44,19 @@ Migration generation is entirely Drizzle-managed. The unpublished increments add
 
 Primary provider references: [Square CreatePaymentLink](https://developer.squareup.com/reference/square/checkout-api/create-payment-link) and [Square webhook validation](https://developer.squareup.com/docs/webhooks/step3validate). No provider sandbox or production account is called by validation.
 
-Trusted Slant lifecycle boundary: `/webhook/slant3d` requires the configured `x-slant-webhook-secret`, resolves the persisted Slant public order ID, and records `slant_status_changed` with source `slant3d` and the external event ID. Follow-on notification consumers must read the persisted transition; cancellation evidence (`CANCELED` / `canceledAt`) establishes manufacturing cancellation only and never proves a payment refund. Issue181 must establish its own durable verified Square refund evidence before reporting refunded payment. The retired admin route emits no cancellation or refund event.
+Trusted Slant lifecycle boundary: `/webhook/slant3d` verifies `X-Webhook-Signature-256: sha256=<hex>` using HMAC-SHA256 over `X-Webhook-Timestamp + "." + rawBody` with `SLANT_WEBHOOK_SECRET`, resolves the persisted Slant public order ID, and records `slant_status_changed` with source `slant3d` and the external event ID. Follow-on notification consumers must read the persisted transition; cancellation evidence (`CANCELED` / `canceledAt`) establishes manufacturing cancellation only and never proves a payment refund. Issue181 must establish its own durable verified Square refund evidence before reporting refunded payment. The retired admin route emits no cancellation or refund event.
 
 Admin order list filters use `squareOrderId` and `squarePaymentId`; detail responses expose both identifiers. Legacy Stripe identifiers are not accepted as payment evidence or retained in the current schema.
+
+
+Slant webhooks require `SLANT_PLATFORM_ID` and accept the documented
+`event_type`, `platform_id`, `data.order.public_id/status/tracking_number`
+envelope. The delivery timestamp is Unix milliseconds and must be within five
+minutes of server time. The shared-secret header/flat-body contract is retired.
+Invalid signatures, tampering, stale/future timestamps, and wrong platforms are
+rejected before lifecycle writes. Authenticated non-order events are acknowledged
+with `{success:true,ignored:true}`. Without a provider event ID, deduplication uses
+a digest of normalized order facts excluding delivery timestamps, so re-signing a
+redelivery does not duplicate lifecycle events or emails. Existing monotonic
+transitions and atomic persistence remain in force. Operators must separately
+review and deliberately replay failed historical provider deliveries after rollout.

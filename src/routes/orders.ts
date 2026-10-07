@@ -4,6 +4,7 @@ import { resolver } from 'hono-openapi/zod';
 import { z } from 'zod';
 import { orderEventsTable, ordersTable } from '../db/schema';
 import factory from '../factory';
+import { slantWebhookSchema, verifySlantWebhook, normalizeSlantWebhook } from '../modules/slantWebhook';
 import { recordSlantLifecycle } from '../modules/slantLifecycle';
 import {
   alertSlantWebhookFailure,
@@ -20,13 +21,6 @@ const slantOrderStatusSchema = z.enum([
   'DELIVERED',
   'CANCELED',
 ]);
-
-const slantWebhookBodySchema = z.object({
-  eventId: z.string().trim().min(1).max(200),
-  orderId: z.string().trim().min(1).max(200),
-  status: slantOrderStatusSchema,
-  metadata: z.record(z.unknown()).optional(),
-});
 
 const webhookSuccessSchema = z.object({
   success: z.boolean(),
@@ -405,13 +399,17 @@ const ordersRouter = factory
     describeRoute({
       summary: 'Slant3D order status webhook',
       description:
-        'Receives Slant3D platform order status updates and applies them idempotently to local order lifecycle records.',
+        'Verifies HMAC-SHA256 over timestamp + dot + exact raw body, enforces a five-minute delivery window and platform identity, and records monotonic idempotent lifecycle updates.',
       tags: ['Orders', 'Webhooks', 'Slant3D'],
+      parameters: [
+        { name: 'X-Webhook-Timestamp', in: 'header', required: true, schema: { type: 'string' }, description: 'Unix delivery timestamp in milliseconds' },
+        { name: 'X-Webhook-Signature-256', in: 'header', required: true, schema: { type: 'string' }, description: 'sha256= followed by HMAC-SHA256 hex digest' },
+      ],
       requestBody: {
         content: {
           'application/json': {
             schema: resolver(
-              slantWebhookBodySchema,
+              slantWebhookSchema,
             ) as unknown as OpenAPISchema,
           },
         },
@@ -419,17 +417,17 @@ const ordersRouter = factory
       },
       responses: {
         200: {
-          description: 'Webhook processed successfully',
+          description: 'Webhook processed successfully, or unrelated authenticated event ignored',
           content: {
             'application/json': {
               schema: resolver(
-                webhookSuccessSchema,
+                z.union([webhookSuccessSchema, z.object({ success: z.literal(true), ignored: z.literal(true) })]),
               ) as unknown as OpenAPISchema,
             },
           },
         },
         401: {
-          description: 'Invalid webhook secret',
+          description: 'Invalid, stale, or tampered webhook signature',
           content: {
             'application/json': {
               schema: resolver(webhookErrorSchema) as unknown as OpenAPISchema,
@@ -475,31 +473,32 @@ const ordersRouter = factory
     /** Authenticate before atomically recording manufacturing evidence and recovering email intents. */
     async c => {
       const configuredSecret = c.env.SLANT_WEBHOOK_SECRET;
-      if (!configuredSecret)
+      if (!configuredSecret || !c.env.SLANT_PLATFORM_ID)
         return c.json({ error: 'Slant webhook configuration required' }, 503);
-      if (configuredSecret) {
-        const headerSecret = c.req.header('x-slant-webhook-secret');
-        if (headerSecret !== configuredSecret) {
-          return c.json({ error: 'Invalid webhook secret' }, 401);
-        }
-      }
-
-      const rawBody = await c.req.json().catch(() => null);
-      const parsed = slantWebhookBodySchema.safeParse(rawBody);
-      if (!parsed.success) {
+      const rawBody = await c.req.text();
+      if (!await verifySlantWebhook(rawBody, c.req.header('X-Webhook-Timestamp'), c.req.header('X-Webhook-Signature-256'), configuredSecret))
+        return c.json({ error: 'Invalid webhook signature' }, 401);
+      let input: Awaited<ReturnType<typeof normalizeSlantWebhook>>;
+      try {
+        const body = slantWebhookSchema.parse(JSON.parse(rawBody));
+        if (body.platform_id !== c.env.SLANT_PLATFORM_ID)
+          return c.json({ error: 'Invalid webhook platform' }, 401);
+        input = await normalizeSlantWebhook(body);
+      } catch {
         return c.json({ error: 'Invalid request body' }, 422);
       }
+      if (!input) return c.json({ success: true, ignored: true });
 
       let outcome: Awaited<ReturnType<typeof recordSlantLifecycle>>;
       try {
-        outcome = await recordSlantLifecycle(c.var.db, parsed.data);
+        outcome = await recordSlantLifecycle(c.var.db, input);
       } catch {
         console.error('notification.slant_webhook_failed');
         await alertSlantWebhookFailure(
           c.var.db,
           c.env,
-          parsed.data.orderId,
-          parsed.data.eventId,
+          input.orderId,
+          input.eventId,
         );
         return c.json(
           { error: 'Lifecycle persistence unavailable; retry event' },
