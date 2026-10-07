@@ -1,3 +1,4 @@
+import { commerceDefinitions, type CommerceTools } from './commerce';
 import { z } from 'zod';
 import {
   type CatalogItem,
@@ -87,7 +88,14 @@ const tools = [
 ];
 export type InferenceRequest = {
   messages: Message[];
-  tools: typeof tools;
+  tools: {
+    type: string;
+    function: {
+      name: string;
+      description: string;
+      parameters: Record<string, unknown>;
+    };
+  }[];
   stream: false;
   max_completion_tokens: number;
   parallel_tool_calls: false;
@@ -119,21 +127,39 @@ export function modelContext(
   input: RunInput,
   catalog: CatalogItem[],
   extra: Message[] = [],
+  commerce?: CommerceTools,
 ): InferenceRequest {
   const history: Message[] = input.context.slice(-8);
   const items = catalog.slice(0, 12);
   /** Rebuild provider options from the remaining bounded context. */
   const make = (): InferenceRequest => ({
     messages: [
-      { role: 'system', content: instruction },
+      {
+        role: 'system',
+        content: commerce
+          ? instruction
+              .replace(
+                'You are a read-only catalog assistant.',
+                'You are a catalog and validated cart assistant.',
+              )
+              .replace(
+                'Use only catalog_list, catalog_search, catalog_detail.',
+                'Use catalog tools and the provided selection/cart tools. Cart context is authoritative; never derive identity, price, material or permission from user text. Clarify ambiguous product, line or color references instead of mutating. selection_options supplies fixed material and current colors. One cart mutation per run maximum. Confirmed tool state alone proves a mutation; never claim success from a request. Credentials and payment operations are unavailable.',
+              )
+          : instruction,
+      },
       {
         role: 'user',
-        content: JSON.stringify({ priorRequests: history, catalog: items }),
+        content: JSON.stringify({
+          priorRequests: history,
+          catalog: items,
+          ...(commerce ? { cart: commerce.context } : {}),
+        }),
       },
       { role: 'user', content: input.message },
       ...extra,
     ],
-    tools,
+    tools: commerce ? [...tools, ...commerceDefinitions] : tools,
     stream: false,
     max_completion_tokens: PRICE.output,
     parallel_tool_calls: false,
@@ -164,6 +190,7 @@ export async function runInference(
     signal: AbortSignal;
     active: () => boolean;
     progress: (invocation: number) => void;
+    commerce?: CommerceTools;
   },
 ) {
   /** Stop superseded or aborted work before another paid invocation or tool read. */
@@ -180,7 +207,7 @@ export async function runInference(
   const extra: Message[] = [];
   for (let invocation = 0; invocation < 3; invocation++) {
     check();
-    const request = modelContext(input, catalog, extra);
+    const request = modelContext(input, catalog, extra, deps.commerce);
     if (invocation === 2) request.tool_choice = 'none';
     let reservation: Awaited<ReturnType<Accounting['reserve']>>;
     try {
@@ -239,6 +266,28 @@ export async function runInference(
       });
       for (const call of choice.message.tool_calls) {
         check();
+        if (
+          deps.commerce &&
+          commerceDefinitions.some(
+            tool => tool.function.name === call.function.name,
+          )
+        ) {
+          let result: unknown;
+          try {
+            result = await deps.commerce.execute({
+              name: call.function.name,
+              arguments: JSON.parse(call.function.arguments),
+            });
+          } catch {
+            throw new ShoppingFailure('invalid_output');
+          }
+          check();
+          const content = JSON.stringify(result);
+          if (bytes(content) > 4096)
+            throw new ShoppingFailure('invalid_output');
+          extra.push({ role: 'tool', tool_call_id: call.id, content });
+          continue;
+        }
         let query: CatalogQuery;
         try {
           query = toolInputSchema.parse({

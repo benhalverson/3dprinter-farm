@@ -1,3 +1,4 @@
+import {HTTPException} from 'hono/http-exception';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import app from '../../src/app';
 import { mockAuth, mockBetterAuth } from '../mocks/auth';
@@ -11,6 +12,9 @@ import {
   mockWhere,
 } from '../mocks/drizzle';
 import { mockEnv } from '../mocks/env';
+
+const mutations=vi.hoisted(()=>({add:vi.fn(),quantity:vi.fn(),remove:vi.fn()}));
+vi.mock('../../src/modules/cartMutations',async original=>({...await original<typeof import('../../src/modules/cartMutations')>(),addCartLine:mutations.add,setCartLineQuantity:mutations.quantity,removeCartLine:mutations.remove}));
 
 mockAuth();
 mockDrizzle();
@@ -133,6 +137,7 @@ describe('Shopping Cart Routes', () => {
     mockQuery.cart.findFirst.mockReset();
     mockQuery.cart.findMany.mockReset();
     capturedInserts.length = 0;
+    for(const mutation of Object.values(mutations))mutation.mockReset().mockResolvedValue(undefined);
 
     // Mock external fetch for shipping API
     global.fetch = vi.fn().mockResolvedValue({
@@ -183,7 +188,8 @@ describe('Shopping Cart Routes', () => {
         env,
       );
 
-    test('rejects an addition that would exceed the per-line quantity limit', async () => {
+    test('reports the validated quantity limit failure', async () => {
+      mutations.add.mockRejectedValueOnce(new HTTPException(400,{message:'Maximum quantity is 69'}));
       mockQuery.cart.findFirst.mockResolvedValueOnce({
         id: 1,
         quantity: 69,
@@ -195,6 +201,7 @@ describe('Shopping Cart Routes', () => {
       expect(capturedInserts).toHaveLength(0);
     });
     test('reports a concurrent quantity change instead of losing an addition', async () => {
+      mutations.add.mockRejectedValueOnce(new HTTPException(409,{message:'Cart changed'}));
       mockQuery.cart.findFirst.mockResolvedValueOnce({
         id: 1,
         quantity: 2,
@@ -364,8 +371,8 @@ describe('Shopping Cart Routes', () => {
       const res = await app.fetch(request, env);
 
       expect(res.status).toBe(200);
-      expect(capturedInserts).toHaveLength(1);
-      expect(capturedInserts[0]).toMatchObject({
+      expect(mutations.add).toHaveBeenCalledOnce();
+      expect(mutations.add.mock.calls[0][2]).toMatchObject({
         cartId: mockCartId,
         skuNumber: 'TEST-SKU-001',
         quantity: 1,
@@ -745,6 +752,7 @@ describe('Shopping Cart Routes', () => {
       quantity,
       succeeds,
     }) => {
+      if(!succeeds)(path==='/cart/remove'?mutations.remove:mutations.quantity).mockRejectedValueOnce(new HTTPException(404,{message:'No cart item found with that ID'}));
       mockUpdate.mockResolvedValueOnce(succeeds ? [{ id: 1 }] : []);
       mockDelete.mockReset().mockResolvedValueOnce(succeeds ? [{ id: 1 }] : []);
       const response = await app.request(
