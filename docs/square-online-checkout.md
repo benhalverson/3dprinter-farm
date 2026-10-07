@@ -57,6 +57,4 @@ paid snapshot, with checkout/payment correlation in metadata. It retains
 nested order ID and both metadata identifiers. PAID, QUEUED, PRINTING and
 AWAITING_SHIPMENT map to the existing local PROCESSING lifecycle so notification
 and customer-order semantics remain stable. Invalid/mismatched responses remain
-ambiguous and never authorize a second manufacturing call. Fixtures follow the
-provider examples in #233/#235; live provider documentation returned 403 during
-this implementation, and no live transaction was attempted.
+ambiguous and never authorize a second manufacturing call.
