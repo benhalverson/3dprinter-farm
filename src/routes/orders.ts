@@ -45,6 +45,7 @@ const orderItemSchema = z.object({
   price: z.number().nullable(),
 });
 const customerOrderSchema = z.object({
+  accountId: z.string(),
   id: z.number(),
   orderNumber: z.string(),
   createdAt: z.string().nullable(),
@@ -77,6 +78,7 @@ const customerOrderSchema = z.object({
     .nullable(),
 });
 const customerOrderListSchema = z.object({
+  accountId: z.string(),
   orders: z.array(customerOrderSchema),
   pagination: z.object({
     limit: z.number(),
@@ -278,6 +280,8 @@ const ordersRouter = factory
       if (!userId) {
         return c.json({ error: 'Unauthorized' }, 401);
       }
+      const expected = c.req.header('X-Expected-Account-Id');
+      if(expected !== undefined && expected !== userId) return c.json({error:'account_changed'},409);
 
       const limit = Math.min(
         Math.max(parsePositiveInteger(c.req.query('limit'), 20), 1),
@@ -299,7 +303,8 @@ const ordersRouter = factory
       );
 
       return c.json({
-        orders: page.map(order => toCustomerOrder(order)),
+        accountId: userId,
+        orders: page.map(order => ({...toCustomerOrder(order),accountId:userId})),
         pagination: {
           limit,
           offset,
@@ -364,6 +369,8 @@ const ordersRouter = factory
       if (!userId) {
         return c.json({ error: 'Unauthorized' }, 401);
       }
+      const expected = c.req.header('X-Expected-Account-Id');
+      if(expected !== undefined && expected !== userId) return c.json({error:'account_changed'},409);
 
       const orderId = parseOrderId(c.req.param('id'));
       if (orderId === null) {
@@ -390,7 +397,7 @@ const ordersRouter = factory
         .where(eq(orderEventsTable.orderId, order.id))
         .all()) as OrderEventRow[];
 
-      return c.json(toCustomerOrder(order, events));
+      return c.json({...toCustomerOrder(order, events),accountId:userId});
     },
   )
   .post(
