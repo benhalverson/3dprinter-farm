@@ -2891,7 +2891,30 @@ describe('durable product attachments through Hono', () => {
       'released',
     );
   });
-  it('retains uncertain V2 writes and releases known provider rejections', async () => {
+  it.each(['lost', '503', 'release bookkeeping'])('cleans a print after a pre-write %s failure', async failure => {
+    const print = await savedPrint();
+    if (failure === '503') vi.mocked(fetch).mockResolvedValueOnce(new Response('{}', { status: 503 }));
+    else vi.mocked(fetch).mockRejectedValueOnce(new Error('Lost estimate response'));
+    if (failure === 'release bookkeeping') beforeUpdate = (table, changes) => {
+      if (table === schema.productAssetReferenceAttempts && changes.state === 'released') {
+        beforeUpdate = undefined;
+        throw new Error('Transient completion write failure');
+      }
+    };
+    expect((await catalogRequest({ publicFileServiceId: print.providerId }, 'POST')).status).toBeGreaterThanOrEqual(500);
+    expect(records(schema.productsTable)).toHaveLength(0);
+    expect(records(schema.productAssetReferenceAttempts)[0].state).toBe(failure === 'release bookkeeping' ? 'release_pending' : 'released');
+    vi.mocked(fetch).mockResolvedValue(Response.json({ success: true, message: 'File deleted' }));
+    await request(`?expectedRevision=${revision()}`, 'DELETE');
+    await request('/cleanup/retry', 'POST', { expectedRevision: revision() });
+    expect(records(schema.productAssetReferenceAttempts)[0].state).toBe('released');
+    expect(records(schema.productAssets)[0].status).toBe('deleted');
+    const deletions = vi.mocked(fetch).mock.calls.filter(([, init]) => init?.method === 'DELETE').length;
+    await request('/cleanup/retry', 'POST', { expectedRevision: revision() });
+    expect(vi.mocked(fetch).mock.calls.filter(([, init]) => init?.method === 'DELETE')).toHaveLength(deletions);
+  });
+
+  it('retains uncertain V2 writes and releases all pre-write estimate failures', async () => {
     const print = await savedPrint();
     vi.mocked(fetch).mockResolvedValueOnce(new Response('{}', { status: 400 }));
     expect(
@@ -2907,7 +2930,7 @@ describe('durable product attachments through Hono', () => {
         .status,
     ).toBe(502);
     expect(records(schema.productAssetReferenceAttempts)[1].state).toBe(
-      'unresolved',
+      'released',
     );
     vi.mocked(fetch).mockResolvedValueOnce(
       Response.json({ data: { total: 10 } }),

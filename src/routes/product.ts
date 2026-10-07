@@ -764,6 +764,7 @@ const product = factory
 
         console.log('Product data to insert:', productDataToInsert);
 
+        c.set('catalogWriteStarted', true);
         const insertResponse = await c.var.db
           .insert(productsTable)
           .values(productDataToInsert)
@@ -1076,6 +1077,7 @@ const product = factory
         if (normalizedCategoryIds?.length)
           updateData.categoryId = normalizedCategoryIds[0];
         // Update the product
+        c.set('catalogWriteStarted', true);
         await saveCatalogItem(c.var.db, existingProduct, updateData);
 
         // Update category associations when categories are provided.
