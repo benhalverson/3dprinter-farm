@@ -146,6 +146,7 @@ describe('Customer Orders API', () => {
     );
 
     expect(res.status).toBe(200);
+    expect(res.headers.get('Cache-Control')).toBe('private, no-store');
     const body = (await res.json()) as {
       orders: Array<{
         orderNumber: string;
@@ -179,6 +180,7 @@ describe('Customer Orders API', () => {
     );
 
     expect(res.status).toBe(200);
+    expect(res.headers.get('Cache-Control')).toBe('private, no-store');
     expect(await res.json()).toEqual({
       orders: [],
       pagination: { limit: 20, offset: 0, count: 0 },
@@ -215,6 +217,7 @@ describe('Customer Orders API', () => {
     );
 
     expect(res.status).toBe(200);
+    expect(res.headers.get('Cache-Control')).toBe('private, no-store');
     const body = (await res.json()) as {
       id: number;
       fulfillment: {
