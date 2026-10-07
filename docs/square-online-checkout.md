@@ -66,3 +66,13 @@ payment result; neither a redirect nor a local timeout establishes these states.
 `paid` requires verified provider evidence and can coexist with pending or failed
 manufacturing. A later completed payment can resolve a failed/cancelled attempt;
 a delayed failure cannot regress paid state. Status reads never retry manufacture.
+Slant V2 order adapter uses the same validated draft shape for shipping estimates
+and paid fulfillment: `customer.platformId`, `customer.details.email/address`
+(`line1`/`zip`), and `items[].type = PRINT`. Paid fulfillment reads the immutable
+paid snapshot, with checkout/payment correlation in metadata. It retains
+`data.order.publicId` before processing. Process confirmations require the same
+`data.publicId` plus status/payment evidence; reconciliation validates the returned
+nested order ID and both metadata identifiers. PAID, QUEUED, PRINTING and
+AWAITING_SHIPMENT map to the existing local PROCESSING lifecycle so notification
+and customer-order semantics remain stable. Invalid/mismatched responses remain
+ambiguous and never authorize a second manufacturing call.

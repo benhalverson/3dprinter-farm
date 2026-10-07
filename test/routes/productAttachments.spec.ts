@@ -2477,9 +2477,9 @@ describe('durable product attachments through Hono', () => {
     expect((await discarded.json()).cleanup[0].status).toBe('pending');
     expect(remove).not.toHaveBeenCalled();
     vi.mocked(fetch).mockResolvedValueOnce(
-      Response.json({ status: 'PROCESSING' }),
+      Response.json({ success: true, data: { publicId: 'order', status: 'PAID', processedAt: '2026-10-07T00:00:00Z', paymentId: 'slant-payment' } }),
     );
-    resolve(new Response(JSON.stringify({ publicOrderId: 'order' })));
+    resolve(new Response(JSON.stringify({ success: true, data: { order: { publicId: 'order', status: 'DRAFT' } } })));
     expect((await pending).status).toBe(200);
     expect(records(schema.productAssets)[0].references).toEqual([]);
     expect(records(schema.ordersTable)[0].itemSnapshot).toContain(
@@ -3022,8 +3022,8 @@ describe('durable product attachments through Hono', () => {
       }
     };
     vi.mocked(fetch)
-      .mockResolvedValueOnce(Response.json({ publicOrderId: 'accepted-order' }))
-      .mockResolvedValueOnce(Response.json({ status: 'PROCESSING' }));
+      .mockResolvedValueOnce(Response.json({ success: true, data: { order: { publicId: 'order', status: 'DRAFT' } } }))
+      .mockResolvedValueOnce(Response.json({ success: true, data: { publicId: 'order', status: 'PAID', processedAt: '2026-10-07T00:00:00Z', paymentId: 'slant-payment' } }));
     expect((await orderRequest(photo.id)).status).toBe(200);
     expect(records(schema.ordersTable)).toHaveLength(1);
     expect(records(schema.orderEventsTable)).toHaveLength(1);
