@@ -90,6 +90,19 @@ async function prepare() {
   return ((await response.json()) as { preparation: ProductPreparation })
     .preparation;
 }
+async function useProviderEstimate(data: Record<string, unknown>) {
+  const actual = await vi.importActual<
+    typeof import('../../src/lib/slant3d-v2-files')
+  >('../../src/lib/slant3d-v2-files');
+  vi.mocked(estimateSlant3DFile).mockImplementation(actual.estimateSlant3DFile);
+  const fetchFilaments = vi.mocked(fetch).getMockImplementation();
+  if (!fetchFilaments) throw new Error('Missing filament response fixture');
+  vi.mocked(fetch).mockImplementation((input, init) =>
+    String(input).endsWith('/estimate')
+      ? Promise.resolve(Response.json({ success: true, data }))
+      : fetchFilaments(input, init),
+  );
+}
 beforeEach(() => {
   vi.clearAllMocks();
   writes = [];
@@ -494,12 +507,45 @@ describe('authoritative prepared pricing HTTP boundary', () => {
     );
     expect(estimateSlant3DFile).not.toHaveBeenCalled();
   });
+  it('prepares pricing from a provider quote that omits request identities', async () => {
+    currentDraft().state.answers = {
+      markupPercentage: '40',
+      inPersonPrice: '10',
+    };
+    await useProviderEstimate({
+      subtotal: 1.34,
+      total: 1.74,
+      pricePerUnit: 1.74,
+      quantity: 1,
+      totalMaterial: 9.77,
+      estimatedPrintTime: 1.54,
+      bodyChargeCost: 0,
+      oversizeSurcharge: 0,
+    });
+    const result = await prepare();
+    expect(result.status).toBe('ready');
+    expect(result.pricing).toMatchObject({
+      productionCost: 1.74,
+      onlinePrice: 2.44,
+      inPersonPrice: 10,
+      basis: { publicFileServiceId: 'file-7', filamentId, quantity: 1 },
+    });
+    expect(result.snapshot).not.toBeNull();
+    expect(result.readiness.submissionAuthorized).toBe(false);
+    expect(fetch).toHaveBeenCalledWith(
+      'https://slant3dapi.com/v2/api/files/file-7/estimate',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ options: { filamentId, quantity: 1 } }),
+      }),
+    );
+  });
   it.each([
     'publicFileServiceId',
     'filamentId',
     'quantity',
   ])('refuses an estimate with mismatched %s', async field => {
-    vi.mocked(estimateSlant3DFile).mockResolvedValue({
+    await useProviderEstimate({
       publicFileServiceId: 'file-7',
       filamentId,
       quantity: 1,

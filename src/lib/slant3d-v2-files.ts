@@ -57,6 +57,12 @@ export type Slant3DEstimateData = {
   slicer?: Record<string, unknown>;
 };
 
+type Slant3DEstimateResponse = Omit<
+  Slant3DEstimateData,
+  'publicFileServiceId' | 'filamentId'
+> &
+  Partial<Pick<Slant3DEstimateData, 'publicFileServiceId' | 'filamentId'>>;
+
 export class Slant3DFileApiError extends Error {
   status: number;
   details: unknown;
@@ -204,7 +210,7 @@ export async function estimateSlant3DFile(
     slicer?: Record<string, unknown>;
   },
 ): Promise<Slant3DEstimateData> {
-  return slant3DFileRequest<Slant3DEstimateData>(
+  const estimate = await slant3DFileRequest<Slant3DEstimateResponse>(
     env,
     `files/${publicFileServiceId}/estimate`,
     'Failed to estimate file price from Slant3D V2 API',
@@ -218,6 +224,13 @@ export async function estimateSlant3DFile(
       },
     },
   );
+  // Slant's quote omits request identities. Preserve any echoed values so
+  // callers can still reject a conflicting estimate basis.
+  return {
+    publicFileServiceId,
+    filamentId: options.filamentId,
+    ...estimate,
+  };
 }
 
 export async function getSlant3DFile(
