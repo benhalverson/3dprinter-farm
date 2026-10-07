@@ -1,5 +1,5 @@
 import { and, eq, inArray } from 'drizzle-orm';
-import { z } from 'zod';
+import { slantDraft, slantDraftResponse, slantProcessResponse, slantGetResponse, slantLocalStatus } from './slantOrderContracts';
 import { BASE_URL_V2 } from '../constants';
 import { cart, orderEventsTable, ordersTable } from '../db/schema';
 import type { WorkerEnv } from '../factory';
@@ -33,24 +33,7 @@ async function slantRequest(env: Environment, path: string, payload?: unknown) {
       throw new SlantRejection('Slant rejected request');
     throw new Error('Slant outcome requires reconciliation');
   }
-  const parsed = z
-    .object({
-      publicOrderId: z.string().min(1).optional(),
-      orderId: z.string().min(1).optional(),
-      status: z.string().optional(),
-      orderNumber: z.string().optional(),
-      data: z
-        .object({
-          publicOrderId: z.string().min(1).optional(),
-          orderId: z.string().min(1).optional(),
-          id: z.string().min(1).optional(),
-          status: z.string().optional(),
-          orderNumber: z.string().optional(),
-        })
-        .optional(),
-    })
-    .parse(await response.json());
-  return parsed;
+  return response.json();
 }
 /** Owns durable stage claims. An abandoned claim is ambiguous and never authorizes a second effect. */
 export function createPaidOrderFulfillment(deps: {
@@ -111,49 +94,22 @@ export function createPaidOrderFulfillment(deps: {
             };
           };
           const address = customer.shippingAddress;
-          const shippingAddress = {
-            name: address.name,
-            street1: address.line1,
-            street2: address.line2,
-            city: address.city,
-            state: address.state,
-            zipCode: address.zip,
-            country: address.country,
-            isResidential: true,
-          };
           // Holds print references through uncertain provider outcomes; local immutable order remains authoritative.
           await reservePendingOrderAssets(
             db,
             JSON.parse(order.itemSnapshot || 'null'),
             `order-attempt:square-${orderId}`,
           );
-          const draft = await slantRequest(env, '', {
-            orderNumber: order.orderNumber,
+          const draft = slantDraftResponse.parse(await slantRequest(env, '', slantDraft({
             platformId: env.SLANT_PLATFORM_ID,
-            customer: { email: customer.email, name: address.name },
-            shippingAddress,
-            billingAddress: shippingAddress,
-            items: lines.map(line => ({
-              name: line.name,
-              sku: line.skuNumber,
-              quantity: line.quantity,
-              publicFileServiceId: line.publicFileServiceId,
-              filamentId: line.filamentId,
-              color: line.color,
-              profile: line.filamentType,
-            })),
+            customer: { details: { email: customer.email, address } },
+            items: lines,
             metadata: {
-              checkoutAttemptId: order.checkoutAttemptId,
-              squarePaymentId: order.squarePaymentId,
+              checkoutAttemptId: order.checkoutAttemptId || '',
+              squarePaymentId: order.squarePaymentId || '',
             },
-          });
-          const id =
-            draft.publicOrderId ||
-            draft.orderId ||
-            draft.data?.publicOrderId ||
-            draft.data?.orderId ||
-            draft.data?.id;
-          if (!id) throw new Error('Slant draft requires reconciliation');
+          })));
+          const id = draft.data.order.publicId;
           await db
             .update(ordersTable)
             .set({ slantPublicOrderId: id, fulfillmentState: 'drafted' })
@@ -167,7 +123,7 @@ export function createPaidOrderFulfillment(deps: {
         }
         if (!order.slantPublicOrderId)
           throw new Error('Missing retained draft identity');
-        const processed = await slantRequest(
+        const processed = slantProcessResponse.parse(await slantRequest(
           env,
           `/${encodeURIComponent(order.slantPublicOrderId)}`,
           {
@@ -177,20 +133,16 @@ export function createPaidOrderFulfillment(deps: {
               squarePaymentId: order.squarePaymentId,
             },
           },
-        );
-        if (
-          !['PROCESSING', 'SHIPPED', 'DELIVERED'].includes(
-            (processed.status || processed.data?.status || '').toUpperCase(),
-          )
-        )
+        ));
+        if (processed.data.publicId !== order.slantPublicOrderId || !slantLocalStatus(processed.data.status))
           throw new Error('Slant process confirmation requires reconciliation');
         const at = new Date().toISOString();
         await db
           .update(ordersTable)
           .set({
             fulfillmentState: 'processed',
-            status: 'processing',
-            slantStatus: 'PROCESSING',
+            status: slantLocalStatus(processed.data.status),
+            slantStatus: slantLocalStatus(processed.data.status)?.toUpperCase(),
             processedAt: at,
             updatedAt: at,
           })
@@ -252,16 +204,17 @@ export function createPaidOrderFulfillment(deps: {
         )
       )
         return;
-      const response = await slantRequest(
+      const response = slantGetResponse.parse(await slantRequest(
         env,
         `/${encodeURIComponent(externalId)}`,
-      );
-      if (
-        (response.orderNumber || response.data?.orderNumber) !==
-        order.orderNumber
-      )
+      ));
+      const remote = response.data.order;
+      if (remote.publicId !== externalId ||
+          !order.checkoutAttemptId || !order.squarePaymentId ||
+          remote.metadata?.checkoutAttemptId !== order.checkoutAttemptId ||
+          remote.metadata?.squarePaymentId !== order.squarePaymentId)
         throw new Error('Slant association mismatch');
-      const status = response.status || response.data?.status;
+      const status = remote.status;
       if (draftRecovery && status?.toUpperCase() === 'DRAFT') {
         await db
           .update(ordersTable)
@@ -279,7 +232,7 @@ export function createPaidOrderFulfillment(deps: {
       }
       if (
         !status ||
-        !['PROCESSING', 'SHIPPED', 'DELIVERED'].includes(status.toUpperCase())
+        !slantLocalStatus(status)
       )
         return;
       await db
@@ -287,8 +240,8 @@ export function createPaidOrderFulfillment(deps: {
         .set({
           fulfillmentState: 'processed',
           slantPublicOrderId: externalId,
-          slantStatus: status,
-          status: status.toLowerCase(),
+          slantStatus: slantLocalStatus(status)?.toUpperCase(),
+          status: slantLocalStatus(status),
           processedAt: order.processedAt || new Date().toISOString(),
           updatedAt: new Date().toISOString(),
           ...(status.toUpperCase() === 'SHIPPED'

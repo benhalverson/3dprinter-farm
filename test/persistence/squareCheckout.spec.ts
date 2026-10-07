@@ -211,18 +211,20 @@ function providers() {
     if (path.endsWith('/orders') && init?.method === 'POST') {
       slantDraftCalls++;
       if (draftAmbiguous) throw new Error('lost draft');
-      return Response.json({ publicOrderId: 'slant-order' });
+      const body = JSON.parse(String(init.body));
+      expect(body.customer).toEqual({ platformId: env.SLANT_PLATFORM_ID, details: { email: 'owner@example.com', address: { name: 'Ada Lovelace', line1: '10 Main Street', line2: '', city: 'Seattle', state: 'WA', zip: '98101', country: 'US' } } });
+      expect(body.items).toEqual([{ type: 'PRINT', publicFileServiceId: 'print-file', filamentId, quantity: 3 }]);
+      expect(body).not.toHaveProperty('shippingAddress');
+      return Response.json({ success: true, data: { order: { publicId: 'slant-order', status: 'DRAFT' } } });
     }
     if (path.endsWith('/orders/slant-order') && init?.method === 'POST') {
       slantProcessCalls++;
       if (processAmbiguous) throw new Error('lost process');
-      return Response.json({ status: 'PROCESSING' });
+      return Response.json({ success: true, data: { publicId: 'slant-order', status: 'PAID', processedAt: new Date().toISOString(), paymentId: 'slant-payment' } });
     }
     if (path.endsWith('/orders/slant-order'))
       return Response.json({
-        publicOrderId: 'slant-order',
-        orderNumber: `SQ-${reference}`,
-        status: 'PROCESSING',
+        success: true, data: { order: { publicId: 'slant-order', status: 'PRINTING', metadata: { checkoutAttemptId: reference, squarePaymentId: 'payment' } } },
       });
     throw new Error('Unexpected external request');
   });
@@ -961,4 +963,32 @@ test('Slant shipment during actual process response cannot regress to PROCESSING
     fulfillmentState: 'processed',
     paymentStatus: 'paid',
   });
+});
+
+
+test.each(['PAID', 'QUEUED', 'PRINTING', 'AWAITING_SHIPMENT'])('reconciles documented %s without manufacturing again', async status => {
+  await prepared();
+  processAmbiguous = true;
+  await event();
+  const [order] = await db.select().from(schema.ordersTable);
+  fetchMock.mockResolvedValue(Response.json({ success: true, data: { order: {
+    publicId: 'slant-order', status, metadata: { checkoutAttemptId: reference, squarePaymentId: 'payment' },
+  } } }));
+  await createPaidOrderFulfillment({ db: state.db as never, env }).reconcilePaidOrder(order.id);
+  expect((await db.select().from(schema.ordersTable))[0]).toMatchObject({ fulfillmentState: 'processed', status: 'processing', slantStatus: 'PROCESSING' });
+  expect(slantProcessCalls).toBe(1);
+});
+
+test.each(['identity', 'metadata', 'malformed'])('rejects %s evidence without replaying manufacture', async fault => {
+  await prepared();
+  processAmbiguous = true;
+  await event();
+  const [order] = await db.select().from(schema.ordersTable);
+  fetchMock.mockResolvedValue(Response.json(fault === 'malformed' ? { success: true } : { success: true, data: { order: {
+    publicId: fault === 'identity' ? 'different-order' : 'slant-order', status: 'PRINTING',
+    metadata: { checkoutAttemptId: reference, squarePaymentId: fault === 'metadata' ? 'other-payment' : 'payment' },
+  } } }));
+  await expect(createPaidOrderFulfillment({ db: state.db as never, env }).reconcilePaidOrder(order.id)).rejects.toThrow();
+  expect((await db.select().from(schema.ordersTable))[0].fulfillmentState).toBe('process_unknown');
+  expect(slantProcessCalls).toBe(1);
 });

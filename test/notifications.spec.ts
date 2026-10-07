@@ -1,6 +1,9 @@
-import { applyD1Migrations, env } from 'cloudflare:test';
+import { signedSlant, slantEnvelope } from './fixtures/slantWebhook';
+import { createClient } from '@libsql/client';
+import { drizzle } from 'drizzle-orm/libsql';
+import { migrate } from 'drizzle-orm/libsql/migrator';
 import { and, eq } from 'drizzle-orm';
-import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import app from '../src/app';
 import {
   recordSlantLifecycle,
@@ -9,24 +12,14 @@ import {
 import * as schema from '../src/db/schema';
 import { mockBetterAuth } from './mocks/auth';
 
-vi.unmock('drizzle-orm/d1');
-
+const state = vi.hoisted(() => ({db: undefined as unknown}));
+vi.mock('drizzle-orm/d1', () => ({drizzle: (binding?: {prepare?: () => never}) => binding?.prepare ? {select: binding.prepare} : state.db}));
 import { orderNotificationAttemptsTable as attempts } from '../src/db/schema';
-import {
-  deliverNotification,
-  enqueueAdminFailure,
-  enqueueOrderNotification,
-  type NotificationEnv,
-  reconcileSquareNotifications,
-} from '../src/lib/notifications';
-
-const { drizzle } =
-  await vi.importActual<typeof import('drizzle-orm/d1')>('drizzle-orm/d1');
-const bindings = env as unknown as {
-  NOTIFICATIONS_TEST_DB: D1Database;
-  NOTIFICATIONS_TEST_MIGRATIONS: Parameters<typeof applyD1Migrations>[1];
-};
-const db = drizzle(bindings.NOTIFICATIONS_TEST_DB, { schema });
+import { deliverNotification, enqueueAdminFailure, enqueueOrderNotification, type NotificationEnv, reconcileSquareNotifications } from '../src/lib/notifications';
+const client = createClient({url: 'file::memory:'});
+const db = drizzle(client, {schema});
+state.db = db;
+afterAll(() => client.close());
 const send = vi.fn().mockResolvedValue({ messageId: 'cloudflare-message' });
 const mail: NotificationEnv = {
   ORDER_EMAIL: { send },
@@ -35,10 +28,7 @@ const mail: NotificationEnv = {
 };
 
 beforeAll(async () => {
-  await applyD1Migrations(
-    bindings.NOTIFICATIONS_TEST_DB,
-    bindings.NOTIFICATIONS_TEST_MIGRATIONS,
-  );
+  await migrate(db, {migrationsFolder: './.generated/quote-test-migrations'});
 });
 beforeEach(async () => {
   await db.delete(attempts);
@@ -138,7 +128,7 @@ async function attempt(id: number) {
   return db.select().from(attempts).where(eq(attempts.id, id)).get();
 }
 
-describe('Cloudflare order notifications with real local D1', () => {
+describe('Cloudflare order notifications with real local SQLite', () => {
   it('concurrent enqueue and send have one durable winner', async () => {
     const row = await order();
     const queued = await Promise.all(
@@ -375,7 +365,7 @@ function request(path: string, method = 'GET', body?: string) {
       body,
       headers: body ? { 'Content-Type': 'application/json' } : undefined,
     },
-    { DB: bindings.NOTIFICATIONS_TEST_DB, ...mail },
+    { DB: {} as D1Database, ...mail },
   );
 }
 
@@ -669,27 +659,21 @@ it.each([
   expect(send).not.toHaveBeenCalled();
 });
 
-/** Invoke the authenticated lifecycle producer with local D1 and a mocked mail binding. */
-function webhook(
+/** Invoke the authenticated lifecycle producer with local SQLite and a mocked mail binding. */
+async function webhook(
   body: unknown,
   secret: string | null = 'test-secret',
   enabled = false,
 ) {
   return app.request(
     '/webhook/slant3d',
+    await signedSlant(slantEnvelope(body), secret),
     {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...(secret ? { 'x-slant-webhook-secret': secret } : {}),
-      },
-      body: JSON.stringify(body),
-    },
-    {
-      DB: bindings.NOTIFICATIONS_TEST_DB,
+      DB: {} as D1Database,
       ...mail,
       ORDER_NOTIFICATIONS_ENABLED: enabled ? 'true' : 'false',
       SLANT_WEBHOOK_SECRET: 'test-secret',
+      SLANT_PLATFORM_ID: 'test-platform-id',
     },
   );
 }
@@ -714,7 +698,7 @@ describe('authenticated Slant lifecycle and notification recovery', () => {
     expect((await webhook(event, null)).status).toBe(401);
     expect((await webhook(event, 'wrong')).status).toBe(401);
     expect((await webhook({ ...event, eventId: '' })).status).toBe(422);
-    expect((await webhook({ ...event, eventId: undefined })).status).toBe(422);
+    expect((await webhook({ ...event, orderId: undefined })).status).toBe(422);
     expect((await webhook({ ...event, orderId: 'unknown' })).status).toBe(404);
     const second = await order();
     await db
@@ -984,18 +968,7 @@ describe('authenticated webhook failure boundaries', () => {
     const secret = 'PRIVATE customer@example.com token';
     const response = await app.request(
       '/webhook/slant3d',
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-slant-webhook-secret': 'secret',
-        },
-        body: JSON.stringify({
-          eventId: 'failed',
-          orderId: 'retained',
-          status: 'SHIPPED',
-        }),
-      },
+      await signedSlant(slantEnvelope({ eventId: 'failed', orderId: 'retained', status: 'SHIPPED' }), 'secret'),
       {
         DB: {
           prepare() {
@@ -1004,6 +977,7 @@ describe('authenticated webhook failure boundaries', () => {
         },
         ...mail,
         SLANT_WEBHOOK_SECRET: 'secret',
+        SLANT_PLATFORM_ID: 'test-platform-id',
       },
     );
     expect(response.status).toBe(503);
@@ -1012,4 +986,41 @@ describe('authenticated webhook failure boundaries', () => {
     expect(send).not.toHaveBeenCalled();
     log.mockRestore();
   });
+});
+
+it('accepts provider envelopes without event IDs and deduplicates freshly signed redelivery', async () => {
+  const row = await order();
+  const body = { event_type: 'order.shipped', platform_id: 'test-platform-id', data: { order: {
+    public_id: row.slantPublicOrderId, status: 'SHIPPED', tracking_number: 'TRACK-PROVIDER',
+  } } };
+  const env = { DB: {} as D1Database, ...mail, ORDER_NOTIFICATIONS_ENABLED: 'false', SLANT_WEBHOOK_SECRET: 'test-secret', SLANT_PLATFORM_ID: 'test-platform-id' };
+  for (const timestamp of [String(Date.now()), String(Date.now() + 1000)]) {
+    expect((await app.request('/webhook/slant3d', await signedSlant({ ...body, timestamp }, 'test-secret', timestamp), env)).status).toBe(200);
+  }
+  expect((await currentOrder(row.id))?.slantStatus).toBe('SHIPPED');
+  expect((await db.select().from(schema.orderEventsTable)).filter(event => event.type === 'slant_status_changed')).toHaveLength(1);
+  expect((await db.select().from(attempts)).filter(attempt => attempt.notificationType === 'order_shipped')).toHaveLength(1);
+  expect(send).not.toHaveBeenCalled();
+});
+
+it.each(['tampering', 'stale', 'future', 'platform', 'malformed-signature'])('rejects %s before persistence', async fault => {
+  const row = await order();
+  const body = { event_type: 'order.shipped', platform_id: fault === 'platform' ? 'wrong' : 'test-platform-id', data: { order: { public_id: row.slantPublicOrderId, status: 'SHIPPED' } } };
+  const timestamp = String(Date.now() + (fault === 'stale' ? -600_000 : fault === 'future' ? 600_000 : 0));
+  const options = await signedSlant(body, 'test-secret', timestamp);
+  if (fault === 'tampering') options.body += ' ';
+  if (fault === 'malformed-signature') options.headers['X-Webhook-Signature-256'] = 'sha256=xyz';
+  const response = await app.request('/webhook/slant3d', options, { DB: {} as D1Database, ...mail, SLANT_WEBHOOK_SECRET: 'test-secret', SLANT_PLATFORM_ID: 'test-platform-id' });
+  expect(response.status).toBe(401);
+  expect((await currentOrder(row.id))?.slantStatus).toBe('PROCESSING');
+  expect(send).not.toHaveBeenCalled();
+});
+
+it('acknowledges unrelated authenticated provider events without lifecycle effects', async () => {
+  const response = await app.request('/webhook/slant3d', await signedSlant({ event_type: 'file.updated', platform_id: 'test-platform-id', data: {} }), {
+    DB: {} as D1Database, ...mail, SLANT_WEBHOOK_SECRET: 'test-secret', SLANT_PLATFORM_ID: 'test-platform-id',
+  });
+  expect(await response.json()).toEqual({ success: true, ignored: true });
+  expect(await db.select().from(schema.orderEventsTable)).toHaveLength(0);
+  expect(send).not.toHaveBeenCalled();
 });

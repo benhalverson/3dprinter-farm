@@ -46,7 +46,7 @@ test.each(origins)('preserves preflight and unauthorized profile CORS for %s', a
   expect(preflight.headers.get('Access-Control-Allow-Methods')?.split(',')).toEqual([
     'GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS',
   ]);
-  expect(preflight.headers.get('Access-Control-Allow-Headers')?.toLowerCase()).toBe('content-type,authorization,x-cart-token');
+  expect(preflight.headers.get('Access-Control-Allow-Headers')?.toLowerCase()).toBe('content-type,authorization,x-cart-token,x-expected-account-id');
   expect(preflight.headers.get('Vary')).toContain('Access-Control-Request-Headers');
   expect(mockBetterAuth.handler).not.toHaveBeenCalled();
   mockBetterAuth.getSession.mockResolvedValueOnce(null);
