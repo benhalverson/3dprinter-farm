@@ -47,3 +47,16 @@ Primary provider references: [Square CreatePaymentLink](https://developer.square
 Trusted Slant lifecycle boundary: `/webhook/slant3d` requires the configured `x-slant-webhook-secret`, resolves the persisted Slant public order ID, and records `slant_status_changed` with source `slant3d` and the external event ID. Follow-on notification consumers must read the persisted transition; cancellation evidence (`CANCELED` / `canceledAt`) establishes manufacturing cancellation only and never proves a payment refund. Issue181 must establish its own durable verified Square refund evidence before reporting refunded payment. The retired admin route emits no cancellation or refund event.
 
 Admin order list filters use `squareOrderId` and `squarePaymentId`; detail responses expose both identifiers. Legacy Stripe identifiers are not accepted as payment evidence or retained in the current schema.
+
+Slant V2 order adapter uses the same validated draft shape for shipping estimates
+and paid fulfillment: `customer.platformId`, `customer.details.email/address`
+(`line1`/`zip`), and `items[].type = PRINT`. Paid fulfillment reads the immutable
+paid snapshot, with checkout/payment correlation in metadata. It retains
+`data.order.publicId` before processing. Process confirmations require the same
+`data.publicId` plus status/payment evidence; reconciliation validates the returned
+nested order ID and both metadata identifiers. PAID, QUEUED, PRINTING and
+AWAITING_SHIPMENT map to the existing local PROCESSING lifecycle so notification
+and customer-order semantics remain stable. Invalid/mismatched responses remain
+ambiguous and never authorize a second manufacturing call. Fixtures follow the
+provider examples in #233/#235; live provider documentation returned 403 during
+this implementation, and no live transaction was attempted.
