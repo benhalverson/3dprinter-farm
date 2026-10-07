@@ -581,21 +581,20 @@ export type ProfileData = z.infer<typeof ProfileDataSchema>;
 export const ordersTable = sqliteTable('ordersTable', {
   id: integer('id').primaryKey(),
   userId: text('user_id')
-    .references(() => users.id, { onDelete: 'cascade' })
-    .notNull(), // Preserve existing online ownership; future in-person intake requires its own safe storage migration
+    .references(() => users.id, { onDelete: 'cascade' }),
   orderNumber: text('order_number').notNull().unique(),
   cartId: text('cart_id'),
   filename: text('filename'),
-  fileURL: text('file_url').notNull(),
+  fileURL: text('file_url'),
 
   // Shipping address fields specific to each order
-  shipToName: text('ship_to_name').notNull(),
-  shipToStreet1: text('ship_to_street_1').notNull(),
+  shipToName: text('ship_to_name'),
+  shipToStreet1: text('ship_to_street_1'),
   shipToStreet2: text('ship_to_street_2'),
-  shipToCity: text('ship_to_city').notNull(),
-  shipToState: text('ship_to_state').notNull(),
-  shipToZip: text('ship_to_zip').notNull(),
-  shipToCountryISO: text('ship_to_country_iso').notNull(),
+  shipToCity: text('ship_to_city'),
+  shipToState: text('ship_to_state'),
+  shipToZip: text('ship_to_zip'),
+  shipToCountryISO: text('ship_to_country_iso'),
 
   // Billing address fields (if needed)
   billToStreet1: text('bill_to_street_1'),
@@ -1012,3 +1011,21 @@ export const checkoutAttempts = sqliteTable(
     }),
   ],
 );
+
+/** Immutable seller-created sale; no customer account or shipping identity is fabricated. */
+export const inPersonSales = sqliteTable('in_person_sales', {
+  id: text('id').primaryKey(),
+  requestKey: text('request_key').notNull().unique(),
+  sellerId: text('seller_id').notNull().references(() => users.id),
+  request: text('request').notNull(),
+  snapshot: text('snapshot').notNull(),
+  merchantId: text('merchant_id').notNull(),
+  locationId: text('location_id').notNull(),
+  environment: text('environment').notNull(),
+  state: text('state').notNull().default('pending'),
+  squareOrderId: text('square_order_id').unique(),
+  squarePaymentId: text('square_payment_id').unique(),
+  paymentUrl: text('payment_url'),
+  paymentLinkId: text('payment_link_id'),
+  createdAt: integer('created_at').notNull(),
+});
