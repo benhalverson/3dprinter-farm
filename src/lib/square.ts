@@ -321,18 +321,28 @@ export function squareClient(config: SquareConfig) {
   };
 }
 
+/** Side-effect-free webhook configuration shared with readiness. */
+export function squareWebhookConfig(env: Bindings) {
+  const key = env.SQUARE_WEBHOOK_SIGNATURE_KEY?.trim();
+  const notificationURL = env.SQUARE_WEBHOOK_NOTIFICATION_URL?.trim();
+  let url: URL;
+  try { url = new URL(notificationURL || ''); } catch { throw squareFailure('square_configuration_required'); }
+  if (!key || url.protocol !== 'https:' || url.username || url.password || url.hash)
+    throw squareFailure('square_configuration_required');
+  return { key, notificationURL: notificationURL as string };
+}
+
 /** Verifies Square HMAC over the fixed subscription URL followed by the exact raw body. */
 export async function verifySquareSignature(
   body: string,
   signature: string | undefined,
   env: Bindings,
 ) {
-  if (!env.SQUARE_WEBHOOK_SIGNATURE_KEY || !env.SQUARE_WEBHOOK_NOTIFICATION_URL)
-    throw squareFailure('square_configuration_required');
+  const config = squareWebhookConfig(env);
   if (!signature || !/^[A-Za-z0-9+/]{43}=$/.test(signature)) return false;
   const key = await crypto.subtle.importKey(
     'raw',
-    new TextEncoder().encode(env.SQUARE_WEBHOOK_SIGNATURE_KEY),
+    new TextEncoder().encode(config.key),
     { name: 'HMAC', hash: 'SHA-256' },
     false,
     ['verify'],
@@ -342,6 +352,6 @@ export async function verifySquareSignature(
     'HMAC',
     key,
     bytes,
-    new TextEncoder().encode(env.SQUARE_WEBHOOK_NOTIFICATION_URL + body),
+    new TextEncoder().encode(config.notificationURL + body),
   );
 }
