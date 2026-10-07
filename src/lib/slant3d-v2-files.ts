@@ -111,6 +111,7 @@ async function slant3DFileRequest<T>(
   errorMessage: string,
   options: {
     method?: 'GET' | 'POST' | 'DELETE';
+    signal?: AbortSignal;
     body?: unknown;
   },
 ): Promise<T> {
@@ -127,6 +128,7 @@ async function slant3DFileRequest<T>(
   try {
     response = await fetch(url, {
       method,
+      ...(options.signal ? { signal: options.signal } : {}),
       headers: {
         ...(method === 'POST' ? { 'Content-Type': 'application/json' } : {}),
         Authorization: `Bearer ${env.SLANT_API_V2}`,
@@ -236,12 +238,13 @@ export async function estimateSlant3DFile(
 export async function getSlant3DFile(
   env: Bindings,
   publicFileServiceId: string,
+  signal?: AbortSignal,
 ): Promise<Slant3DFileData> {
   return slant3DFileRequest<Slant3DFileData>(
     env,
     `files/${encodeURIComponent(publicFileServiceId)}`,
     'Failed to retrieve file from Slant3D V2 API',
-    { method: 'GET' },
+    { method: 'GET', signal },
   );
 }
 

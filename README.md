@@ -302,3 +302,19 @@ Legacy lines without an authorization version are inaccessible through this cont
 Run `pnpm run test:database` to test ownership, isolation, foreign-key cascades and concurrent mutations against disposable SQLite/libsql databases. The harness uses `drizzle-kit generate` and `drizzle-kit migrate` to create a current-schema database, and separately checks committed-history replay in another disposable database. This Node suite runs as part of `test:ci`, separately from the mocked Hono/Workers suites.
 
 Check migration-replay diagnostics separately from current-schema test results. Before provisioning or migrating a deployment, verify the target database's applied history and required constraints. If replay fails, reconcile the history/bootstrap discrepancy without rewriting applied history; a passing current-schema suite does not establish upgrade compatibility. Remote migration and deployment require separate authorization.
+
+### D1 catalog browsing and on-demand previews
+
+Catalog list/search/detail metadata no longer contacts Slant. List/search items now
+include ordered `categories: [{categoryId, categoryName}]` from D1; clients can
+categorize a page without a detail request per item. Paginated list/search retains
+the existing 100-item bound and response envelope. The legacy unpaginated array
+remains for compatibility; its category queries are chunked to 100 product IDs.
+New clients should always paginate.
+
+For Slant-backed items, `stl` is an absolute `/product/:id/print-file` URL. The
+existing store preview loader can fetch it unchanged and follow its 302 redirect.
+Only explicit preview requests resolve a fresh provider URL, with a five-second
+timeout and four concurrent resolutions per Worker isolate; overflow is 503 and
+provider failure is 502. Redirects are no-store. Existing legacy non-Slant STL URLs
+are preserved. Checkout availability, shipping and fulfillment checks are unchanged.

@@ -44,7 +44,7 @@ import {
   catalogReadinessResponseSchema,
   evaluateCatalogReadiness,
 } from '../modules/catalogReadiness';
-import type { Bindings } from '../types';
+
 import {
   authMiddleware,
   requireCatalogMutationRole,
@@ -67,66 +67,23 @@ function parseImageGallery(imageGallery: string | null): string[] {
   }
 }
 
-type HydratableProduct = {
-  stl?: string | null;
-  publicFileServiceId?: string | null;
-};
-
-function formatHydrationError(error: unknown): unknown {
-  if (error instanceof Slant3DFileApiError) {
-    return {
-      message: error.message,
-      status: error.status,
-      details: error.details,
-    };
-  }
-
-  return error instanceof Error ? error.message : String(error);
+/** Stable preview URL keeps existing STL consumers working without eager provider IO. */
+function withPreview<T extends { id: number; stl?: string | null; publicFileServiceId?: string | null }>(requestURL: string, product: T): T {
+  return product.publicFileServiceId ? { ...product, stl: new URL(`/product/${product.id}/print-file`, requestURL).href } : product;
 }
+let activePreviewResolutions = 0;
 
-async function hydrateProductStlUrls<T extends HydratableProduct>(
-  env: Bindings,
-  products: T[],
-): Promise<T[]> {
-  const freshUrlByFileId = new Map<string, Promise<string | null>>();
-
-  const getFreshUrl = (publicFileServiceId: string) => {
-    const cached = freshUrlByFileId.get(publicFileServiceId);
-    if (cached) return cached;
-
-    const request = getSlant3DFile(env, publicFileServiceId)
-      .then(file => {
-        if (file.fileURL) return file.fileURL;
-
-        console.error('Slant3D file hydration returned no fileURL:', {
-          publicFileServiceId,
-        });
-        return null;
-      })
-      .catch((error: unknown) => {
-        console.error('Failed to hydrate Slant3D file URL:', {
-          publicFileServiceId,
-          error: formatHydrationError(error),
-        });
-        return null;
-      });
-
-    freshUrlByFileId.set(publicFileServiceId, request);
-    return request;
-  };
-
-  return Promise.all(
-    products.map(async product => {
-      const publicFileServiceId =
-        typeof product.publicFileServiceId === 'string'
-          ? product.publicFileServiceId.trim()
-          : '';
-      if (!publicFileServiceId) return product;
-
-      const freshStlUrl = await getFreshUrl(publicFileServiceId);
-      return freshStlUrl ? { ...product, stl: freshStlUrl } : product;
-    }),
-  );
+/** Load category membership in one D1 query for the current page. */
+async function withCategories<T extends { id: number }>(db: Parameters<typeof saveCatalogItem>[0], products: T[]) {
+  if (!products.length) return [];
+  const links: Array<{ productId: number; categoryId: number; categoryName: string; orderIndex: number | null }> = [];
+  // Paginated callers need one query; legacy array callers stay below D1's bind limit.
+  for (let offset = 0; offset < products.length; offset += 100) {
+    links.push(...await db.select({ productId: productsToCategories.productId, categoryId: categoryTable.categoryId, categoryName: categoryTable.categoryName, orderIndex: productsToCategories.orderIndex })
+      .from(productsToCategories).innerJoin(categoryTable, eq(productsToCategories.categoryId, categoryTable.categoryId))
+      .where(inArray(productsToCategories.productId, products.slice(offset, offset + 100).map(product => product.id))).all());
+  }
+  return products.map(product => ({ ...product, categories: links.filter(link => link.productId === product.id).sort((a, b) => (a.orderIndex ?? 0) - (b.orderIndex ?? 0)).map(({ categoryId, categoryName }) => ({ categoryId, categoryName })) }));
 }
 
 const product = factory
@@ -240,7 +197,7 @@ const product = factory
             ...productPrices(product),
             imageGallery: parseImageGallery(product.imageGallery),
           }));
-          const products = await hydrateProductStlUrls(c.env, parsedProducts);
+          const products = await withCategories(c.var.db, parsedProducts.map(item => withPreview(c.req.url, item)));
 
           return c.json(products);
         }
@@ -298,7 +255,7 @@ const product = factory
           ...productPrices(product),
           imageGallery: parseImageGallery(product.imageGallery),
         }));
-        const products = await hydrateProductStlUrls(c.env, parsedProducts);
+        const products = await withCategories(c.var.db, parsedProducts.map(item => withPreview(c.req.url, item)));
 
         const pagination = {
           page,
@@ -471,7 +428,7 @@ const product = factory
           ...productPrices(product),
           imageGallery: parseImageGallery(product.imageGallery),
         }));
-        const products = await hydrateProductStlUrls(c.env, parsedProducts);
+        const products = await withCategories(c.var.db, parsedProducts.map(item => withPreview(c.req.url, item)));
 
         const pagination = {
           page,
@@ -971,6 +928,26 @@ const product = factory
     },
   )
 
+  .get('/product/:id/print-file', describeRoute({
+    summary: 'Resolve a catalog STL preview on demand', tags: ['Products'],
+    description: 'One provider lookup with a 5-second timeout; maximum four concurrent resolutions per Worker isolate. Returns a non-cacheable redirect; metadata reads never call Slant.',
+    responses: { 302: { description: 'Fresh STL download redirect' }, 404: { description: 'Catalog print file not found' }, 502: { description: 'Preview unavailable' }, 503: { description: 'Preview resolver busy' } },
+  }), async c => {
+    const id = Number(c.req.param('id'));
+    if (!Number.isSafeInteger(id) || id < 1) return c.json({ error: 'Product not found' }, 404);
+    const item = await c.var.db.select().from(productsTable).where(eq(productsTable.id, id)).get();
+    if (!item?.publicFileServiceId) return c.json({ error: 'Print file not found' }, 404);
+    c.header('Cache-Control', 'no-store');
+    if (activePreviewResolutions >= 4) return c.json({ error: 'Preview resolver busy' }, 503);
+    activePreviewResolutions++;
+    try {
+      const file = await getSlant3DFile(c.env, item.publicFileServiceId, AbortSignal.timeout(5000));
+      const url = new URL(file.fileURL || '');
+      if (url.protocol !== 'https:' || url.username || url.password) throw new Error('Invalid preview URL');
+      return c.redirect(url.href, 302);
+    } catch { return c.json({ error: 'Preview unavailable' }, 502); }
+    finally { activePreviewResolutions--; }
+  })
   .get(
     '/product/:id',
     describeRoute({
@@ -985,7 +962,7 @@ const product = factory
         .from(productsTable)
         .where(eq(productsTable.id, parsedData.id))
         .all();
-      const [rawProduct] = await hydrateProductStlUrls(c.env, response);
+      const rawProduct = response[0] ? withPreview(c.req.url, response[0]) : undefined;
 
       if (!rawProduct) {
         return c.json({ error: 'Product not found' }, 404);
