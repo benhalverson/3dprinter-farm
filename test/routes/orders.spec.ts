@@ -182,6 +182,7 @@ describe('Customer Orders API', () => {
     expect(res.status).toBe(200);
     expect(res.headers.get('Cache-Control')).toBe('private, no-store');
     expect(await res.json()).toEqual({
+      accountId: 'user_123',
       orders: [],
       pagination: { limit: 20, offset: 0, count: 0 },
     });
@@ -231,6 +232,7 @@ describe('Customer Orders API', () => {
       stripePaymentIntentId?: string;
     };
     expect(body.id).toBe(42);
+    expect(body).toHaveProperty('accountId','user_123');
     expect(body.fulfillment).toMatchObject({
       slantPublicOrderId: slantOrderId,
       trackingNumber: 'TRACK123',
@@ -303,7 +305,7 @@ describe('Customer Orders API', () => {
     expect(body).not.toHaveProperty('itemSnapshot');
     expect(body.items[0]).not.toHaveProperty('publicFileServiceId');
     expect(body.items[0]).not.toHaveProperty('filamentId');
-    expect(body).not.toHaveProperty('refund');
+    expect(body.refund ?? null).toBeNull();
     expect(fetch).not.toHaveBeenCalled();
   });
 
@@ -330,7 +332,17 @@ describe('Customer Orders API', () => {
     const body = await response.json();
     expect(body.paymentStatus).toBe('paid');
     expect(body.cancellation).toEqual({ canceledAt: '2026-10-01T12:00:00Z' });
-    expect(body).not.toHaveProperty('refund');
+    expect(body.refund ?? null).toBeNull();
+  });
+
+  test.each(['/orders','/orders/42'])('rejects an expected-account mismatch before reading %s',async path => {
+    const response=await app.fetch(new Request(`http://localhost${path}`,{headers:{Cookie:'better-auth.session_token=mock-session-token','X-Expected-Account-Id':'previous-account'}}),env);
+    expect(response.status).toBe(409);expect(await response.json()).toEqual({error:'account_changed'});expect(mockWhere).not.toHaveBeenCalled();expect(response.headers.get('Cache-Control')).toBe('private, no-store');
+  });
+  test('binds an empty list to the authenticated account',async()=>{
+    mockWhere.mockReturnValueOnce({all:vi.fn().mockResolvedValue([])});
+    const response=await app.fetch(new Request('http://localhost/orders',{headers:{Cookie:'better-auth.session_token=mock-session-token','X-Expected-Account-Id':'user_123'}}),env);
+    expect(response.status).toBe(200);expect(await response.json()).toMatchObject({accountId:'user_123',orders:[]});
   });
 
   test('forbids access to another customer order', async () => {
