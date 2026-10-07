@@ -2633,8 +2633,8 @@ describe('durable product attachments through Hono', () => {
       'POST',
       '/add-product',
     );
-    // The controlled manufacturing request fails before any catalog publication.
-    expect(create.status).toBe(500);
+    // The retired route cannot publish or manufacture.
+    expect(create.status).toBe(404);
     expect(records(schema.productAssetReferenceAttempts)).toEqual([]);
   });
   it('updates only the original contract fields and keeps pricing, file IDs and omitted categories', async () => {

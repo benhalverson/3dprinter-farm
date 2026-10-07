@@ -648,11 +648,7 @@ test('existing authorized admin recovery reads retained Slant identity and rejec
       )
     ).status,
   ).toBe(403);
-  const [member] = await db.select().from(schema.memberTable);
-  await db
-    .update(schema.memberTable)
-    .set({ role: 'admin' })
-    .where(eq(schema.memberTable.id, member.id));
+  await notificationAdmin();
   expect(
     (
       await admin.request(

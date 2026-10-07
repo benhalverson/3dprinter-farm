@@ -36,13 +36,6 @@ function mockAdminUser() {
   });
 
   // Organization lookup
-  mockWhere.mockReturnValueOnce({
-    get: vi.fn().mockResolvedValue({
-      id: 'org_shared_catalog',
-      name: '3D Printer Web API',
-      slug: '3dprinter-web-api',
-    }),
-  });
 
   // Member lookup
   mockWhere.mockReturnValueOnce({
@@ -71,13 +64,6 @@ function mockNonAdminUser() {
   });
 
   // Organization lookup
-  mockWhere.mockReturnValueOnce({
-    get: vi.fn().mockResolvedValue({
-      id: 'org_shared_catalog',
-      name: '3D Printer Web API',
-      slug: '3dprinter-web-api',
-    }),
-  });
 
   // Member lookup - member role (not admin)
   mockWhere.mockReturnValueOnce({
