@@ -167,7 +167,7 @@ it('exact generated0025/0026 upgrade preserves published0024 catalog and draft i
       markupPercentage: null,
       catalogMutationId: null,
     });
-    expect(await db.select().from(schema.productDrafts)).toEqual([
+    expect(await db.select({id: schema.productDrafts.id, ownerId: schema.productDrafts.ownerId, target: schema.productDrafts.target, revision: schema.productDrafts.revision, state: schema.productDrafts.state, preparation: schema.productDrafts.preparation, createdAt: schema.productDrafts.createdAt, updatedAt: schema.productDrafts.updatedAt}).from(schema.productDrafts)).toEqual([
       expect.objectContaining({
         id: 'saved-draft',
         ownerId: 'owner',

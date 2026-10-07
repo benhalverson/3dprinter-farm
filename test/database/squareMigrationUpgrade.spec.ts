@@ -6,7 +6,7 @@ import {
   generateSQLiteMigration,
   type DrizzleSQLiteSnapshotJSON,
 } from 'drizzle-kit/api';
-import { eq, getTableColumns } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/libsql';
 import { migrate } from 'drizzle-orm/libsql/migrator';
 import { integer, sqliteTable, text } from 'drizzle-orm/sqlite-core';
@@ -39,8 +39,17 @@ const baselineNotifications = sqliteTable('order_notification_attempts', {
   createdAt: text('created_at').$defaultFn(() => new Date().toISOString()),
   updatedAt: text('updated_at').$defaultFn(() => new Date().toISOString()),
 });
-const { slantEventKey: _futureLifecycleKey, ...squareOrderColumns } =
-  getTableColumns(schema.ordersTable);
+// Project only fields present in this historical migration.
+const squareOrderColumns = {
+  orderNumber: schema.ordersTable.orderNumber,
+  squareOrderId: schema.ordersTable.squareOrderId,
+  squarePaymentId: schema.ordersTable.squarePaymentId,
+  checkoutAttemptId: schema.ordersTable.checkoutAttemptId,
+  paymentStatus: schema.ordersTable.paymentStatus,
+  fulfillmentState: schema.ordersTable.fulfillmentState,
+  itemSnapshot: schema.ordersTable.itemSnapshot,
+  customerSnapshot: schema.ordersTable.customerSnapshot,
+};
 
 /** Builds a disposable schema baseline through Drizzle, without replaying broken historical bootstrap migrations. */
 async function baselineFolder(root: string) {
