@@ -1,3 +1,4 @@
+import { catalogAttachments } from '../../src/modules/catalogAttachments';
 import { Param, SQL, StringChunk } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/d1';
 import { SQLiteColumn, type SQLiteTable } from 'drizzle-orm/sqlite-core';
@@ -125,7 +126,7 @@ const db = {
               structuredClone({
                 ...value,
                 ...(table === schema.productDrafts
-                  ? { status: 'active', attachments: null }
+                  ? { status: 'active', attachments: value.attachments ?? null }
                   : {}),
               }),
             );
@@ -467,6 +468,86 @@ describe('durable product attachments through Hono', () => {
       },
     ]);
     authorize();
+  });
+  it('hydrates public context and editable identities when starting an existing-product draft', async () => {
+    existingProduct({image:'https://external.example/b.png',imageGallery:JSON.stringify(['https://external.example/a.png','https://external.example/b.png'])});
+    tables.set(schema.productDrafts,[]);
+    const response=await app.request('/admin/product-drafts',{method:'POST',headers:{cookie:'session=yes','Content-Type':'application/json'},body:JSON.stringify({target:{kind:'existing',productId:42}})},env);
+    expect(response.status,await response.clone().text()).toBe(201);
+    const body=await response.json();
+    expect(body.context.product.imageGallery).toEqual(['https://external.example/a.png','https://external.example/b.png']);
+    expect(body.attachments.photos).toHaveLength(2);
+    expect(body.attachments.primaryPhotoId).toBe(body.attachments.photos[1].id);
+    expect(body.attachments.photoOrder).toEqual(body.attachments.photos.map((photo:{id:string})=>photo.id));
+  });
+  it('retains a catalog gallery while adding, reordering and replacing draft photos', async () => {
+    const original = existingProduct({
+      image: 'https://public.example/second.png',
+      imageGallery: JSON.stringify([
+        'https://public.example/first.png',
+        'https://public.example/second.png',
+        'https://public.example/third.png',
+      ]),
+    });
+    draft().target = { kind: 'existing', productId: 42 };
+    draft().attachments = await catalogAttachments(db as never, {
+      ...original,
+      imageGallery: JSON.parse(original.imageGallery),
+    });
+    const before = structuredClone(original);
+    const initial = structuredClone(draft().attachments!);
+    expect(initial.photos).toHaveLength(3);
+    expect(initial.primaryPhotoId).toBe(initial.photos[1].id);
+    const added = (await upload()).draft.attachments;
+    expect(added.photos).toHaveLength(4);
+    expect(added.photoOrder.slice(0, 3)).toEqual(initial.photoOrder);
+    expect(added.primaryPhotoId).toBe(initial.primaryPhotoId);
+    const reversed = [...added.photoOrder].reverse();
+    expect(
+      (
+        await request('/attachments', 'PATCH', {
+          expectedRevision: revision(),
+          photoOrder: reversed,
+        })
+      ).status,
+    ).toBe(200);
+    expect(draft().attachments?.primaryPhotoId).toBe(initial.primaryPhotoId);
+    const replaced = (await upload({ replacesId: initial.photos[0].id })).draft
+      .attachments;
+    expect(replaced.photos).toHaveLength(4);
+    expect(replaced.cleanup).toEqual([]);
+    expect(
+      (
+        await request(`/attachments/${initial.photos[1].id}?expectedRevision=${revision()}`, 'DELETE')
+      ).status,
+    ).toBe(200);
+    expect(draft().attachments?.primaryPhotoId).toBeNull();
+    expect(draft().attachments?.cleanup).toEqual([]);
+    expect(records(schema.productsTable)[0]).toEqual(before);
+    expect(fetch).not.toHaveBeenCalled();
+  });
+  it('preserves managed catalog IDs and never queues external images for bucket deletion on discard', async () => {
+    const uploaded = (await upload()).draft.attachments.photos[0];
+    const url = `/catalog/assets/${uploaded.assetId}/image`;
+    const state = await catalogAttachments(db as never, {
+      id: 42,
+      name: 'Part',
+      image: url,
+      imageGallery: ['https://external.example/old.png', url],
+    });
+    expect(state.photos[1]).toMatchObject({
+      id: uploaded.id,
+      catalogSource: { managed: true, productId: 42, url },
+    });
+    expect(state.photos[0].catalogSource?.managed).toBe(false);
+    draft().attachments = state;
+    expect(
+      (await request(`?expectedRevision=${revision()}`, 'DELETE'))
+        .status,
+    ).toBe(200);
+    expect(draft().attachments?.cleanup.map(item => item.assetId)).toEqual([
+      uploaded.assetId,
+    ]);
   });
   it.each([
     'image/png',

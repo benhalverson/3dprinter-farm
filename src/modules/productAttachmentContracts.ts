@@ -19,6 +19,14 @@ export const savedAttachmentSchema = z
     status: z.literal('saved'),
     imageUrl: z.string().nullable(),
     publicFileServiceId: z.string().nullable(),
+    catalogSource: z
+      .object({
+        productId: z.number().int().positive(),
+        url: z.string(),
+        managed: z.boolean(),
+      })
+      .strict()
+      .optional(),
   })
   .strict();
 export const attachmentTransferSchema = z

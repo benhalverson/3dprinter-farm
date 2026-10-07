@@ -17,6 +17,7 @@ export type TransferRecord = AttachmentTransfer & {
     | 'done';
 };
 export type AttachmentState = {
+  catalogHydrated?: boolean;
   photos: SavedAttachment[];
   printFile: SavedAttachment | null;
   primaryPhotoId: string | null;
