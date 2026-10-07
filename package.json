@@ -97,6 +97,7 @@
     },
     "onlyBuiltDependencies": [
       "@prisma/engines",
+      "core-js-pure",
       "esbuild",
       "prisma",
       "sharp",
