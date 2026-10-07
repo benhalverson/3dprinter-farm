@@ -104,8 +104,14 @@ export const productDraftContextSchema = z.discriminatedUnion('status', [
           name: z.string(),
           description: z.string(),
           image: z.string().nullable(),
+          imageGallery: z.array(z.string()).optional(),
           price: z.number(),
-          markupPercentage: z.number().finite().positive().nullable().optional(),
+          markupPercentage: z
+            .number()
+            .finite()
+            .positive()
+            .nullable()
+            .optional(),
           inPersonPrice: z
             .number()
             .finite()
