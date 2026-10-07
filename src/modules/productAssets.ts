@@ -303,8 +303,11 @@ export const reserveCatalogAssets = createMiddleware<WorkerEnv>(
         return c.json({ error: error.message }, error.status);
       return c.json({ error: 'Could not reserve attachment references' }, 500);
     }
+    c.set('catalogWriteStarted', false);
     await next();
-    if (c.res.status < 500) await release();
+    // A failed estimate/validation cannot have committed a catalog reference.
+    // Once any write is attempted, preserve uncertain outcomes conservatively.
+    if (c.res.status < 500 || !c.get('catalogWriteStarted')) await release();
   },
 );
 export async function retryAssetReleases(db: Database, assets: Asset[]) {
