@@ -169,6 +169,7 @@ const productV2 = factory.createApp().put(
       if (normalizedCategoryIds) {
         updateData.categoryId = normalizedCategoryIds[0];
       }
+      c.set('catalogWriteStarted', true);
       await saveCatalogItem(c.var.db, existingProduct, updateData);
 
       if (normalizedCategoryIds) {
