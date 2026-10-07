@@ -108,6 +108,9 @@ shopping.post(
       return c.json({ error: 'invalid_session' }, 400);
     if (!c.req.header('authorization')?.startsWith('Bearer '))
       return c.json({ error: 'unauthorized' }, 401);
+    const expected = c.req.header('X-Expected-Account-Id');
+    if (expected !== undefined && expected !== c.var.userId)
+      return c.json({ error: 'account_changed' }, 409);
     const input = c.req.valid('json');
     if (input.cart)
       await requireCartAccess(c.var.db, input.cart.id, {

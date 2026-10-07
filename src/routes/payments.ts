@@ -1,5 +1,4 @@
-import { and, eq } from 'drizzle-orm';
-import { checkoutAttempts, ordersTable } from '../db/schema';
+import {attemptStatusSchema,readOwnedCheckoutAttempt} from '../modules/checkoutAttemptRead';
 import { describeRoute } from 'hono-openapi';
 import { validator, resolver } from 'hono-openapi/zod';
 import { z } from 'zod';
@@ -90,12 +89,6 @@ router.post(
     }
   },
 );
-const attemptStatusSchema = z.object({
-  attemptId: z.string(), quoteId: z.string(), cartId: z.string(),
-  state: z.enum(['pending', 'unknown', 'failed', 'cancelled', 'paid']),
-  paymentUrl: z.string().nullable(),
-  order: z.object({ id: z.number(), paymentStatus: z.string().nullable(), fulfillmentState: z.string().nullable(), status: z.string().nullable() }).nullable(),
-});
 for (const [path, key] of [
   ['/checkout-attempts/:attemptId', 'attemptId'],
   ['/checkout-attempts/by-request-key/:requestKey', 'requestKey'],
@@ -108,20 +101,8 @@ for (const [path, key] of [
     c.header('Cache-Control', 'no-store');
     const value = c.req.param(key);
     if (!z.string().uuid().safeParse(value).success) return c.json({ error: 'Attempt not found' }, 404);
-    const [attempt] = await c.var.db.select().from(checkoutAttempts).where(and(
-      eq(key === 'attemptId' ? checkoutAttempts.id : checkoutAttempts.requestKey, value),
-      eq(checkoutAttempts.ownerId, c.var.userId || ''),
-    ));
-    if (!attempt) return c.json({ error: 'Attempt not found' }, 404);
-    const [order] = await c.var.db.select({ id: ordersTable.id, paymentStatus: ordersTable.paymentStatus, fulfillmentState: ordersTable.fulfillmentState, status: ordersTable.status }).from(ordersTable).where(and(
-      eq(ordersTable.checkoutAttemptId, attempt.id), eq(ordersTable.userId, c.var.userId || ''),
-    ));
-    return c.json(attemptStatusSchema.parse({
-      attemptId: attempt.id, quoteId: attempt.quoteId, cartId: attempt.cartId,
-      state: attempt.state === 'paid' ? 'paid' : attempt.state === 'failed' ? 'failed' : attempt.state === 'cancelled' ? 'cancelled' : attempt.paymentUrl ? 'pending' : 'unknown',
-      paymentUrl: attempt.state === 'paid' ? null : attempt.paymentUrl,
-      order: order ?? null,
-    }));
+    const result=await readOwnedCheckoutAttempt(c.var.db,c.var.userId||'',key,value);
+    return result ? c.json(result) : c.json({error:'Attempt not found'},404);
   });
 }
 
