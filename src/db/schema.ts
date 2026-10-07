@@ -23,6 +23,8 @@ export const productDrafts = sqliteTable(
   {
     id: text('id').primaryKey(),
     ownerId: text('owner_id').notNull(),
+    creationRequestKey: text('creation_request_key'),
+    creationInputHash: text('creation_input_hash'),
     target: text('target', { mode: 'json' })
       .$type<ProductDraftTarget>()
       .notNull(),
@@ -45,6 +47,7 @@ export const productDrafts = sqliteTable(
     categoryConfirmationId: integer('category_confirmation_id'),
   },
   table => [
+    uniqueIndex('product_drafts_owner_creation_key').on(table.ownerId, table.creationRequestKey),
     index('product_drafts_owner_updated').on(table.ownerId, table.updatedAt),
   ],
 );
