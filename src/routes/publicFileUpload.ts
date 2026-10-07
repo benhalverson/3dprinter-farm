@@ -6,7 +6,7 @@ import {
   detectPhoto,
   photoContentType,
 } from '../modules/productPhotoBytes';
-import { dashFilename } from '../utils/dash';
+
 
 /** Require a configured public bucket URL instead of inventing an API asset route. */
 function publicBase(value: string | undefined): string | null {
@@ -71,10 +71,15 @@ export async function uploadPublicFile(c: Context<WorkerEnv>) {
       if (!stored) throw new Error('Photo identity already exists');
       return c.json({ message: 'File uploaded', key, url: `${base}/${key}` });
     }
-    const key = dashFilename(file.name);
-    await c.env.BUCKET.put(key, file.stream(), {
+    const ownerId = c.get('userId');
+    if (!ownerId) return c.json({ error: 'Unauthorized' }, 401);
+    const key = `users/${encodeURIComponent(ownerId)}/${crypto.randomUUID()}.stl`;
+    const stored = await c.env.BUCKET.put(key, file.stream(), {
+      onlyIf: { etagDoesNotMatch: '*' },
+      customMetadata: { ownerId },
       httpMetadata: { contentType: 'model/stl' },
     });
+    if (!stored) return c.json({ error: 'Upload identity conflict; retry upload' }, 409);
     return c.json({
       message: 'File uploaded',
       key,
