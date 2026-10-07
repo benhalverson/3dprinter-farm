@@ -70,6 +70,7 @@ const customerOrderSchema = z.object({
     shippedAt: z.string().nullable(),
     deliveredAt: z.string().nullable(),
   }),
+  refund: z.object({status:z.string(),amountCents:z.number().nullable(),currency:z.string().nullable(),refundedAt:z.string().nullable()}).nullable(),
   cancellation: z
     .object({
       canceledAt: z.string().nullable(),
@@ -201,6 +202,7 @@ function toCustomerOrder(order: OrderRow, events: OrderEventRow[] = []) {
       shippedAt: order.shippedAt,
       deliveredAt: order.deliveredAt,
     },
+    refund: order.refundStatus ? {status:order.refundStatus,amountCents:order.refundAmountCents,currency:order.currency,refundedAt:order.refundedAt} : null,
     cancellation: order.canceledAt ? { canceledAt: order.canceledAt } : null,
   };
 }

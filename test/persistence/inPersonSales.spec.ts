@@ -28,6 +28,7 @@ let client: ReturnType<typeof createClient>;
 let db: ReturnType<typeof drizzle<typeof schema>>;
 const env = mockEnv();
 const fetchMock = vi.fn<typeof fetch>();
+let refundStatus = 'PENDING';
 let phone = false;
 let reference = '';
 let amount = 1200;
@@ -81,6 +82,7 @@ async function event() {
   );
 }
 beforeEach(async () => {
+  refundStatus = 'PENDING';
   phone = false;
   state.userId = 'seller';
   state.role = 'admin';
@@ -132,6 +134,16 @@ beforeEach(async () => {
   vi.stubGlobal('fetch', fetchMock);
   fetchMock.mockImplementation(async (url, init) => {
     const path = String(url);
+    if (path.includes('/refunds'))
+      return Response.json({
+        refund: {
+          id: 'refund',
+          payment_id: 'payment',
+          location_id: 'location',
+          status: refundStatus,
+          amount_money: { amount: 1200, currency: 'USD' },
+        },
+      });
     if (path.includes('/locations/'))
       return Response.json({
         location: {
@@ -401,18 +413,16 @@ test('lost provider response leaves a recoverable sale with the same payload and
 
 async function mappedPhone() {
   phone = true;
-  await db
-    .insert(schema.squareCatalogMappings)
-    .values({
-      id: 'mapping',
-      productId: 1,
-      catalogId: 1,
-      environment: 'sandbox',
-      merchantId: 'merchant',
-      locationId: 'location',
-      itemId: 'item',
-      variationId: 'variation',
-    });
+  await db.insert(schema.squareCatalogMappings).values({
+    id: 'mapping',
+    productId: 1,
+    catalogId: 1,
+    environment: 'sandbox',
+    merchantId: 'merchant',
+    locationId: 'location',
+    itemId: 'item',
+    variationId: 'variation',
+  });
 }
 test('verified POS sale snapshots actual amounts and has no fabricated customer or Slant work', async () => {
   await mappedPhone();
@@ -541,5 +551,220 @@ test('POS intake reads and retries reject nonstaff without provider work', async
       )
     ).status,
   ).toBe(403);
+  expect(fetchMock).not.toHaveBeenCalled();
+});
+
+async function paidQR() {
+  await create();
+  await event();
+  return (await db.select().from(schema.ordersTable))[0];
+}
+function refund(
+  orderId: number,
+  body: object = { reason: 'Customer request' },
+) {
+  return admin.request(
+    `/admin/orders/${orderId}/cancel-refund`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    },
+    env,
+  );
+}
+test('Square refund stays pending until authoritative completion and never calls Slant for QR', async () => {
+  const order = await paidQR();
+  fetchMock.mockClear();
+  expect(await (await refund(order.id)).json()).toMatchObject({
+    state: 'pending',
+    success: false,
+    squareRefundId: 'refund',
+  });
+  expect((await db.select().from(schema.ordersTable))[0]).toMatchObject({
+    paymentStatus: 'paid',
+    refundStatus: 'pending',
+    refundAmountCents: 1200,
+  });
+  refundStatus = 'COMPLETED';
+  expect(
+    await (
+      await admin.request(
+        `/admin/orders/${order.id}/reconcile`,
+        { method: 'POST' },
+        env,
+      )
+    ).json(),
+  ).toMatchObject({ state: 'completed', success: true });
+  expect((await db.select().from(schema.ordersTable))[0]).toMatchObject({
+    paymentStatus: 'refunded',
+    refundStatus: 'completed',
+  });
+  await refund(order.id);
+  expect(
+    fetchMock.mock.calls.filter(
+      ([url, init]) =>
+        String(url).endsWith('/refunds') && init?.method === 'POST',
+    ),
+  ).toHaveLength(1);
+  expect(
+    fetchMock.mock.calls.every(([url]) => String(url).includes('square')),
+  ).toBe(true);
+});
+test('concurrent refund and lost responses reuse one durable identity and financial payload', async () => {
+  const order = await paidQR();
+  const original = fetchMock.getMockImplementation()!;
+  let lost = true;
+  fetchMock.mockImplementation(async (url, init) => {
+    const response = await original(url, init);
+    if (lost && String(url).endsWith('/refunds')) {
+      lost = false;
+      throw new Error('lost refund response');
+    }
+    return response;
+  });
+  await Promise.all([refund(order.id), refund(order.id)]);
+  await refund(order.id);
+  expect(await db.select().from(schema.squareRefundOperations)).toHaveLength(1);
+  const payloads = fetchMock.mock.calls
+    .filter(
+      ([url, init]) =>
+        String(url).endsWith('/refunds') && init?.method === 'POST',
+    )
+    .map(([, init]) => String(init?.body));
+  expect(payloads.length).toBeGreaterThan(0);
+  expect(new Set(payloads).size).toBe(1);
+  expect((await db.select().from(schema.ordersTable))[0].paymentStatus).toBe(
+    'paid',
+  );
+});
+test('nonstaff, invalid bodies and shipped orders without override cannot refund', async () => {
+  const order = await paidQR();
+  fetchMock.mockClear();
+  expect((await refund(order.id, { amount: 1 })).status).toBe(400);
+  await db
+    .update(schema.ordersTable)
+    .set({
+      source: 'online',
+      fulfillmentType: 'slant',
+      status: 'shipped',
+      slantStatus: 'SHIPPED',
+      fulfillmentState: 'processed',
+    });
+  expect((await refund(order.id)).status).toBe(400);
+  expect(fetchMock).not.toHaveBeenCalled();
+  await db.update(schema.memberTable).set({ role: 'member' });
+  state.role = 'user';
+  expect((await refund(order.id, { override: true })).status).toBe(403);
+});
+test('online refund waits for confirmed cancellation and uncertain DELETE is reconciled without repeat', async () => {
+  const order = await paidQR();
+  await db
+    .update(schema.ordersTable)
+    .set({
+      source: 'online',
+      fulfillmentType: 'slant',
+      status: 'paid',
+      slantStatus: 'DRAFT',
+      fulfillmentState: 'drafted',
+      slantPublicOrderId: 'slant-order',
+    });
+  const original = fetchMock.getMockImplementation()!;
+  fetchMock.mockImplementation(async (url, init) => {
+    if (String(url).includes('/orders/slant-order')) {
+      if (init?.method === 'DELETE')
+        throw new Error('lost cancellation response');
+      return Response.json({
+        data: {
+          order: {
+            publicId: 'slant-order',
+            status: 'CANCELED',
+            metadata: { externalOrderId: order.orderNumber },
+          },
+        },
+      });
+    }
+    return original(url, init);
+  });
+  expect(await (await refund(order.id)).json()).toMatchObject({
+    state: 'cancel_unknown',
+    success: false,
+  });
+  expect(
+    fetchMock.mock.calls.filter(([url]) => String(url).endsWith('/refunds')),
+  ).toHaveLength(0);
+  refundStatus = 'COMPLETED';
+  expect(await (await refund(order.id)).json()).toMatchObject({
+    state: 'completed',
+  });
+  expect(
+    fetchMock.mock.calls.filter(
+      ([url, init]) =>
+        String(url).includes('slant-order') && init?.method === 'DELETE',
+    ),
+  ).toHaveLength(1);
+  expect((await db.select().from(schema.ordersTable))[0]).toMatchObject({
+    status: 'canceled',
+    paymentStatus: 'refunded',
+  });
+});
+test('explicit override keeps the existing shipped-order policy while phone refunds avoid manufacture', async () => {
+  await mappedPhone();
+  await event();
+  const [order] = await db.select().from(schema.ordersTable);
+  refundStatus = 'FAILED';
+  expect(await (await refund(order.id)).json()).toMatchObject({
+    state: 'failed',
+    success: false,
+  });
+  expect((await db.select().from(schema.ordersTable))[0].paymentStatus).toBe(
+    'paid',
+  );
+  expect(
+    fetchMock.mock.calls.every(([url]) => String(url).includes('square')),
+  ).toBe(true);
+});
+
+test('explicit shipped override permits recovery after a rejected Slant cancellation', async () => {
+  const order = await paidQR();
+  await db
+    .update(schema.ordersTable)
+    .set({
+      source: 'online',
+      fulfillmentType: 'slant',
+      status: 'shipped',
+      slantStatus: 'SHIPPED',
+      fulfillmentState: 'processed',
+      slantPublicOrderId: 'slant-order',
+    });
+  const original = fetchMock.getMockImplementation()!;
+  refundStatus = 'COMPLETED';
+  fetchMock.mockImplementation(async (url, init) =>
+    String(url).includes('/orders/slant-order')
+      ? new Response('Cannot cancel', { status: 409 })
+      : original(url, init),
+  );
+  expect(
+    await (
+      await refund(order.id, { reason: 'Customer request', override: true })
+    ).json(),
+  ).toMatchObject({ state: 'completed', success: true });
+  expect((await db.select().from(schema.ordersTable))[0]).toMatchObject({
+    paymentStatus: 'refunded',
+    status: 'shipped',
+  });
+});
+test('ambiguous manufacturing cannot be refunded without first recovering its identity', async () => {
+  const order = await paidQR();
+  await db
+    .update(schema.ordersTable)
+    .set({
+      source: 'online',
+      fulfillmentType: 'slant',
+      status: 'paid_fulfillment_failed',
+      fulfillmentState: 'draft_unknown',
+    });
+  fetchMock.mockClear();
+  expect((await refund(order.id, { override: true })).status).toBe(409);
   expect(fetchMock).not.toHaveBeenCalled();
 });

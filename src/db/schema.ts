@@ -612,6 +612,9 @@ export const ordersTable = sqliteTable('ordersTable', {
   source: text('source').notNull().default('online'),
   fulfillmentType: text('fulfillment_type').notNull().default('slant'),
   paymentStatus: text('payment_status'),
+  refundStatus: text('refund_status'),
+  refundAmountCents: integer('refund_amount_cents'),
+  refundedAt: text('refunded_at'),
   squareOrderId: text('square_order_id').unique(),
   squarePaymentId: text('square_payment_id').unique(),
   checkoutAttemptId: text('checkout_attempt_id').unique(),
@@ -1038,5 +1041,23 @@ export const squarePhoneIntake = sqliteTable('square_phone_intake', {
   state: text('state').notNull().default('pending'),
   error: text('error'),
   orderId: integer('order_id').references(() => ordersTable.id),
+  createdAt: integer('created_at').notNull(),
+});
+
+export const squareRefundOperations = sqliteTable('square_refund_operations', {
+  id: text('id').primaryKey(),
+  orderId: integer('order_id').notNull().unique().references(() => ordersTable.id),
+  paymentId: text('payment_id').notNull(),
+  merchantId: text('merchant_id').notNull(),
+  locationId: text('location_id').notNull(),
+  environment: text('environment').notNull(),
+  amountCents: integer('amount_cents').notNull(),
+  fulfillmentBefore: text('fulfillment_before').notNull(),
+  reason: text('reason'),
+  override: integer('override', {mode:'boolean'}).notNull().default(false),
+  state: text('state').notNull().default('preparing'),
+  refundId: text('refund_id').unique(),
+  error: text('error'),
+  actorId: text('actor_id').notNull(),
   createdAt: integer('created_at').notNull(),
 });

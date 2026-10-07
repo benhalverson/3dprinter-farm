@@ -14,6 +14,7 @@ import { Miniflare } from 'miniflare';
 import { expect, test } from 'vitest';
 import * as schema from '../../src/db/schema';
 
+const baselineOrders = sqliteTable('ordersTable',{id:integer('id').primaryKey(),userId:text('user_id'),orderNumber:text('order_number').notNull(),fileURL:text('file_url'),shipToName:text('ship_to_name'),shipToStreet1:text('ship_to_street_1'),shipToCity:text('ship_to_city'),shipToState:text('ship_to_state'),shipToZip:text('ship_to_zip'),shipToCountryISO:text('ship_to_country_iso')});
 /** Builds a disposable schema baseline through Drizzle, without replaying broken historical bootstrap migrations. */
 async function baselineFolder(root: string) {
   const snapshot = JSON.parse(
@@ -99,7 +100,7 @@ test('generated in-person migration preserves catalog, customers and order histo
         inPersonPrice: 500,
       });
     await db
-      .insert(schema.ordersTable)
+      .insert(baselineOrders)
       .values({
         id: 1,
         userId: 'owner',
@@ -141,6 +142,8 @@ test('generated in-person migration preserves catalog, customers and order histo
         '0027_in_person_detach_history',
         '0028_in_person_sales',
         '0029_in_person_restore_history',
+          '0030_square_phone_intake',
+          '0031_square_refunds',
       ]),
     });
     expect((await db.select().from(schema.users))[0].id).toBe('owner');
