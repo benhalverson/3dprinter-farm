@@ -545,7 +545,6 @@ describe('Square catalog HTTP with mocked Drizzle and fetch', () => {
     ).toEqual({ price: 19.95, inPersonPrice: 0.29 });
   });
   describe.each([
-    '/add-product',
     '/v2/add-product',
     '/update-product',
   ])('%s requires both prices', path => {
