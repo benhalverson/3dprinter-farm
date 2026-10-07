@@ -966,3 +966,51 @@ test('Slant shipment during actual process response cannot regress to PROCESSING
     paymentStatus: 'paid',
   });
 });
+
+function attemptStatus(id: string, byKey = false) {
+  return payments.request(`/checkout-attempts/${byKey ? 'by-request-key/' : ''}${id}`, {}, env);
+}
+test('owned status survives reload and cart cleanup without external work or snapshot disclosure', async () => {
+  await prepared();
+  const [attempt] = await db.select().from(schema.checkoutAttempts);
+  fetchMock.mockClear();
+  let response = await attemptStatus(requestKey, true);
+  expect(response.status).toBe(200);
+  expect(await response.json()).toMatchObject({ attemptId: attempt.id, state: 'pending', order: null });
+  expect(fetchMock).not.toHaveBeenCalled();
+  state.userId = 'other';
+  expect((await attemptStatus(attempt.id)).status).toBe(404);
+  state.userId = 'owner';
+  await event();
+  response = await attemptStatus(attempt.id);
+  const body = await response.json();
+  expect(body).toMatchObject({ state: 'paid', paymentUrl: null, order: { paymentStatus: 'paid', fulfillmentState: 'processed' } });
+  expect(JSON.stringify(body)).not.toContain('owner@example.com');
+  expect(body).not.toHaveProperty('snapshot');
+  expect(await db.select().from(schema.cart)).toHaveLength(0);
+});
+test('unknown link outcomes are recoverable by the original request key', async () => {
+  const created = await quote();
+  providers();
+  const original = fetchMock.getMockImplementation()!;
+  fetchMock.mockImplementation(async (url, init) => String(url).includes('/online-checkout/payment-links') ? Promise.reject(new Error('lost response')) : original(url, init));
+  await checkout(created.id);
+  expect(await (await attemptStatus(requestKey, true)).json()).toMatchObject({ state: 'unknown', paymentUrl: null, order: null });
+  fetchMock.mockImplementation(original);
+  expect((await checkout(created.id)).status).toBe(200);
+  expect(await (await attemptStatus(requestKey, true)).json()).toMatchObject({ state: 'pending' });
+  expect(await db.select().from(schema.checkoutAttempts)).toHaveLength(1);
+});
+test.each(['FAILED', 'CANCELED'])('reports verified %s while later paid evidence remains monotonic', async status => {
+  await prepared();
+  paymentStatus = status;
+  expect((await event()).status).toBe(200);
+  expect(await (await attemptStatus(requestKey, true)).json()).toMatchObject({ state: status === 'FAILED' ? 'failed' : 'cancelled', order: null });
+  expect(slantDraftCalls).toBe(0);
+  paymentStatus = 'COMPLETED';
+  await event();
+  paymentStatus = status;
+  await event();
+  expect(await (await attemptStatus(requestKey, true)).json()).toMatchObject({ state: 'paid' });
+  expect(slantDraftCalls).toBe(1);
+});
