@@ -118,7 +118,6 @@ function authorize(role = 'admin', ownerId = 'user_123') {
       role: 'admin',
     },
   });
-  get({ id: 'org_shared_catalog' });
   get({
     id: 'member',
     userId: ownerId,

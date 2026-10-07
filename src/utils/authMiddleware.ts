@@ -4,8 +4,7 @@ import {
   SHARED_ORGANIZATION_ID,
 } from '../constants';
 import {
-  ensureSharedOrganizationMembership,
-  mapLegacyRoleToOrganizationRole,
+  getSharedOrganizationMembership,
   normalizeLegacyRole,
 } from './organization';
 
@@ -89,11 +88,8 @@ export const requireCatalogMutationRole = factory.createMiddleware(
       return c.json({ error: 'Unauthorized' }, 401);
     }
 
-    const organizationMember = await ensureSharedOrganizationMembership(c.var.db, {
-      userId: payload.id,
-      role: mapLegacyRoleToOrganizationRole(payload.role),
-    });
-    const organizationRole = organizationMember.role;
+    const organizationMember = await getSharedOrganizationMembership(c.var.db, payload.id);
+    const organizationRole = organizationMember?.role;
 
     c.set('organizationId', SHARED_ORGANIZATION_ID);
     c.set('organizationMember', organizationMember ?? null);

@@ -4,11 +4,13 @@ import { betterAuth } from 'better-auth';
 import { drizzleAdapter } from 'better-auth/adapters/drizzle';
 import { createAuthMiddleware } from 'better-auth/api';
 import { openAPI, organization } from 'better-auth/plugins';
+import { and, eq } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/d1';
 import * as schema from '../src/db/schema';
 import { BROWSER_ORIGINS } from '../src/config/browserOrigins';
 import type { Bindings } from '../src/types';
 import {
+  PASSWORD_VERSION,
   hashPassword as hashLegacyPassword,
   verifyPassword as verifyLegacyPassword,
 } from '../src/utils/crypto';
@@ -35,9 +37,9 @@ async function verifyWorkerPassword({
   hash: string;
   password: string;
 }) {
-  const [salt, derivedHash] = hash.split(':');
+  const [salt, derivedHash, extra] = hash.split(':');
 
-  if (!salt || !derivedHash) {
+  if (!salt || !derivedHash || extra !== undefined) {
     return false;
   }
 
@@ -66,6 +68,20 @@ export function createAuth(
     secret,
     baseURL,
     hooks: {
+      after: createAuthMiddleware(async ctx => {
+        const userId = ctx.context.newSession?.user.id;
+        if (ctx.path !== '/sign-in/email' || !userId || typeof ctx.body?.password !== 'string') return;
+        const credential = await db.select().from(schema.account).where(and(
+          eq(schema.account.userId, userId), eq(schema.account.providerId, 'credential'),
+        )).get();
+        if (!credential?.password || credential.password.includes(PASSWORD_VERSION)) return;
+        if (!await verifyWorkerPassword({ hash: credential.password, password: ctx.body.password })) return;
+        const upgraded = await hashWorkerPassword(ctx.body.password);
+        // Compare-and-swap: a concurrent password reset/change must win.
+        await db.update(schema.account).set({ password: upgraded, updatedAt: new Date() }).where(and(
+          eq(schema.account.id, credential.id), eq(schema.account.password, credential.password),
+        ));
+      }),
       before: createAuthMiddleware(async ctx => {
         if (ctx.path !== '/request-password-reset') return;
         // Better Auth 1.6 catches errors in its default await helper. Override
