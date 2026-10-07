@@ -69,7 +69,7 @@ export type Bindings = {
    * Configured as a KV namespace in wrangler.toml (binding: COLOR_CACHE).
    */
   COLOR_CACHE: KVNamespace;
-  JWT_SECRET: string;
+  JWT_SECRET?: string; // Legacy compatibility only; not required or consumed by session auth.
   BETTER_AUTH_SECRET: string;
   RP_ID: string;
   RP_NAME: string;

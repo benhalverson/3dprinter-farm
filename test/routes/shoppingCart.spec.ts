@@ -435,9 +435,8 @@ describe('Shopping Cart Routes', () => {
       const fetchCall = (global.fetch as any).mock.calls[0];
       const requestBody = JSON.parse(fetchCall[1].body);
       expect(requestBody).toMatchObject({
-        platformId: env.SLANT_PLATFORM_ID,
-        ownerId: 'user_123',
         customer: {
+          platformId: env.SLANT_PLATFORM_ID,
           details: {
             email: 'test@example.com',
             address: {

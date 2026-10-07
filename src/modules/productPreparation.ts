@@ -355,8 +355,11 @@ export async function prepareProduct(
       'incomplete',
       'Resolve unfinished attachment transfers before preparation.',
     );
+  if (row.attachments?.catalogHydrated && !attachments.photos.length)
+    invalid('photos', 'required', 'Keep at least one product photo.');
   if (attachments.photos.length > 5)
     invalid('photos', 'limit', 'Use at most five photos.');
+  if (product && attachments.photos.length && !row.attachments?.catalogHydrated) invalid('photos','reopen_catalog','Start a new draft to load the existing gallery before editing photos.');
   const primary = attachments.photos.find(
     photo => photo.id === attachments.primaryPhotoId,
   );
@@ -374,6 +377,16 @@ export async function prepareProduct(
       'invalid',
       'Photo order must contain every saved photo once.',
     );
+  if (
+    primary?.catalogSource &&
+    !primary.catalogSource.managed &&
+    primary.catalogSource.url !== product?.image
+  )
+    invalid(
+      'photos',
+      'legacy_primary_upload_required',
+      'Upload this legacy photo before selecting it as a new Square primary image.',
+    );
   const image = primary?.imageUrl ?? product?.image ?? '';
   if (!image) invalid('photos', 'required', 'Supply a product photo.');
   const publicFileServiceId =
@@ -384,21 +397,45 @@ export async function prepareProduct(
     invalid('printFile', 'required', 'Supply a confirmed print file.');
   for (const id of attachedIds) {
     const asset = assets.find(candidate => candidate.id === id);
+    const attachment = [
+      ...attachments.photos,
+      ...(attachments.printFile ? [attachments.printFile] : []),
+    ].find(item => item.assetId === id);
+    const retained = attachment?.catalogSource;
+    const retainedHere =
+      !!retained &&
+      retained.productId === product?.id &&
+      [product?.image, ...parseGallery(product?.imageGallery)].includes(
+        retained.url,
+      );
+    if (retained && !retainedHere)
+      invalid(
+        'attachments',
+        'catalog_changed',
+        'The saved gallery changed; reload the product before editing.',
+      );
     if (
-      !asset ||
-      asset.ownerId !== ownerId ||
-      asset.draftId !== draftId ||
-      asset.status !== 'active'
+      retainedHere &&
+      retained?.managed &&
+      (!asset || asset.status !== 'active')
+    )
+      invalid(
+        'attachments',
+        'unavailable',
+        'A retained catalog asset is no longer active; reload the product.',
+      );
+    if (
+      !retainedHere &&
+      (!asset ||
+        asset.ownerId !== ownerId ||
+        asset.draftId !== draftId ||
+        asset.status !== 'active')
     )
       invalid(
         'attachments',
         'ownership',
         'Every attached asset must be active and owned by this draft.',
       );
-    const attachment = [
-      ...attachments.photos,
-      ...(attachments.printFile ? [attachments.printFile] : []),
-    ].find(item => item.assetId === id);
     if (
       asset &&
       attachment?.kind === 'print' &&
@@ -519,11 +556,15 @@ export async function prepareProduct(
           imageGallery: attachments.photos.length
             ? attachments.photoOrder.map(
                 id =>
+                  attachments.photos.find(photo => photo.id === id)!
+                    .catalogSource?.url ??
                   `/catalog/assets/${attachments.photos.find(photo => photo.id === id)!.assetId}/image`,
               )
             : parseGallery(product?.imageGallery),
           primaryPhotoAssetId:
-            primary?.assetId ??
+            (primary?.catalogSource && !primary.catalogSource.managed
+              ? null
+              : primary?.assetId) ??
             assets.find(
               asset =>
                 asset.objectKey === product?.image ||

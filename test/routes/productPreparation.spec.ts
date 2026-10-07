@@ -1,3 +1,4 @@
+import { catalogAttachments } from '../../src/modules/catalogAttachments';
 import { and, eq, type SQL } from 'drizzle-orm';
 import { SQLiteSyncDialect } from 'drizzle-orm/sqlite-core';
 import { type Context, Hono } from 'hono';
@@ -293,7 +294,7 @@ describe('authoritative prepared pricing HTTP boundary', () => {
     const draft = currentDraft();
     const first = '55555555-5555-4555-8555-555555555555';
     const second = '66666666-6666-4666-8666-666666666666';
-    draft.attachments = emptyAttachments();
+    draft.attachments = {...emptyAttachments(),catalogHydrated:true};
     draft.attachments.photos = [first, second].map(assetId => ({
       id: assetId,
       assetId,
@@ -356,7 +357,7 @@ describe('authoritative prepared pricing HTTP boundary', () => {
     const oldId = '77777777-7777-4777-8777-777777777777';
     const newId = '88888888-8888-4888-8888-888888888888';
     product.image = `/catalog/assets/${oldId}/image`;
-    draft.attachments = emptyAttachments();
+    draft.attachments = {...emptyAttachments(),catalogHydrated:true};
     draft.attachments.photos = [
       {
         id: newId,
@@ -564,7 +565,7 @@ describe('authoritative prepared pricing HTTP boundary', () => {
   ])('blocks an attached file with invalid %s before provider calls', async invalidity => {
     const draft = currentDraft();
     const assetId = '33333333-3333-4333-8333-333333333333';
-    draft.attachments = emptyAttachments();
+    draft.attachments = {...emptyAttachments(),catalogHydrated:true};
     draft.attachments.printFile = {
       id: filamentId,
       assetId,
@@ -685,5 +686,49 @@ describe('authoritative prepared pricing HTTP boundary', () => {
     loseCas = true;
     expect((await request()).status).toBe(409);
     expect(row?.preparation).toBeNull();
+  });
+});
+
+describe('existing gallery preparation', () => {
+  it('keeps legacy gallery order and the independent primary in the prepared snapshot', async () => {
+    product.imageGallery = JSON.stringify([
+      'other-photo',
+      'catalog-photo',
+      'third-photo',
+    ]);
+    currentDraft().attachments = await catalogAttachments(boundary.db, {
+      ...product,
+      imageGallery: JSON.parse(product.imageGallery),
+    });
+    const prepared = await prepare();
+    expect(prepared.status).toBe('ready');
+    expect(prepared.snapshot?.imageGallery).toEqual([
+      'other-photo',
+      'catalog-photo',
+      'third-photo',
+    ]);
+    expect(prepared.snapshot?.image).toBe('catalog-photo');
+  });
+  it('blocks empty hydrated galleries and switching an unavailable legacy primary', async () => {
+    product.imageGallery = JSON.stringify(['other-photo', 'catalog-photo']);
+    currentDraft().attachments = await catalogAttachments(boundary.db, {
+      ...product,
+      imageGallery: JSON.parse(product.imageGallery),
+    });
+    currentDraft().attachments!.primaryPhotoId =
+      currentDraft().attachments!.photos[0].id;
+    expect(
+      (await prepare()).validation.some(
+        item => item.code === 'legacy_primary_upload_required',
+      ),
+    ).toBe(true);
+    currentDraft().attachments!.photos = [];
+    currentDraft().attachments!.photoOrder = [];
+    currentDraft().attachments!.primaryPhotoId = null;
+    expect(
+      (await prepare()).validation.some(
+        item => item.field === 'photos' && item.code === 'required',
+      ),
+    ).toBe(true);
   });
 });

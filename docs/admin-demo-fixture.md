@@ -41,12 +41,12 @@ For interpretation, send a current message containing a JSON object of correctio
 
 Provider requests are intercepted in process. Slant file upload/confirmation and estimates, Square validation/retrieval/upsert/image creation, idempotency, and version checks use isolated local state. Unknown outbound destinations return a local failure. No external catalog, payment, email, or file service is contacted.
 
-Run the real HTTP integration proof:
+Run the mocked integration test:
 
 ```sh
-node --experimental-strip-types --test test/integration/adminDemo.integration.ts
+pnpm exec vitest run test/integration/adminDemo.spec.ts
 ```
 
-The test starts on a random local port, signs in, checks 401/403 and credentialed CORS, proves an unmapped legacy update stays blocked without automatic publication, checks ambiguous-message clarification and interprets a correction, uploads and decodes a photo into encrypted R2, uploads/confirms a print file, prepares USD pricing, injects one lost Square upsert acknowledgement, proves passive inspection then same-operation reconciliation creates exactly one offering through Square image confirmation, reads the public decrypted photo, then updates and deletes through fresh drafts, explicitly discards the upload-owning draft, retries cleanup, and confirms the UUID-keyed R2 photo and Slant file are deleted. It uses actual HTTP requests and real D1 batches.
+The test dispatches requests directly to the application, signs in, checks 401/403 and credentialed CORS, proves an unmapped legacy update stays blocked without automatic publication, checks ambiguous-message clarification and interprets a correction, uploads and decodes a photo into encrypted R2, uploads/confirms a print file, prepares USD pricing, injects one lost Square upsert acknowledgement, proves passive inspection then same-operation reconciliation creates exactly one offering through Square image confirmation, reads the public decrypted photo, then updates and deletes through fresh drafts, explicitly discards the upload-owning draft, retries cleanup, and confirms the UUID-keyed R2 photo and Slant file are deleted. It uses local SQLite and explicit authentication, R2, Slant, and Square mocks. No server, Worker emulator, or provider network request is involved; this does not verify D1-specific batch semantics.
 
 To trigger this recovery manually, POST `/__fixture/lose-upsert-ack` with the same fixture token before the next submission. The next Square upsert is committed in the local provider state but its acknowledgement is lost; inspect the operation, then reconcile it. This endpoint is part of the fixture only.
