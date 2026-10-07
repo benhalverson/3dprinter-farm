@@ -1,3 +1,4 @@
+import {clearCartLines} from '../modules/cartMutations';
 import { refundInput, refundSale } from '../modules/squareRefunds';
 import { eq } from 'drizzle-orm';
 import { describeRoute } from 'hono-openapi';
@@ -555,7 +556,7 @@ const adminOrders = factory
         SLANT_TERMINAL_OR_ACTIVE_STATUSES.has(order.slantStatus)
       ) {
         detectedIssues.push('cart_not_cleared_after_fulfillment');
-        await c.var.db.delete(cart).where(eq(cart.cartId, order.cartId ?? ''));
+        await clearCartLines(c.var.db,order.cartId??'',eq(cart.cartId,order.cartId??''));
         actionsTaken.push('cleared_cart');
       }
 

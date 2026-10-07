@@ -1,4 +1,4 @@
-import { and, eq, exists, param } from 'drizzle-orm';
+import { and, eq, exists, param, type SQL } from 'drizzle-orm';
 import { HTTPException } from 'hono/http-exception';
 import type { z } from 'zod';
 import {
@@ -223,4 +223,24 @@ export function setCartLineQuantity(
   identity?: CartMutationIdentity,
 ) {
   return mutate(db, access, { kind: 'quantity', itemId, quantity }, identity);
+}
+
+/** Provider-confirmed cleanup also advances the cart revision atomically. */
+export async function clearCartLines(db:Database,cartId:string,condition:SQL|undefined){
+ for(let attempt=0;attempt<3;attempt++){
+  const current=await db.select().from(shoppingCarts).where(eq(shoppingCarts.id,cartId)).get();
+  // Unowned historical carts cannot be addressed by the agent API.
+  if(!current){await db.delete(cart).where(condition);return;}
+  const token=crypto.randomUUID();
+  const matches=exists(db.select({id:cart.id}).from(cart).where(condition));
+  const gate=exists(db.select({id:shoppingCarts.id}).from(shoppingCarts).where(and(eq(shoppingCarts.id,cartId),eq(shoppingCarts.mutationToken,token))));
+  const [advanced]=await db.batch([
+   db.update(shoppingCarts).set({revision:current.revision+1,mutationToken:token}).where(and(eq(shoppingCarts.id,cartId),eq(shoppingCarts.revision,current.revision),matches)).returning({id:shoppingCarts.id}),
+   db.delete(cart).where(and(condition,gate)),
+  ]);
+  if(advanced.length)return;
+  const remaining=await db.select({id:cart.id}).from(cart).where(condition).limit(1).all();
+  if(!remaining.length)return;
+ }
+ throw changedCart();
 }
