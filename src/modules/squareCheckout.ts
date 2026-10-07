@@ -261,7 +261,6 @@ export async function acceptSquarePayment(
   await provider.validateLocation();
   const external = await provider.retrieveOrder(payment.order_id);
   if (external.reference_id.startsWith('qr:')) return acceptInPersonPayment(db, env, merchantId, payment, external);
-  if (payment.status !== 'COMPLETED') return { received: true };
   const [attempt] = await db
     .select()
     .from(checkoutAttempts)
