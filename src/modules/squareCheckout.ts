@@ -1,3 +1,4 @@
+import { acceptSquarePhoneSale } from './squarePhoneSales';
 import { acceptInPersonPayment } from './inPersonSales';
 import {
   and,
@@ -17,6 +18,7 @@ import {
   ordersTable,
   orderEventsTable,
   users,
+  squarePhoneIntake,
 } from '../db/schema';
 import type { WorkerEnv } from '../factory';
 import { squareClient, squareConfig } from '../lib/square';
@@ -259,6 +261,9 @@ export async function acceptSquarePayment(
   const payment = await provider.retrievePayment(paymentId);
   if (!['COMPLETED', 'FAILED', 'CANCELED'].includes(payment.status)) return { received: true };
   await provider.validateLocation();
+  if (payment.status === 'COMPLETED' && payment.application_details?.square_product === 'SQUARE_POS' && payment.location_id === config.SQUARE_LOCATION_ID) {
+    await db.insert(squarePhoneIntake).values({paymentId:payment.id,squareOrderId:payment.order_id,merchantId,locationId:payment.location_id,state:'pending',error:'awaiting_order_evidence',createdAt:Date.now()}).onConflictDoNothing();
+  }
   const external = await provider.retrieveOrder(payment.order_id);
   if (external.reference_id.startsWith('qr:')) return acceptInPersonPayment(db, env, merchantId, payment, external);
   if (payment.status !== 'COMPLETED') return { received: true };
@@ -266,7 +271,7 @@ export async function acceptSquarePayment(
     .select()
     .from(checkoutAttempts)
     .where(eq(checkoutAttempts.id, external.reference_id));
-  if (!attempt) return { received: true };
+  if (!attempt) return acceptSquarePhoneSale(db, env, payment, external);
   const snapshot = quoteSnapshotSchema.parse(JSON.parse(attempt.snapshot));
   if (
     attempt.merchantId !== merchantId ||
