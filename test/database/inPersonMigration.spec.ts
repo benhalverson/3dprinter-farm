@@ -249,11 +249,11 @@ test('Wrangler applies the atomic upgrade and its ledger together, including fai
   // Never open Wrangler's persisted internal SQLite tables with a different
   // workerd version than the CLI uses (the direct dev dependency may differ).
   const require = createRequire(import.meta.url);
-  const {Miniflare: WranglerMiniflare} = createRequire(require.resolve('wrangler/package.json'))('miniflare') as {Miniflare: typeof Miniflare};
+  const {Miniflare: WranglerMiniflare, convertV4MiniflareOptions} = createRequire(require.resolve('wrangler/package.json'))('miniflare') as {Miniflare: typeof Miniflare; convertV4MiniflareOptions?: (options: ConstructorParameters<typeof Miniflare>[0]) => ConstructorParameters<typeof Miniflare>[0]};
   const root = await mkdtemp(join(tmpdir(), 'in-person-wrangler-'));
   const persist = join(root, 'state');
-  const options = {modules: true, script: 'export default { fetch() { return new Response("probe"); } };', compatibilityDate: '2026-04-01', d1Databases: {DB: 'atomic-upgrade-test'}, d1Persist: join(persist, 'v3/d1')};
-  let worker = new WranglerMiniflare(options);
+  const options = {modules: true, script: 'export default { fetch() { return new Response("probe"); } };', compatibilityDate: '2026-04-01', d1Databases: {DB: 'atomic-upgrade-test'}, ...(convertV4MiniflareOptions ? {resourcePersistencePath: join(persist, 'v3')} : {d1Persist: join(persist, 'v3/d1')})};
+  let worker = new WranglerMiniflare(convertV4MiniflareOptions ? convertV4MiniflareOptions(options) : options);
   try {
     let db = drizzle(await worker.getD1Database('DB') as unknown as D1Database, {schema});
     await migrate(db, {migrationsFolder: await baselineFolder(root)});
@@ -270,7 +270,7 @@ test('Wrangler applies the atomic upgrade and its ledger together, including fai
     const apply = () => promisify(execFile)(process.execPath, ['node_modules/wrangler/bin/wrangler.js', 'd1', 'migrations', 'apply', 'DB', '--local', '--config', config, '--persist-to', persist], {env: {...process.env, CI: 'true', WRANGLER_SEND_METRICS: 'false', WRANGLER_LOG_PATH: join(root, 'logs')}});
     await writeFile(filename, generated + '\n--> statement-breakpoint\n' + phases.flat().at(-1));
     await expect(apply()).rejects.toThrow();
-    worker = new WranglerMiniflare(options);
+    worker = new WranglerMiniflare(convertV4MiniflareOptions ? convertV4MiniflareOptions(options) : options);
     db = drizzle(await worker.getD1Database('DB') as unknown as D1Database, {schema});
     expect(await db.select().from(baselineOrders)).toHaveLength(1);
     expect(await db.select().from(schema.orderEventsTable)).toHaveLength(1);
@@ -279,7 +279,7 @@ test('Wrangler applies the atomic upgrade and its ledger together, including fai
     await writeFile(filename, generated);
     await apply();
     expect((await apply()).stdout).toContain('No migrations to apply');
-    worker = new WranglerMiniflare(options);
+    worker = new WranglerMiniflare(convertV4MiniflareOptions ? convertV4MiniflareOptions(options) : options);
     db = drizzle(await worker.getD1Database('DB') as unknown as D1Database, {schema});
     expect(await db.select().from(baselineOrders)).toHaveLength(1);
     expect(await db.select().from(schema.orderEventsTable)).toHaveLength(1);
