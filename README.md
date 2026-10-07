@@ -302,3 +302,16 @@ Legacy lines without an authorization version are inaccessible through this cont
 Run `pnpm run test:database` to test ownership, isolation, foreign-key cascades and concurrent mutations against disposable SQLite/libsql databases. The harness uses `drizzle-kit generate` and `drizzle-kit migrate` to create a current-schema database, and separately checks committed-history replay in another disposable database. This Node suite runs as part of `test:ci`, separately from the mocked Hono/Workers suites.
 
 Check migration-replay diagnostics separately from current-schema test results. Before provisioning or migrating a deployment, verify the target database's applied history and required constraints. If replay fails, reconcile the history/bootstrap discrepancy without rewriting applied history; a passing current-schema suite does not establish upgrade compatibility. Remote migration and deployment require separate authorization.
+
+### Liveness and configuration readiness
+
+`GET /live` is liveness only. `GET /health` retains the `{status:"ok"}` readiness
+contract; `/ready` additionally reports `ready`, `disabled` or `unready` for
+Square, Square webhooks, Slant and Slant webhooks. Checks are pure configuration
+validation and make no network requests. Fully absent optional integrations are
+disabled; partially configured integrations are unready. A configured Slant
+webhook secret requires its platform ID. Core resources and nonempty values are
+required; auth shares runtime secret/passkey/origin validation and readiness
+requires an explicit AUTH_BASE_URL (HTTPS outside localhost). JWT_SECRET is no
+longer required. These checks do not prove provider availability or credential
+validity and never charge, manufacture, email or alter credentials.

@@ -1,3 +1,4 @@
+import { authConfiguration } from '../src/config/auth';
 import { passkey } from '@better-auth/passkey';
 import { betterAuth } from 'better-auth';
 import { drizzleAdapter } from 'better-auth/adapters/drizzle';
@@ -21,67 +22,6 @@ export type AuthBindings = Pick<
   | 'RP_NAME'
   | 'PASSKEY_ORIGIN'
 >;
-
-function getAuthSecret(env?: AuthBindings) {
-  const secret = env?.BETTER_AUTH_SECRET?.trim();
-
-  if (!secret) {
-    throw new Error('BETTER_AUTH_SECRET is required');
-  }
-
-  if (secret.length < 32) {
-    throw new Error('BETTER_AUTH_SECRET must be at least 32 characters long');
-  }
-
-  return secret;
-}
-
-function getCookieAttributes(baseURL: string) {
-  const isSecure = new URL(baseURL).protocol === 'https:';
-
-  return {
-    sameSite: isSecure ? ('none' as const) : ('lax' as const),
-    secure: isSecure,
-  };
-}
-
-function isLocalHost(hostname: string) {
-  return (
-    hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1'
-  );
-}
-
-function getPasskeyRpId(baseURL: string, env?: AuthBindings) {
-  const configuredRpId = env?.RP_ID?.trim();
-
-  if (configuredRpId) {
-    return configuredRpId;
-  }
-
-  const baseHost = new URL(baseURL).hostname;
-
-  if (isLocalHost(baseHost)) {
-    return 'localhost';
-  }
-
-  throw new Error('RP_ID is required for non-local environments');
-}
-
-function validatePasskeyOrigin(rpID: string, passkeyOrigin?: string) {
-  if (!passkeyOrigin) {
-    return;
-  }
-
-  const originHost = new URL(passkeyOrigin).hostname;
-  const isValidRpRelation =
-    originHost === rpID || originHost.endsWith(`.${rpID}`);
-
-  if (!isValidRpRelation) {
-    throw new Error(
-      `PASSKEY_ORIGIN host (${originHost}) must equal RP_ID (${rpID}) or be its subdomain`,
-    );
-  }
-}
 
 async function hashWorkerPassword(password: string) {
   const { salt, hash } = await hashLegacyPassword(password);
@@ -110,11 +50,7 @@ export function createAuth(
   env?: AuthBindings,
 ) {
   const db = drizzle(database, { schema });
-  const baseURL = env?.AUTH_BASE_URL || 'http://localhost:8787';
-  const passkeyOrigin = env?.PASSKEY_ORIGIN?.trim();
-  const rpID = getPasskeyRpId(baseURL, env);
-
-  validatePasskeyOrigin(rpID, passkeyOrigin);
+  const { baseURL, rpID, passkeyOrigin, secret, cookieAttributes } = authConfiguration(env);
 
   return betterAuth({
     database: drizzleAdapter(db, {
@@ -127,7 +63,7 @@ export function createAuth(
         invitation: schema.invitationTable,
       },
     }),
-    secret: getAuthSecret(env),
+    secret,
     baseURL,
     hooks: {
       before: createAuthMiddleware(async ctx => {
@@ -223,7 +159,7 @@ export function createAuth(
     advanced: {
       // Keep redirect validation enabled in integration tests as well as production.
       disableOriginCheck: false,
-      defaultCookieAttributes: getCookieAttributes(baseURL),
+      defaultCookieAttributes: cookieAttributes,
     },
     // Better Auth errors can include request data (e.g. rejected callback URLs).
     logger: {
