@@ -61,7 +61,7 @@ export class SessionHandler {
           visitor: z.string().length(64),
         })
         .parse(await request.json());
-      if (this.session()) return new Response(null, { status: 409 });
+      if (this.storage.getVisit()) return new Response(null, { status: 409 });
       const now = Date.now();
       this.storage.insertVisit({ ...init, created: now, touched: now });
       return Response.json({
@@ -72,7 +72,7 @@ export class SessionHandler {
     const supplied =
       request.headers.get('authorization')?.replace(/^Bearer /, '') ?? '';
     const hash = await digest(supplied);
-    const session = this.session();
+    const session = this.storage.getVisit();
     if (
       !session ||
       !crypto.subtle.timingSafeEqual(
@@ -102,7 +102,7 @@ export class SessionHandler {
         },
         true,
       );
-      const known = this.run(cancel[1]);
+      const known = this.storage.getRun(cancel[1]);
       return Response.json({
         runId: known?.id,
         uiRevision: known?.revision,
@@ -123,7 +123,7 @@ export class SessionHandler {
         { status: error instanceof RangeError ? 413 : 400 },
       );
     }
-    const known = this.run(input.runId);
+    const known = this.storage.getRun(input.runId);
     if (known)
       return Response.json({
         runId: known.id,
@@ -280,10 +280,4 @@ export class SessionHandler {
     });
   }
 
-  private session() {
-    return this.storage.getVisit();
-  }
-  private run(id: string) {
-    return this.storage.getRun(id);
-  }
 }
