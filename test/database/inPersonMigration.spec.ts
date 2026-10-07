@@ -136,13 +136,28 @@ test('generated in-person migration preserves catalog, customers and order histo
         source: 'square',
         idempotencyKey: 'retained',
       });
-    await migrate(db, {
-      migrationsFolder: await forwardFolder(root, [
-        '0027_in_person_detach_history',
-        '0028_in_person_sales',
-        '0029_in_person_restore_history',
-      ]),
-    });
+    const history = [schema.orderEventsTable,schema.orderCancellationAttemptsTable,schema.orderReconciliationAttemptsTable,schema.orderNotificationAttemptsTable];
+    const retained = async () => {
+      expect((await db.select().from(schema.users))[0].id).toBe('owner');
+      expect((await db.select().from(schema.productsTable))[0].name).toBe('Retained');
+      for (const table of history) expect(await db.select().from(table)).toHaveLength(1);
+    };
+    // Wranger applies one migration at a time. Simulate interruption between
+    // committed files, preserving every historical row at each boundary.
+    await migrate(db,{migrationsFolder:await forwardFolder(root,['0027_in_person_detach_history'])});
+    await retained();
+    const middle = await forwardFolder(root,['0028_in_person_sales']);
+    const generated = await readFile(join(middle,'0028_in_person_sales.sql'),'utf8');
+    // Repeat exact generated statements to cause a late duplicate-table failure,
+    // without authoring SQL. The failed D1 batch must roll back the whole file.
+    await writeFile(join(middle,'0028_in_person_sales.sql'),generated+'\n--> statement-breakpoint\n'+generated);
+    await expect(migrate(db,{migrationsFolder:middle})).rejects.toThrow();
+    await retained();
+    await writeFile(join(middle,'0028_in_person_sales.sql'),generated);
+    await migrate(db,{migrationsFolder:middle});
+    await retained();
+    await migrate(db,{migrationsFolder:await forwardFolder(root,['0029_in_person_restore_history'])});
+    await retained();
     expect((await db.select().from(schema.users))[0].id).toBe('owner');
     expect((await db.select().from(schema.productsTable))[0].name).toBe(
       'Retained',
