@@ -1011,6 +1011,7 @@ test.each(['FAILED', 'CANCELED'])('reports verified %s while later paid evidence
   await event();
   expect(await (await attemptStatus(requestKey, true)).json()).toMatchObject({ state: 'paid' });
   expect(slantDraftCalls).toBe(1);
+});
 
 test.each(['PAID', 'QUEUED', 'PRINTING', 'AWAITING_SHIPMENT'])('reconciles documented %s without manufacturing again', async status => {
   await prepared();

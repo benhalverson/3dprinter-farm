@@ -24,7 +24,7 @@ import {
   productsToCategories,
   updateProductSchema,
 } from '../db/schema';
-import factory from '../factory';
+import factory, { type WorkerEnv } from '../factory';
 import {
   estimateSlant3DFile,
   getSlant3DFile,
@@ -73,7 +73,7 @@ function withPreview<T extends { id: number; stl?: string | null; publicFileServ
 let activePreviewResolutions = 0;
 
 /** Load category membership in one D1 query for the current page. */
-async function withCategories<T extends { id: number }>(db: Parameters<typeof saveCatalogItem>[0], products: T[]) {
+async function withCategories<T extends { id: number }>(db: WorkerEnv['Variables']['db'], products: T[]) {
   if (!products.length) return [];
   const links: Array<{ productId: number; categoryId: number; categoryName: string; orderIndex: number | null }> = [];
   // Paginated callers need one query; legacy array callers stay below D1's bind limit.
