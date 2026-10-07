@@ -48,6 +48,16 @@ Trusted Slant lifecycle boundary: `/webhook/slant3d` verifies `X-Webhook-Signatu
 
 Admin order list filters use `squareOrderId` and `squarePaymentId`; detail responses expose both identifiers. Legacy Stripe identifiers are not accepted as payment evidence or retained in the current schema.
 
+Slant V2 order adapter uses the same validated draft shape for shipping estimates
+and paid fulfillment: `customer.platformId`, `customer.details.email/address`
+(`line1`/`zip`), and `items[].type = PRINT`. Paid fulfillment reads the immutable
+paid snapshot, with checkout/payment correlation in metadata. It retains
+`data.order.publicId` before processing. Process confirmations require the same
+`data.publicId` plus status/payment evidence; reconciliation validates the returned
+nested order ID and both metadata identifiers. PAID, QUEUED, PRINTING and
+AWAITING_SHIPMENT map to the existing local PROCESSING lifecycle so notification
+and customer-order semantics remain stable. Invalid/mismatched responses remain
+ambiguous and never authorize a second manufacturing call.
 
 Slant webhooks require `SLANT_PLATFORM_ID` and accept the documented
 `event_type`, `platform_id`, `data.order.public_id/status/tracking_number`
