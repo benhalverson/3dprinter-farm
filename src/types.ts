@@ -17,7 +17,6 @@ import type { orderSchema } from './db/schema';
  *  - DB_PREVIEW        – D1 preview/staging database
  *  - COLOR_CACHE       – KV namespace used to cache filament colour responses
  *  - RATE_LIMIT_KV     – KV namespace used by the rate-limiting middleware
- *  - SLANT_API         – Slant3D v1 API key
  *  - SLANT_API_V2      – Slant3D v2 API bearer token
  *  - SLANT_API_V2_BASE_URL – Optional override for the Slant3D v2 API origin
  *  - SLANT_PLATFORM_ID – Slant3D platform identifier
@@ -50,7 +49,6 @@ export type Bindings = {
   BUCKET: R2Bucket;
   /** R2 bucket for product photos (wrangler binding: PHOTO_BUCKET) */
   PHOTO_BUCKET: R2Bucket;
-  SLANT_API: string;
   SLANT_API_V2: string;
   SLANT_API_V2_BASE_URL?: string;
   SLANT_PLATFORM_ID: string;
