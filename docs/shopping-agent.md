@@ -253,8 +253,8 @@ Drizzle initialization remain directly in the production Durable Objects, and bu
 operations retain synchronous SQLite transactions.
 
 Tests load no migration files and configure no shopping Durable Objects or remote
-AI bindings. The Vitest pool uses its matching Miniflare dependency and default
-storage isolation. These tests verify application behavior; they do not verify
+AI bindings. Vitest runs in Node with explicit provider and Durable Object mocks.
+Unexpected network requests fail immediately. These tests verify application behavior; they do not verify
 SQLite atomicity, durable restart recovery, migration execution, or real model
 quality and latency. The production Worker dry run checks bundling separately.
 

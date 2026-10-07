@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
-import { createExecutionContext } from 'cloudflare:test';
+const createExecutionContext = () => ({waitUntil: vi.fn(), passThroughOnException: vi.fn()}) as unknown as ExecutionContext;
 import app from '../../src/app';
 import { mockAuth, mockBetterAuth } from '../mocks/auth';
 import { mockDrizzle } from '../mocks/drizzle';

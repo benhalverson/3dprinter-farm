@@ -1,10 +1,12 @@
-import { copyFile, mkdtemp, rm } from 'node:fs/promises';
+import * as schema from '../../src/db/schema';
+import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
-import { drizzle } from 'drizzle-orm/d1';
-import { migrate } from 'drizzle-orm/d1/migrator';
-import { Miniflare } from 'miniflare';
-import { build } from 'vite';
+import { join } from 'node:path';
+import { drizzle } from 'drizzle-orm/libsql';
+import { migrate } from 'drizzle-orm/libsql/migrator';
+import { createClient } from '@libsql/client';
+import { mkdirSync } from 'node:fs';
+import harness from './productMutationHarness';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type {
   productAssetReferenceAttempts,
@@ -32,36 +34,6 @@ let sequence = 0;
 beforeAll(async () => {
   fixture = await createDisposableDatabase();
   root = await mkdtemp(join(tmpdir(), 'product-mutations-restart-'));
-  await build({
-    configFile: false,
-    logLevel: 'silent',
-    plugins: [
-      {
-        name: 'worker-wasm',
-        enforce: 'pre',
-        async resolveId(source, importer) {
-          if (source.endsWith('.wasm') && importer) {
-            await copyFile(
-              resolve(dirname(importer), source),
-              join(root, 'photon.wasm'),
-            );
-            return { id: './photon.wasm', external: true };
-          }
-        },
-      },
-    ],
-    build: {
-      outDir: join(root, 'bundle'),
-      lib: {
-        entry: 'test/database/productMutations.worker.ts',
-        formats: ['es'],
-        fileName: () => 'worker.js',
-      },
-      rollupOptions: { external: ['cloudflare:workers'] },
-      minify: false,
-    },
-  });
-  await copyFile(join(root, 'photon.wasm'), join(root, 'bundle/photon.wasm'));
 });
 afterAll(async () => {
   await fixture?.close();
@@ -151,31 +123,32 @@ function operation(
   };
 }
 
-/** Restartable real D1 runtime with every outbound request rejected. */
+/** Reopen the same local SQLite file; provider calls remain explicitly mocked. */
 function runtime(storage: string) {
-  return new Miniflare({
-    modules: true,
-    modulesRoot: join(root, 'bundle'),
-    scriptPath: join(root, 'bundle/worker.js'),
-    modulesRules: [
-      { type: 'CompiledWasm', include: ['**/*.wasm'], fallthrough: true },
-    ],
-    compatibilityDate: '2026-04-01',
-    compatibilityFlags: ['nodejs_compat'],
-    d1Databases: ['DB'],
-    d1Persist: storage,
-    bindings: {
-      SQUARE_ENVIRONMENT: 'sandbox',
-      SQUARE_ACCESS_TOKEN: 'local-test-placeholder',
-      SQUARE_MERCHANT_ID: 'merchant',
-      SQUARE_LOCATION_ID: 'location',
+  mkdirSync(storage, { recursive: true });
+  const client = createClient({ url: `file:${join(storage, 'data.sqlite')}` });
+  const db = drizzle(client, { schema });
+  const env = {
+    db,
+    SQUARE_ENVIRONMENT: 'sandbox',
+    SQUARE_ACCESS_TOKEN: 'local-test-placeholder',
+    SQUARE_MERCHANT_ID: 'merchant',
+    SQUARE_LOCATION_ID: 'location',
+  };
+  return {
+    db,
+    async dispatchFetch(url: string, init: RequestInit) {
+      return harness.fetch(new Request(url, init), env);
     },
-    outboundService: () => {
-      throw new Error('External network forbidden in persistence test');
+    async dispose() {
+      client.close();
     },
-  });
+  };
 }
-async function call(worker: Miniflare, input: object): Promise<Snapshot> {
+async function call(
+  worker: ReturnType<typeof runtime>,
+  input: object,
+): Promise<Snapshot> {
   const response = await worker.dispatchFetch('http://local.test', {
     method: 'POST',
     body: JSON.stringify(input),
@@ -184,10 +157,10 @@ async function call(worker: Miniflare, input: object): Promise<Snapshot> {
   return response.json() as Promise<Snapshot>;
 }
 async function seeded(
-  worker: Miniflare,
+  worker: ReturnType<typeof runtime>,
   mutation: typeof productMutationOperations.$inferInsert,
 ) {
-  await migrate(drizzle(await worker.getD1Database('DB')), {
+  await migrate(worker.db, {
     migrationsFolder: join(fixture.root, 'generated'),
   });
   return call(worker, {
