@@ -180,8 +180,7 @@ For an authorized first-admin bootstrap, use the existing Drizzle schema and que
 2. Ensure the shared organization row exists in `organization`.
 3. Ensure the user has a row in `member` for `org_shared_catalog`.
 4. Set that membership's `role` to `admin`.
-5. For compatibility with the current transitional code, also set `users.role` to `admin`.
-6. Have the user sign out and sign back in so a fresh session is issued.
+5. Have the user sign out and sign back in so a fresh session is issued.
 
 Recommended values:
 
@@ -302,3 +301,20 @@ Legacy lines without an authorization version are inaccessible through this cont
 Run `pnpm run test:database` to test ownership, isolation, foreign-key cascades and concurrent mutations against disposable SQLite/libsql databases. The harness uses `drizzle-kit generate` and `drizzle-kit migrate` to create a current-schema database, and separately checks committed-history replay in another disposable database. This Node suite runs as part of `test:ci`, separately from the mocked Hono/Workers suites.
 
 Check migration-replay diagnostics separately from current-schema test results. Before provisioning or migrating a deployment, verify the target database's applied history and required constraints. If replay fails, reconcile the history/bootstrap discrepancy without rewriting applied history; a passing current-schema suite does not establish upgrade compatibility. Remote migration and deployment require separate authorization.
+
+### Organization authorization and existing memberships
+
+Catalog, order administration and `/api/auth/organization/*` require a current
+`admin` or `owner` membership in `org_shared_catalog`. Missing memberships fail
+closed; request handling never recreates them from `users.role`. Signup no longer
+enrolls storefront customers in the staff organization. Public catalog reads and
+customer sessions remain available without staff membership.
+
+Before rollout, an authorized operator should inventory staff memberships using
+Drizzle and confirm the explicit staff allowlist. Preserve existing admin/owner
+memberships; provision any missing legitimate staff only through the first-admin
+bootstrap or an authorized administrator. Do not bulk promote legacy role values:
+they can represent revoked access. Existing customer `member` rows can be removed
+after checking the allowlist; delete only those membership rows, never accounts.
+The directory guard protects retained customer rows during this review. No
+production membership migration or deployment is performed by this PR.

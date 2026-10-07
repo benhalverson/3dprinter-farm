@@ -70,14 +70,6 @@ function mockSessionRole(role: string) {
 
   mockWhere.mockReturnValueOnce({
     get: vi.fn().mockResolvedValueOnce({
-      id: 'org_shared_catalog',
-      name: '3D Printer Web API',
-      slug: '3dprinter-web-api',
-    }),
-  });
-
-  mockWhere.mockReturnValueOnce({
-    get: vi.fn().mockResolvedValueOnce({
       id: 'member:org_shared_catalog:user_123',
       organizationId: 'org_shared_catalog',
       userId: 'user_123',
