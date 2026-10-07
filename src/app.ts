@@ -20,6 +20,7 @@ import productDrafts from './routes/productDrafts';
 import productV2 from './routes/productV2';
 import shoppingAgent from './routes/shoppingAgent';
 import shoppingCart from './routes/shoppingCart';
+import inPersonSales from './routes/inPersonSales';
 import squareCatalog from './routes/squareCatalog';
 import userRouter from './routes/users';
 import { requestLogger } from './utils/requestLogger';
@@ -69,6 +70,7 @@ const app = factory
   .route('/', productV2)
   .route('/', catalogPhotos)
   .route('/', squareCatalog)
+  .route('/', inPersonSales)
   .route('/', userRouter)
   .route('/', printer)
   .route('/', paymentsRouter)
