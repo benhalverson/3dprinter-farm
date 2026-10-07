@@ -38,7 +38,6 @@ describe('public read-only catalog projection', () => {
         price: 4.5,
         sku: null,
         stl: 'private.stl',
-        stripePriceId: 'price_private',
         publicFileServiceId: 'private-provider-id',
       },
     ]);

@@ -8,7 +8,7 @@ A Cloudflare Workers-based API for managing 3D printer products, built with Hono
 - Search functionality with pagination
 - Authentication middleware
 - Image gallery support
-- Stripe integration for payments
+- Square integration for payments
 - STL file processing and pricing
 - Project notes sync pipeline for `benhalverson-blog`
 
@@ -57,7 +57,7 @@ If `benhalverson-blog` has branch protection or PR restrictions, make sure the t
 - **Database**: Cloudflare D1 (SQLite)
 - **ORM**: Drizzle ORM
 - **Authentication**: Better Auth with session cookies and passkeys/WebAuthn
-- **Payment Processing**: Stripe
+- **Payment Processing**: Square
 - **Validation**: Zod
 - **Testing**: Vitest
 

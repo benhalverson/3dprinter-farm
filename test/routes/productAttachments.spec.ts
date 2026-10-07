@@ -18,18 +18,6 @@ import { productPhotoBase64 } from '../fixtures/productPhotoBytes';
 import { mockBetterAuth } from '../mocks/auth';
 import { mockEnv } from '../mocks/env';
 
-const stripe = vi.hoisted(() => ({ product: vi.fn(), price: vi.fn() }));
-vi.mock('stripe', () => ({
-  default: vi.fn(
-    /** Builds the Stripe stub when production code calls its constructor. */
-    function StripeMock() {
-      return {
-        products: { create: stripe.product },
-        prices: { create: stripe.price },
-      };
-    },
-  ),
-}));
 
 const id = '4a1a372c-cbd7-4bac-bc73-6c29d2a9e292';
 const missing = '5a1a372c-cbd7-4bac-bc73-6c29d2a9e292';
@@ -412,7 +400,6 @@ function existingProduct(extra: Row = {}) {
     skuNumber: 'KEEP-SKU',
     inPersonPrice: 725,
     squareRevision: 0,
-    stripePriceId: 'keep-price',
     ...extra,
   };
   tables.set(schema.productsTable, [product]);
@@ -426,8 +413,6 @@ describe('durable product attachments through Hono', () => {
       .mockRejectedValue(new Error('Unexpected provider request'));
     tables.clear();
     beforeInsert = undefined;
-    stripe.product.mockReset().mockResolvedValue({ id: 'stripe-product' });
-    stripe.price.mockReset().mockResolvedValue({ id: 'stripe-price' });
     bucket.clear();
     beforeUpdate = undefined;
     rejectUpdate = false;
@@ -2596,7 +2581,6 @@ describe('durable product attachments through Hono', () => {
       400,
     );
     expect(fetch).not.toHaveBeenCalled();
-    expect(stripe.product).not.toHaveBeenCalled();
   });
   it.each([
     'POST',
@@ -2629,7 +2613,6 @@ describe('durable product attachments through Hono', () => {
     expect(records(schema.productAssetReferenceAttempts)).toEqual([]);
     expect(records(schema.productsTable)[0].name).toBe('Old name');
     expect(fetch).not.toHaveBeenCalled();
-    expect(stripe.product).not.toHaveBeenCalled();
   });
   it('keeps the original endpoints free of attachment validation or reservations', async () => {
     const photo = (await upload()).draft.attachments.photos[0];
@@ -2652,7 +2635,6 @@ describe('durable product attachments through Hono', () => {
     );
     // The controlled manufacturing request fails before any catalog publication.
     expect(create.status).toBe(500);
-    expect(stripe.product).not.toHaveBeenCalled();
     expect(records(schema.productAssetReferenceAttempts)).toEqual([]);
   });
   it('updates only the original contract fields and keeps pricing, file IDs and omitted categories', async () => {
@@ -2681,8 +2663,6 @@ describe('durable product attachments through Hono', () => {
       { productId: 42, categoryId: 7, orderIndex: 0 },
     ]);
     expect(fetch).not.toHaveBeenCalled();
-    expect(stripe.product).not.toHaveBeenCalled();
-    expect(stripe.price).not.toHaveBeenCalled();
   });
   it('validates update targets and category aliases and preserves error responses', async () => {
     expect((await catalogRequest()).status).toBe(404);
@@ -2805,7 +2785,6 @@ describe('durable product attachments through Hono', () => {
         .status,
     ).toBe(409);
     expect(fetch).not.toHaveBeenCalled();
-    expect(stripe.product).not.toHaveBeenCalled();
     expect(records(schema.productAssetReferenceAttempts)[0].state).toBe(
       'released',
     );
