@@ -1,3 +1,4 @@
+import {clearCartLines} from './cartMutations';
 import { and, eq, inArray } from 'drizzle-orm';
 import { z } from 'zod';
 import { BASE_URL_V2 } from '../constants';
@@ -326,9 +327,7 @@ async function finalizePaidOrder(db: Database, orderId: number) {
     JSON.parse(order.itemSnapshot || 'null'),
   );
   for (const line of lines)
-    await db
-      .delete(cart)
-      .where(
+    await clearCartLines(db,order.cartId||'',
         and(
           eq(cart.id, line.cartItemId),
           eq(cart.cartId, order.cartId || ''),

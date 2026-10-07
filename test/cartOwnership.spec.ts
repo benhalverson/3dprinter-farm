@@ -73,7 +73,7 @@ describe('cart ownership through Drizzle with mocked D1 responses', () => {
   });
 
   test('a guest capability only matches an unowned cart', async () => {
-    raw.mockResolvedValueOnce([[cartId, null, 'hash', version]]);
+    raw.mockResolvedValueOnce([[cartId, null, 'hash', version, 0, null]]);
     const access = await requireCartAccess(db, cartId, { guestToken });
     expect(access.accessVersion).toBe(version);
     expect(statements[0].query).toContain('"shopping_carts"."user_id" is null');
@@ -103,7 +103,7 @@ describe('cart ownership through Drizzle with mocked D1 responses', () => {
   });
 
   test('claim atomically rotates the authorization version and updates line owners', async () => {
-    raw.mockResolvedValueOnce([[cartId, null, 'hash', version]]);
+    raw.mockResolvedValueOnce([[cartId, null, 'hash', version, 0, null]]);
     batch.mockResolvedValueOnce([
       { results: [{ id: cartId }] },
       { results: [] },
@@ -129,7 +129,7 @@ describe('cart ownership through Drizzle with mocked D1 responses', () => {
   });
 
   test('a lost claim race is reported rather than silently succeeding', async () => {
-    raw.mockResolvedValueOnce([[cartId, null, 'hash', version]]);
+    raw.mockResolvedValueOnce([[cartId, null, 'hash', version, 0, null]]);
     batch.mockResolvedValueOnce([{ results: [] }, { results: [] }]);
     await expect(
       claimCart(db, cartId, { userId: 'bob', guestToken }),
@@ -137,7 +137,7 @@ describe('cart ownership through Drizzle with mocked D1 responses', () => {
   });
 
   test('the owning account can retry a completed claim without changing ownership', async () => {
-    raw.mockResolvedValueOnce([[cartId, 'alice', null, version]]);
+    raw.mockResolvedValueOnce([[cartId, 'alice', null, version, 0, null]]);
     await claimCart(db, cartId, { userId: 'alice' });
     expect(batch).not.toHaveBeenCalled();
   });
@@ -152,6 +152,7 @@ describe('cart ownership through Drizzle with mocked D1 responses', () => {
           userId: 'alice',
           guestTokenHash: null,
           accessVersion: version,
+    revision:0,mutationToken:null,
         }),
       )
       .toSQL();
@@ -182,7 +183,7 @@ describe('cart access middleware', () => {
   });
 
   test('an authenticated guest must claim before preparing a payment', async () => {
-    raw.mockResolvedValueOnce([[cartId, null, 'hash', version]]);
+    raw.mockResolvedValueOnce([[cartId, null, 'hash', version, 0, null]]);
     const response = await app.request(`/cart/${cartId}/checkout`, {
       method: 'POST',
       headers: { 'Test-User': 'alice', 'X-Cart-Token': guestToken },
@@ -191,7 +192,7 @@ describe('cart access middleware', () => {
   });
 
   test('owned cart can prepare a payment', async () => {
-    raw.mockResolvedValueOnce([[cartId, 'alice', null, version]]);
+    raw.mockResolvedValueOnce([[cartId, 'alice', null, version, 0, null]]);
     const response = await app.request(`/cart/${cartId}/checkout`, {
       method: 'POST',
       headers: { 'Test-User': 'alice' },
@@ -215,6 +216,7 @@ describe('cart mutations preserve authorization versions and atomic results', ()
     userId: null,
     guestTokenHash: 'hash',
     accessVersion: version,
+    revision:0,mutationToken:null,
   };
   const selection = {
     cartId,
@@ -229,8 +231,8 @@ describe('cart mutations preserve authorization versions and atomic results', ()
     await expect(setCartLineQuantity(db, access, 1, 2)).rejects.toMatchObject({
       status: 404,
     });
-    expect(statements[0].params).toEqual([2, cartId, version, 1]);
-    expect(statements[0].query).toContain('returning "id"');
+    expect(statements[0].params).toEqual([cartId, version]);
+    expect(batch).not.toHaveBeenCalled();
   });
 
   test.each([
@@ -242,58 +244,36 @@ describe('cart mutations preserve authorization versions and atomic results', ()
         ? removeCartLine(db, access, 1)
         : setCartLineQuantity(db, access, 1, 0),
     ).rejects.toMatchObject({ status: 404 });
-    expect(statements[0].params).toEqual([cartId, version, 1]);
-    expect(statements[0].query).toContain('returning "id"');
+    expect(statements[0].params).toEqual([cartId, version]);
+    expect(batch).not.toHaveBeenCalled();
   });
 
   test.each([1, 0])('confirms changed rows for quantity %s', async quantity => {
-    raw.mockResolvedValueOnce([[1]]);
+    raw.mockResolvedValueOnce([[cartId,null,'hash',version,0,null]]).mockResolvedValueOnce([[1,cartId,version,null,'SKU-1',2,'Black','PLA',guestToken]]);
+    batch.mockResolvedValueOnce([{results:[{id:cartId}]},{results:[]}]);
     await expect(
       setCartLineQuantity(db, access, 1, quantity),
     ).resolves.toBeUndefined();
   });
 
-  test('a nested Drizzle foreign-key failure after claim is a retry conflict', async () => {
-    raw
-      .mockResolvedValueOnce([])
-      .mockRejectedValueOnce(
-        new Error('Failed query', {
-          cause: new Error('FOREIGN KEY constraint failed'),
-        }),
-      );
-    await expect(addCartLine(db, access, selection)).rejects.toMatchObject({
-      status: 409,
-    });
-    expect(statements[1].params).toContain(version);
+  test.each(['FOREIGN KEY constraint failed','UNIQUE constraint failed'])('atomic constraint failure is a retry conflict: %s',async message=>{
+    raw.mockResolvedValueOnce([[cartId,null,'hash',version,0,null]]).mockResolvedValueOnce([]);
+    batch.mockRejectedValueOnce(new Error('Failed query',{cause:new Error(message)}));
+    await expect(addCartLine(db,access,selection)).rejects.toMatchObject({status:409});
+    expect(batch).toHaveBeenCalledOnce();
   });
-
-  test('a concurrent same-configuration insert is a retry conflict', async () => {
-    raw
-      .mockResolvedValueOnce([])
-      .mockRejectedValueOnce(new Error('UNIQUE constraint failed'));
-    await expect(addCartLine(db, access, selection)).rejects.toMatchObject({
-      status: 409,
-    });
+  test('unrelated storage failures are not mislabeled as user conflicts',async()=>{
+    const failure=new Error('Storage unavailable');
+    raw.mockResolvedValueOnce([[cartId,null,'hash',version,0,null]]).mockRejectedValueOnce(failure);
+    await expect(addCartLine(db,access,selection)).rejects.toMatchObject({cause:failure});
   });
-
-  test('unrelated storage failures are not mislabeled as user conflicts', async () => {
-    const failure = new Error('Storage unavailable');
-    raw.mockResolvedValueOnce([]).mockRejectedValueOnce(failure);
-    await expect(addCartLine(db, access, selection)).rejects.toMatchObject({
-      cause: failure,
-    });
-  });
-
-  test('quantity comparisons and the authorization version guard the same update', async () => {
-    raw
-      .mockResolvedValueOnce([
-        [1, cartId, version, null, 'SKU-1', 2, 'Black', 'PLA', guestToken],
-      ])
-      .mockResolvedValueOnce([]);
-    await expect(addCartLine(db, access, selection)).rejects.toMatchObject({
-      status: 409,
-    });
-    expect(statements[1].params).toEqual([3, cartId, version, 1, 2]);
-    expect(statements[1].query).toContain('"cart"."quantity" = ?');
+  test('the revision and authorization version guard the entire mutation batch',async()=>{
+    raw.mockResolvedValueOnce([[cartId,null,'hash',version,3,null]]).mockResolvedValueOnce([[1,cartId,version,null,'SKU-1',2,'Black','PLA',guestToken]]);
+    batch.mockResolvedValueOnce([{results:[]},{results:[]}]);
+    await expect(addCartLine(db,access,selection)).rejects.toMatchObject({status:409});
+    const gate=statements.find(statement=>statement.query.startsWith('update "shopping_carts"'))!;
+    expect(gate.params).toContain(version);expect(gate.query).toContain('"shopping_carts"."revision" = ?');
+    const effect=statements.find(statement=>statement.query.startsWith('update "cart"'))!;
+    expect(effect.params).toContain(version);expect(effect.query).toContain('"shopping_carts"."mutation_token" = ?');
   });
 });
