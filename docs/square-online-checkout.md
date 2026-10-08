@@ -36,7 +36,7 @@ Existing authorized admin `/admin/orders/{id}/retry` retries only `ready` or `dr
 
 PR165 remains separate. Trusted producers are durable `order_events` rows with unique `dedupeKey`: `square_payment_verified` (`square-paid:{paymentId}`) and `square_fulfillment_processed` (`square-fulfilled:{attemptId}`), source=`square`, local orderId and externalEventId=`Square payment ID`. Payment notification consumers must use the persisted paid order and immutable snapshot; fulfillment notification consumers must use confirmed fulfillment state. Slant events must enter through the configured shared-secret ingress. PR165 must deduplicate notification delivery using its durable infrastructure and Cloudflare email only; this implementation makes no email call and does not edit PR165.
 
-Removed: `/webhook/stripe`, `/success`, `/cancel`, `/cart/{cartId}/stripe-items`, `/cart/{cartId}/payment-intent`, Stripe online checkout helpers and Stripe checkout-readiness requirements. The authenticated admin `/admin/orders/{id}/cancel-refund` operation returns410 without provider calls or persistence changes; Square cancellation/refund adaptation remains issue181; obsolete product/order/cancellation Stripe fields, credentials and the Stripe SDK dependency are removed without converting historical orders; no legacy checkout compatibility or historical order conversion is provided.
+Removed: `/webhook/stripe`, `/success`, `/cancel`, `/cart/{cartId}/stripe-items`, `/cart/{cartId}/payment-intent`, Stripe online checkout helpers and Stripe checkout-readiness requirements. The authenticated admin `/admin/orders/{id}/cancel-refund` operation uses the [Square refund contract](square-refunds.md); obsolete product/order/cancellation Stripe fields, credentials and the Stripe SDK dependency are removed without converting historical orders; no legacy checkout compatibility or historical order conversion is provided.
 
 ## Verification and migration limitations
 
@@ -47,6 +47,25 @@ Primary provider references: [Square CreatePaymentLink](https://developer.square
 Trusted Slant lifecycle boundary: `/webhook/slant3d` verifies `X-Webhook-Signature-256: sha256=<hex>` using HMAC-SHA256 over `X-Webhook-Timestamp + "." + rawBody` with `SLANT_WEBHOOK_SECRET`, resolves the persisted Slant public order ID, and records `slant_status_changed` with source `slant3d` and the external event ID. Follow-on notification consumers must read the persisted transition; cancellation evidence (`CANCELED` / `canceledAt`) establishes manufacturing cancellation only and never proves a payment refund. Issue181 must establish its own durable verified Square refund evidence before reporting refunded payment. The retired admin route emits no cancellation or refund event.
 
 Admin order list filters use `squareOrderId` and `squarePaymentId`; detail responses expose both identifiers. Legacy Stripe identifiers are not accepted as payment evidence or retained in the current schema.
+
+### Recovering a customer checkout
+
+Retain the browser-generated `requestKey` before POSTing checkout. On a lost
+response, `GET /checkout-attempts/by-request-key/:requestKey` recovers the durable
+attempt; `GET /checkout-attempts/:attemptId` reads a known attempt. Both require
+the owner session, return 404 for unknown/other-owner identities, and use no-store.
+They remain available after cart cleanup and never call a provider or create a
+payment. DTO: `{attemptId,quoteId,cartId,state,paymentUrl,order}`; `order` is null or
+`{id,paymentStatus,fulfillmentState,status}`. No profile, payment credentials,
+provider payloads or internal snapshots are returned.
+
+`unknown` means no hosted-link acknowledgement is retained: retry checkout only
+with the same quote/request key. `pending` means a link exists without verified
+paid evidence. `failed`/`cancelled` require a retrieved, correlated provider
+payment result; neither a redirect nor a local timeout establishes these states.
+`paid` requires verified provider evidence and can coexist with pending or failed
+manufacturing. A later completed payment can resolve a failed/cancelled attempt;
+a delayed failure cannot regress paid state. Status reads never retry manufacture.
 
 Slant V2 order adapter uses the same validated draft shape for shipping estimates
 and paid fulfillment: `customer.platformId`, `customer.details.email/address`

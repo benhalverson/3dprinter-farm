@@ -13,20 +13,7 @@ import {
 import { mockEnv } from '../mocks/env';
 import { mockGlobalFetch } from '../mocks/fetch';
 
-const mockStripeRefundCreate = vi.hoisted(() => vi.fn());
 
-vi.mock('stripe', () => ({
-  default: vi.fn(
-    /** Builds the Stripe stub when production code calls its constructor. */
-    function StripeMock() {
-      return {
-        refunds: {
-          create: mockStripeRefundCreate,
-        },
-      };
-    },
-  ),
-}));
 
 mockAuth();
 mockDrizzle();
@@ -138,7 +125,6 @@ describe('Admin Orders API', () => {
     mockAll.mockReset();
     mockInsert.mockReset();
     mockDelete.mockReset();
-    mockStripeRefundCreate.mockReset();
     mockGlobalFetch();
     capturedInserts.length = 0;
   });

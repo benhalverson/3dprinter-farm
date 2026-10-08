@@ -36,29 +36,6 @@ vi.mock('../../src/modules/cartConfiguration', () => ({
   validateCartConfiguration: vi.fn(),
 }));
 
-// Mock Stripe
-const mockStripeCheckoutCreate = vi.fn();
-const mockPaymentIntentsCreate = vi.fn();
-vi.mock('stripe', () => ({
-  default: vi.fn(
-    /** Builds the Stripe stub when production code calls its constructor. */
-    function StripeMock() {
-      return {
-        checkout: {
-          sessions: {
-            create: mockStripeCheckoutCreate,
-          },
-        },
-        paymentIntents: {
-          create: mockPaymentIntentsCreate,
-        },
-        webhooks: {
-          constructEventAsync: vi.fn(),
-        },
-      };
-    },
-  ),
-}));
 
 // Mock the profile crypto utilities
 vi.mock('../../src/utils/profileCrypto', () => ({
@@ -92,22 +69,6 @@ const defaultBlackFilamentId = '76fe1f79-3f1e-43e4-b8f4-61159de5b93c';
 
 const env = mockEnv();
 
-function readyStripeCartItem(overrides: Record<string, unknown> = {}) {
-  return {
-    cartItemId: 1,
-    cartUserId: 'user_123',
-    skuNumber: 'TEST-SKU-001',
-    filamentType: 'PLA',
-    filamentId: defaultBlackFilamentId,
-    productSkuNumber: 'TEST-SKU-001',
-    stripePriceId: 'price_test1',
-    publicFileServiceId: 'public-file-123',
-    quantity: 1,
-    price: 19.99,
-    name: 'Test Product',
-    ...overrides,
-  };
-}
 
 function envWithAvailableFilaments(publicIds: string[]) {
   return {
@@ -250,7 +211,6 @@ describe('Shopping Cart Routes', () => {
           filamentId: '8cfbf30a-2995-486e-a1e8-8f7d41488f1e',
           name: 'Test Product 1',
           price: 19.99,
-          stripePriceId: 'price_test1',
         },
         {
           id: 2,
@@ -262,7 +222,6 @@ describe('Shopping Cart Routes', () => {
           filamentId: null,
           name: 'Test Product 2',
           price: 29.99,
-          stripePriceId: 'price_test2',
         },
       ];
 
