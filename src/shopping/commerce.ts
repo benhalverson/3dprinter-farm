@@ -1,3 +1,4 @@
+import { checkoutTools, checkoutDefinitions } from './checkout-tools';
 import { asc, eq } from 'drizzle-orm';
 import { HTTPException } from 'hono/http-exception';
 import { z } from 'zod';
@@ -123,7 +124,15 @@ export async function authoritativeCart(
   return cartStateSchema.parse({ cartId, revision: access.revision, items });
 }
 const integer = { type: 'integer', minimum: 1 };
-export const commerceDefinitions = [
+export type ToolDefinition = {
+  type: 'function';
+  function: {
+    name: string;
+    description: string;
+    parameters: Record<string, unknown>;
+  };
+};
+export const commerceDefinitions: ToolDefinition[] = [
   {
     name: 'selection_options',
     description:
@@ -179,6 +188,7 @@ export const commerceDefinitions = [
   },
 }));
 export type CommerceTools = {
+  definitions?: ToolDefinition[];
   context: unknown;
   execute: (query: unknown) => Promise<unknown>;
 };
@@ -192,7 +202,10 @@ export async function commerceTools(
   active: () => boolean,
   publish: (value: unknown) => void,
 ): Promise<CommerceTools | undefined> {
-  if (!input.cart) return undefined;
+  const checkout = caller.userId
+    ? checkoutTools(db, env, caller.userId, input, active, publish)
+    : undefined;
+  if (!input.cart) return checkout;
   const { id: cartId, revision } = input.cart;
   const initial = await authoritativeCart(db, cartId, caller);
   if (initial.revision !== revision)
@@ -208,8 +221,21 @@ export async function commerceTools(
   >();
   let mutated = false;
   return {
-    context: { ...initial, selection: input.selection ?? null },
+    definitions: [...commerceDefinitions, ...(checkout?.definitions ?? [])],
+    context: {
+      ...initial,
+      selection: input.selection ?? null,
+      checkout: checkout?.context,
+    },
     async execute(raw) {
+      if (
+        checkout &&
+        raw &&
+        typeof raw === 'object' &&
+        'name' in raw &&
+        checkoutDefinitions.some(tool => tool.function.name === raw.name)
+      )
+        return checkout.execute(raw);
       const query = querySchema.parse(raw);
       if (!active())
         throw new HTTPException(409, { message: 'Run superseded' });

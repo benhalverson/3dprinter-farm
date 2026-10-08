@@ -257,7 +257,13 @@ export class SessionHandler {
           input,
           session.id,
           active,
-          value => custom('lulu.cart.v1', { result: value }),
+          value =>
+            custom(
+              value && typeof value === 'object' && 'kind' in value
+                ? 'lulu.commerce.v1'
+                : 'lulu.cart.v1',
+              { result: value },
+            ),
         );
         const result = await runInference(input, session.id, {
           commerce,
