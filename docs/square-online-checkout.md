@@ -48,6 +48,25 @@ Trusted Slant lifecycle boundary: `/webhook/slant3d` verifies `X-Webhook-Signatu
 
 Admin order list filters use `squareOrderId` and `squarePaymentId`; detail responses expose both identifiers. Legacy Stripe identifiers are not accepted as payment evidence or retained in the current schema.
 
+### Recovering a customer checkout
+
+Retain the browser-generated `requestKey` before POSTing checkout. On a lost
+response, `GET /checkout-attempts/by-request-key/:requestKey` recovers the durable
+attempt; `GET /checkout-attempts/:attemptId` reads a known attempt. Both require
+the owner session, return 404 for unknown/other-owner identities, and use no-store.
+They remain available after cart cleanup and never call a provider or create a
+payment. DTO: `{attemptId,quoteId,cartId,state,paymentUrl,order}`; `order` is null or
+`{id,paymentStatus,fulfillmentState,status}`. No profile, payment credentials,
+provider payloads or internal snapshots are returned.
+
+`unknown` means no hosted-link acknowledgement is retained: retry checkout only
+with the same quote/request key. `pending` means a link exists without verified
+paid evidence. `failed`/`cancelled` require a retrieved, correlated provider
+payment result; neither a redirect nor a local timeout establishes these states.
+`paid` requires verified provider evidence and can coexist with pending or failed
+manufacturing. A later completed payment can resolve a failed/cancelled attempt;
+a delayed failure cannot regress paid state. Status reads never retry manufacture.
+
 Slant V2 order adapter uses the same validated draft shape for shipping estimates
 and paid fulfillment: `customer.platformId`, `customer.details.email/address`
 (`line1`/`zip`), and `items[].type = PRINT`. Paid fulfillment reads the immutable
