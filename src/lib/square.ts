@@ -185,6 +185,9 @@ export function squareClient(config: SquareConfig) {
             order_id: z.string(),
             location_id: z.string(),
             status: z.string(),
+            application_details: z
+              .object({ square_product: z.string().optional() })
+              .optional(),
             amount_money: z.object({
               amount: z.number().int().safe(),
               currency: z.string(),
@@ -206,7 +209,29 @@ export function squareClient(config: SquareConfig) {
         .object({
           order: z.object({
             id: z.string(),
-            reference_id: z.string(),
+            reference_id: z.string().default(''),
+            line_items: z
+              .array(
+                z.object({
+                  uid: z.string().optional(),
+                  catalog_object_id: z.string().optional(),
+                  name: z.string().optional(),
+                  quantity: z.string(),
+                  base_price_money: z
+                    .object({
+                      amount: z.number().int().safe(),
+                      currency: z.string(),
+                    })
+                    .optional(),
+                  total_money: z
+                    .object({
+                      amount: z.number().int().safe(),
+                      currency: z.string(),
+                    })
+                    .optional(),
+                }),
+              )
+              .optional(),
             location_id: z.string(),
             total_money: z.object({
               amount: z.number().int().safe(),

@@ -1029,3 +1029,14 @@ export const inPersonSales = sqliteTable('in_person_sales', {
   paymentLinkId: text('payment_link_id'),
   createdAt: integer('created_at').notNull(),
 });
+
+export const squarePhoneIntake = sqliteTable('square_phone_intake', {
+  paymentId: text('payment_id').primaryKey(),
+  squareOrderId: text('square_order_id').notNull(),
+  merchantId: text('merchant_id').notNull(),
+  locationId: text('location_id').notNull(),
+  state: text('state').notNull().default('pending'),
+  error: text('error'),
+  orderId: integer('order_id').references(() => ordersTable.id),
+  createdAt: integer('created_at').notNull(),
+});

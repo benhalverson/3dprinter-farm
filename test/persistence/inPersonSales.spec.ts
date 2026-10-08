@@ -28,6 +28,7 @@ let client: ReturnType<typeof createClient>;
 let db: ReturnType<typeof drizzle<typeof schema>>;
 const env = mockEnv();
 const fetchMock = vi.fn<typeof fetch>();
+let phone = false;
 let reference = '';
 let amount = 1200;
 let status = 'COMPLETED';
@@ -80,6 +81,7 @@ async function event() {
   );
 }
 beforeEach(async () => {
+  phone = false;
   state.userId = 'seller';
   state.role = 'admin';
   reference = '';
@@ -104,23 +106,19 @@ beforeEach(async () => {
     price: 99,
     inPersonPrice: 600,
   });
-  await db
-    .insert(schema.organizationTable)
-    .values({
-      id: 'org_shared_catalog',
-      name: 'Staff',
-      slug: 'staff',
-      createdAt: new Date(),
-    });
-  await db
-    .insert(schema.memberTable)
-    .values({
-      id: 'staff',
-      organizationId: 'org_shared_catalog',
-      userId: 'seller',
-      role: 'admin',
-      createdAt: new Date(),
-    });
+  await db.insert(schema.organizationTable).values({
+    id: 'org_shared_catalog',
+    name: 'Staff',
+    slug: 'staff',
+    createdAt: new Date(),
+  });
+  await db.insert(schema.memberTable).values({
+    id: 'staff',
+    organizationId: 'org_shared_catalog',
+    userId: 'seller',
+    role: 'admin',
+    createdAt: new Date(),
+  });
   Object.assign(env, {
     SQUARE_ENVIRONMENT: 'sandbox',
     SQUARE_ACCESS_TOKEN: 'test',
@@ -167,6 +165,19 @@ beforeEach(async () => {
         order: {
           id: 'order',
           reference_id: reference,
+          ...(phone
+            ? {
+                line_items: [
+                  {
+                    catalog_object_id: 'variation',
+                    name: 'Sold Widget',
+                    quantity: '2',
+                    base_price_money: { amount: 600, currency: 'USD' },
+                    total_money: { amount: 1200, currency: 'USD' },
+                  },
+                ],
+              }
+            : {}),
           location_id: 'location',
           total_money: { amount: 1200, currency: 'USD' },
         },
@@ -178,6 +189,9 @@ beforeEach(async () => {
           order_id: 'order',
           location_id: location,
           status,
+          ...(phone
+            ? { application_details: { square_product: 'SQUARE_POS' } }
+            : {}),
           amount_money: { amount, currency: 'USD' },
           total_money: { amount, currency: 'USD' },
         },
@@ -382,5 +396,150 @@ test('lost provider response leaves a recoverable sale with the same payload and
       )
     ).status,
   ).toBe(200);
+  expect(fetchMock).not.toHaveBeenCalled();
+});
+
+async function mappedPhone() {
+  phone = true;
+  await db
+    .insert(schema.squareCatalogMappings)
+    .values({
+      id: 'mapping',
+      productId: 1,
+      catalogId: 1,
+      environment: 'sandbox',
+      merchantId: 'merchant',
+      locationId: 'location',
+      itemId: 'item',
+      variationId: 'variation',
+    });
+}
+test('verified POS sale snapshots actual amounts and has no fabricated customer or Slant work', async () => {
+  await mappedPhone();
+  await db.update(schema.productsTable).set({ price: 99, inPersonPrice: 900 });
+  const delivered = await Promise.all([event(), event()]);
+  expect(delivered.map(r => r.status)).toEqual([200, 200]);
+  const [order] = await db.select().from(schema.ordersTable);
+  expect(order).toMatchObject({
+    source: 'phone',
+    fulfillmentType: 'in_person',
+    userId: null,
+    shipToName: null,
+    customerEmail: null,
+    totalAmountCents: 1200,
+    status: 'handed_over',
+  });
+  expect(JSON.parse(order.itemSnapshot!)).toEqual([
+    {
+      productId: 1,
+      name: 'Sold Widget',
+      quantity: 2,
+      unitAmountCents: 600,
+      lineTotalCents: 1200,
+      squareVariationId: 'variation',
+    },
+  ]);
+  expect(await db.select().from(schema.ordersTable)).toHaveLength(1);
+  expect(
+    await (
+      await sales.request('/admin/square-phone-intake/payment', {}, env)
+    ).json(),
+  ).toMatchObject({ state: 'recorded', error: null, orderId: order.id });
+  expect(
+    (await admin.request(`/admin/orders/${order.id}`, {}, env)).status,
+  ).toBe(200);
+  status = 'FAILED';
+  await event();
+  expect((await db.select().from(schema.ordersTable))[0].paymentStatus).toBe(
+    'paid',
+  );
+  expect(
+    fetchMock.mock.calls.every(([url]) => String(url).includes('square')),
+  ).toBe(true);
+});
+test('unknown POS mapping remains diagnosable and can reconcile after mapping is restored', async () => {
+  phone = true;
+  expect(await (await event()).json()).toMatchObject({ intake: 'unmatched' });
+  expect(await db.select().from(schema.ordersTable)).toHaveLength(0);
+  expect((await db.select().from(schema.squarePhoneIntake))[0]).toMatchObject({
+    state: 'unmatched',
+    error: 'unknown_catalog_mapping',
+  });
+  await mappedPhone();
+  expect(
+    (
+      await sales.request(
+        '/admin/square-phone-intake/payment/reconcile',
+        { method: 'POST' },
+        env,
+      )
+    ).status,
+  ).toBe(200);
+  expect(await db.select().from(schema.ordersTable)).toHaveLength(1);
+});
+test('retrieval outage persists pending POS intake and an authorized retry recovers it', async () => {
+  await mappedPhone();
+  const original = fetchMock.getMockImplementation()!;
+  let unavailable = true;
+  fetchMock.mockImplementation(async (url, init) => {
+    if (unavailable && String(url).includes('/orders/'))
+      throw new Error('offline');
+    return original(url, init);
+  });
+  expect((await event()).status).toBe(502);
+  expect((await db.select().from(schema.squarePhoneIntake))[0]).toMatchObject({
+    state: 'pending',
+    error: 'awaiting_order_evidence',
+  });
+  unavailable = false;
+  expect(
+    (
+      await sales.request(
+        '/admin/square-phone-intake/payment/reconcile',
+        { method: 'POST' },
+        env,
+      )
+    ).status,
+  ).toBe(200);
+  expect(await db.select().from(schema.ordersTable)).toHaveLength(1);
+});
+test('wrong location, incomplete payment, unknown references and QR payments never become phone sales', async () => {
+  await mappedPhone();
+  location = 'other';
+  await event();
+  expect(await db.select().from(schema.ordersTable)).toHaveLength(0);
+  location = 'location';
+  status = 'APPROVED';
+  await event();
+  expect(await db.select().from(schema.squarePhoneIntake)).toHaveLength(0);
+  status = 'COMPLETED';
+  reference = 'unrecognized-api-reference';
+  await event();
+  expect((await db.select().from(schema.squarePhoneIntake))[0].error).toBe(
+    'unrecognized_order_reference',
+  );
+  await create();
+  await event();
+  expect((await db.select().from(schema.ordersTable))[0].source).toBe('qr');
+  expect(await db.select().from(schema.ordersTable)).toHaveLength(1);
+});
+test('POS intake reads and retries reject nonstaff without provider work', async () => {
+  await mappedPhone();
+  await event();
+  await db.update(schema.memberTable).set({ role: 'member' });
+  state.role = 'user';
+  fetchMock.mockClear();
+  expect(
+    (await sales.request('/admin/square-phone-intake/payment', {}, env)).status,
+  ).toBe(403);
+  expect(
+    (
+      await sales.request(
+        '/admin/square-phone-intake/payment/reconcile',
+        { method: 'POST' },
+        env,
+      )
+    ).status,
+  ).toBe(403);
   expect(fetchMock).not.toHaveBeenCalled();
 });
