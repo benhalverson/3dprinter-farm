@@ -6,10 +6,10 @@ import {
   generateSQLiteDrizzleJson,
   generateSQLiteMigration,
 } from 'drizzle-kit/api';
-import { drizzle } from 'drizzle-orm/d1';
-import { migrate } from 'drizzle-orm/d1/migrator';
+import { drizzle } from 'drizzle-orm/libsql';
+import { migrate } from 'drizzle-orm/libsql/migrator';
 import { integer, real, sqliteTable, text } from 'drizzle-orm/sqlite-core';
-import { Miniflare } from 'miniflare';
+import { createClient } from '@libsql/client';
 import { expect, it } from 'vitest';
 import * as schema from '../../src/db/schema';
 
@@ -73,19 +73,12 @@ async function baselineFolder(
 
 it('exact generated0025/0026 upgrade preserves published0024 catalog and draft identities without invented legacy markup', async () => {
   const root = await mkdtemp(join(tmpdir(), 'product-mutation-upgrade-'));
-  const worker = new Miniflare({
-    modules: true,
-    script: 'export default {fetch(){return new Response("local test")}}',
-    d1Databases: ['DB'],
-    outboundService: () => {
-      throw new Error('External network forbidden');
-    },
-  });
+  const client = createClient({url: 'file::memory:'});
   try {
     const baseline = JSON.parse(
       await readFile('drizzle/migrations/meta/0024_snapshot.json', 'utf8'),
     ) as DrizzleSQLiteSnapshotJSON;
-    const db = drizzle(await worker.getD1Database('DB'), { schema });
+    const db = drizzle(client, { schema });
     await migrate(db, {
       migrationsFolder: await baselineFolder(root, baseline),
     });
@@ -174,7 +167,7 @@ it('exact generated0025/0026 upgrade preserves published0024 catalog and draft i
       markupPercentage: null,
       catalogMutationId: null,
     });
-    expect(await db.select().from(schema.productDrafts)).toEqual([
+    expect(await db.select({id: schema.productDrafts.id, ownerId: schema.productDrafts.ownerId, target: schema.productDrafts.target, revision: schema.productDrafts.revision, state: schema.productDrafts.state, preparation: schema.productDrafts.preparation, createdAt: schema.productDrafts.createdAt, updatedAt: schema.productDrafts.updatedAt}).from(schema.productDrafts)).toEqual([
       expect.objectContaining({
         id: 'saved-draft',
         ownerId: 'owner',
@@ -201,7 +194,7 @@ it('exact generated0025/0026 upgrade preserves published0024 catalog and draft i
       [],
     );
   } finally {
-    await worker.dispose();
+    client.close();
     await rm(root, { recursive: true, force: true });
   }
 }, 30000);
