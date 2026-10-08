@@ -156,7 +156,31 @@ export function squareClient(config: SquareConfig) {
     }
     return result.data.catalog_object;
   }
+  const refundSchema = z.object({
+    refund: z.object({
+      id: z.string().min(1),
+      payment_id: z.string().min(1),
+      location_id: z.string(),
+      status: z.enum(['PENDING', 'COMPLETED', 'REJECTED', 'FAILED']),
+      amount_money: z.object({
+        amount: z.number().int().safe(),
+        currency: z.string(),
+      }),
+    }),
+  });
   return {
+    async refundPayment(payload: unknown) {
+      return refundSchema.parse(
+        await request('refunds', JSON.stringify(payload)),
+      ).refund;
+    },
+    async retrieveRefund(id: string) {
+      const result = refundSchema.parse(
+        await request(`refunds/${encodeURIComponent(id)}`),
+      ).refund;
+      if (result.id !== id) throw squareFailure('square_invalid_response');
+      return result;
+    },
     /** Creates or replays a hosted checkout with the persisted immutable payload and key. */
     async createPaymentLink(payload: unknown) {
       const result = z

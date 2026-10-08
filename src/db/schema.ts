@@ -23,6 +23,8 @@ export const productDrafts = sqliteTable(
   {
     id: text('id').primaryKey(),
     ownerId: text('owner_id').notNull(),
+    creationRequestKey: text('creation_request_key'),
+    creationInputHash: text('creation_input_hash'),
     target: text('target', { mode: 'json' })
       .$type<ProductDraftTarget>()
       .notNull(),
@@ -45,6 +47,7 @@ export const productDrafts = sqliteTable(
     categoryConfirmationId: integer('category_confirmation_id'),
   },
   table => [
+    uniqueIndex('product_drafts_owner_creation_key').on(table.ownerId, table.creationRequestKey),
     index('product_drafts_owner_updated').on(table.ownerId, table.updatedAt),
   ],
 );
@@ -100,6 +103,15 @@ export const shoppingCarts = sqliteTable('shopping_carts', {
   userId: text('user_id').references(() => users.id, { onDelete: 'cascade' }),
   guestTokenHash: text('guest_token_hash'),
   accessVersion: text('access_version').notNull().unique(),
+  revision: integer('revision').notNull().default(0),
+  mutationToken: text('mutation_token'),
+});
+
+export const cartAgentActions = sqliteTable('cart_agent_actions', {
+  id: text('id').primaryKey(),
+  cartId: text('cart_id').notNull().references(() => shoppingCarts.id, {onDelete:'cascade'}),
+  inputHash: text('input_hash').notNull(),
+  revision: integer('revision').notNull(),
 });
 
 export const cart = sqliteTable(
@@ -612,6 +624,9 @@ export const ordersTable = sqliteTable('ordersTable', {
   source: text('source').notNull().default('online'),
   fulfillmentType: text('fulfillment_type').notNull().default('slant'),
   paymentStatus: text('payment_status'),
+  refundStatus: text('refund_status'),
+  refundAmountCents: integer('refund_amount_cents'),
+  refundedAt: text('refunded_at'),
   squareOrderId: text('square_order_id').unique(),
   squarePaymentId: text('square_payment_id').unique(),
   checkoutAttemptId: text('checkout_attempt_id').unique(),
@@ -1038,5 +1053,23 @@ export const squarePhoneIntake = sqliteTable('square_phone_intake', {
   state: text('state').notNull().default('pending'),
   error: text('error'),
   orderId: integer('order_id').references(() => ordersTable.id),
+  createdAt: integer('created_at').notNull(),
+});
+
+export const squareRefundOperations = sqliteTable('square_refund_operations', {
+  id: text('id').primaryKey(),
+  orderId: integer('order_id').notNull().unique().references(() => ordersTable.id),
+  paymentId: text('payment_id').notNull(),
+  merchantId: text('merchant_id').notNull(),
+  locationId: text('location_id').notNull(),
+  environment: text('environment').notNull(),
+  amountCents: integer('amount_cents').notNull(),
+  fulfillmentBefore: text('fulfillment_before').notNull(),
+  reason: text('reason'),
+  override: integer('override', {mode:'boolean'}).notNull().default(false),
+  state: text('state').notNull().default('preparing'),
+  refundId: text('refund_id').unique(),
+  error: text('error'),
+  actorId: text('actor_id').notNull(),
   createdAt: integer('created_at').notNull(),
 });

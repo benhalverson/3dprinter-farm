@@ -270,7 +270,7 @@ export async function acceptSquarePayment(
     .select()
     .from(checkoutAttempts)
     .where(eq(checkoutAttempts.id, external.reference_id));
-  if (!attempt) return acceptSquarePhoneSale(db, env, payment, external);
+  if (!attempt) return payment.status==='COMPLETED'?acceptSquarePhoneSale(db, env, payment, external):{received:true};
   const snapshot = quoteSnapshotSchema.parse(JSON.parse(attempt.snapshot));
   if (
     attempt.merchantId !== merchantId ||

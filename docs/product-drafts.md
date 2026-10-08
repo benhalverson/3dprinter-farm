@@ -279,6 +279,12 @@ The local product, categories, and Square linkage commit together through condit
 
 Asset operation holds protect current and replaced files until terminal evidence. Successful updates retain only assets still used by the catalog and release replaced catalog references. Deletion captures cleanup candidates before removing catalog associations. Cleanup checks remaining orders, products, drafts, and unresolved operations; `operation.cleanup` reports protected, deleted, or retryable pending results separately from product completion. Reconciliation retries failed cleanup without another Square item mutation.
 
+## Recovering draft creation
+
+Before `POST /admin/product-drafts`, persist a fresh UUID `requestKey` with the exact initial `{target, state?}` in the client. Include that optional key in the request. The server enforces uniqueness per authenticated owner: identical input replays return the current draft without overwriting later edits; changed initial input or a discarded draft returns 409. Omitting the key preserves the existing non-idempotent creation contract.
+
+After an interrupted response or reload, `GET /admin/product-drafts/by-request-key/:requestKey` returns the owned active draft, including its server-generated ID and current revision/state. It returns 404 when that account has no such request, 410 after explicit discard, and 400 for an invalid key. A 404 permits retrying the original create request with the same key and initial input. Another account can use its own identical key but cannot recover the first account's draft. No inference or product publication is replayed by this lookup.
+
 
 ### Existing product galleries
 

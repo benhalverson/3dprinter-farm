@@ -11,7 +11,8 @@ import type { WorkerEnv } from '../factory';
 import { productPrices } from './catalogPublication';
 import { resolveDraftCategories } from './productCategoryResolution';
 import { productQuestions } from './productInterpretation';
-import { assetCleanupPending } from './productAssets';
+import { digest } from '../shopping/contracts';
+import { assetCleanupPending, AttachmentError } from './productAssets';
 import { attachmentProjection } from './productAttachments';
 import {
   type BeginProductDraft,
@@ -177,6 +178,31 @@ export async function beginProductDraft(
   ownerId: string,
   input: BeginProductDraft,
 ) {
+  const initialState = input.state ?? {
+    answers: {},
+    pendingQuestions: [],
+    history: [],
+  };
+  const fingerprint = input.requestKey
+    ? await digest(
+        JSON.stringify({ target: input.target, state: initialState }),
+      )
+    : null;
+  if (input.requestKey) {
+    const existing = await readProductDraftByRequestKey(
+      db,
+      ownerId,
+      input.requestKey,
+    );
+    if (existing) {
+      if (
+        existing.creationInputHash !== fingerprint ||
+        existing.status !== 'active'
+      )
+        throw new AttachmentError(409, 'Creation request key already bound');
+      return productDraftResponse(db, existing);
+    }
+  }
   const context = await readProductDraftContext(db, input.target);
   if (context.status === 'unavailable') return undefined;
   const attachments =
@@ -184,19 +210,37 @@ export async function beginProductDraft(
       ? await catalogAttachments(db, context.product)
       : undefined;
   const now = Date.now();
-  const [row] = await db
-    .insert(productDrafts)
-    .values({
-      id: crypto.randomUUID(),
+  const insert = db.insert(productDrafts).values({
+    id: crypto.randomUUID(),
+    ownerId,
+    ...(input.requestKey
+      ? { creationRequestKey: input.requestKey, creationInputHash: fingerprint }
+      : {}),
+    target: input.target,
+    ...(attachments ? { attachments } : {}),
+    state: input.state ?? { answers: {}, pendingQuestions: [], history: [] },
+    revision: 1,
+    createdAt: now,
+    updatedAt: now,
+  });
+  const [row] = await (input.requestKey
+    ? insert.onConflictDoNothing()
+    : insert
+  ).returning();
+  if (!row && input.requestKey) {
+    const existing = await readProductDraftByRequestKey(
+      db,
       ownerId,
-      target: input.target,
-      ...(attachments ? { attachments } : {}),
-      state: input.state ?? { answers: {}, pendingQuestions: [], history: [] },
-      revision: 1,
-      createdAt: now,
-      updatedAt: now,
-    })
-    .returning();
+      input.requestKey,
+    );
+    if (
+      !existing ||
+      existing.creationInputHash !== fingerprint ||
+      existing.status !== 'active'
+    )
+      throw new AttachmentError(409, 'Creation request key already bound');
+    return productDraftResponse(db, existing);
+  }
   return productDraftResponseSchema.parse({
     ...(await summary(db, row)),
     state: row.state,
@@ -252,4 +296,21 @@ export async function saveProductDraft(
     )
     .returning();
   return row;
+}
+
+export function readProductDraftByRequestKey(
+  db: Database,
+  ownerId: string,
+  key: string,
+) {
+  return db
+    .select()
+    .from(productDrafts)
+    .where(
+      and(
+        eq(productDrafts.ownerId, ownerId),
+        eq(productDrafts.creationRequestKey, key),
+      ),
+    )
+    .get();
 }

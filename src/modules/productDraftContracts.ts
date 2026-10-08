@@ -67,6 +67,7 @@ export const productDraftStateSchema = z
   .strict();
 export const beginProductDraftSchema = z
   .object({
+    requestKey: z.string().uuid().optional(),
     target: productDraftTargetSchema,
     state: productDraftStateSchema.optional(),
   })

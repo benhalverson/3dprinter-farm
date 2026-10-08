@@ -1,3 +1,4 @@
+import type { CommerceTools } from './commerce';
 import { type Event, EventType } from '@ag-ui/core';
 import { EventEncoder } from '@ag-ui/encoder';
 import { z } from 'zod';
@@ -31,6 +32,13 @@ export type SessionDependencies = {
     | undefined;
   read(query: CatalogQuery): Promise<CatalogItem[]>;
   infer?: Inference;
+  commerce?(
+    request: Request,
+    input: RunInput,
+    sessionId: string,
+    active: () => boolean,
+    publish: (value: unknown) => void,
+  ): Promise<CommerceTools | undefined>;
   waitUntil(task: Promise<void>): void;
 };
 type LiveRun = {
@@ -243,7 +251,22 @@ export class SessionHandler {
         }
         if (!admitted) throw new ShoppingFailure('rate_limited');
         if (closed) return;
+        const active = () => !closed && this.live?.id === input.runId;
+        const commerce = await this.deps.commerce?.(
+          request,
+          input,
+          session.id,
+          active,
+          value =>
+            custom(
+              value && typeof value === 'object' && 'kind' in value
+                ? 'lulu.commerce.v1'
+                : 'lulu.cart.v1',
+              { result: value },
+            ),
+        );
         const result = await runInference(input, session.id, {
+          commerce,
           read: query => this.deps.read(query),
           accounting: ledger,
           signal: abort.signal,
@@ -279,5 +302,4 @@ export class SessionHandler {
       },
     });
   }
-
 }

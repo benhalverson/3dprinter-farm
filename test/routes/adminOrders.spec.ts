@@ -13,20 +13,7 @@ import {
 import { mockEnv } from '../mocks/env';
 import { mockGlobalFetch } from '../mocks/fetch';
 
-const mockStripeRefundCreate = vi.hoisted(() => vi.fn());
 
-vi.mock('stripe', () => ({
-  default: vi.fn(
-    /** Builds the Stripe stub when production code calls its constructor. */
-    function StripeMock() {
-      return {
-        refunds: {
-          create: mockStripeRefundCreate,
-        },
-      };
-    },
-  ),
-}));
 
 mockAuth();
 mockDrizzle();
@@ -138,7 +125,6 @@ describe('Admin Orders API', () => {
     mockAll.mockReset();
     mockInsert.mockReset();
     mockDelete.mockReset();
-    mockStripeRefundCreate.mockReset();
     mockGlobalFetch();
     capturedInserts.length = 0;
   });
@@ -571,28 +557,7 @@ describe('Admin Orders API', () => {
       expect(res.status).toBe(403);
     });
 
-    test('retires cancellation without provider calls or order writes, even with override', async () => {
-      mockAdminUser();
-      const before = capturedInserts.length;
-      const res = await app.fetch(
-        new Request('http://localhost/admin/orders/1/cancel-refund', {
-          method: 'POST',
-          headers: { Cookie: 'better-auth.session_token=mock-session-token' },
-          body: JSON.stringify({ override: true, reason: 'Customer request' }),
-        }),
-        env,
-      );
-      expect(res.status).toBe(410);
-      expect(await res.json()).toEqual({
-        error:
-          'Cancellation/refund operation retired; Square support is pending issue181.',
-      });
-      expect(mockStripeRefundCreate).not.toHaveBeenCalled();
-      expect(fetch).not.toHaveBeenCalled();
-      expect(capturedInserts.length).toBe(before);
-      expect(mockUpdate).not.toHaveBeenCalled();
-      expect(mockDelete).not.toHaveBeenCalled();
-    });
+
   });
 
   describe('POST /admin/orders/:id/reconcile', () => {

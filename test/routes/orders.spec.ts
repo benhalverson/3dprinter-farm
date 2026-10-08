@@ -14,17 +14,6 @@ import { mockEnv } from '../mocks/env';
 mockAuth();
 mockDrizzle();
 
-vi.mock('stripe', () => ({
-  default: vi.fn(
-    /** Builds the Stripe stub when production code calls its constructor. */
-    function StripeMock() {
-      return {
-        checkout: { sessions: { create: vi.fn() } },
-        webhooks: { constructEvent: vi.fn(), constructEventAsync: vi.fn() },
-      };
-    },
-  ),
-}));
 
 vi.mock('../../src/utils/profileCrypto', async importActual => {
   const actual =
@@ -81,9 +70,9 @@ function makeOrder(overrides: Record<string, unknown> = {}) {
     status: 'shipped',
     slantStatus: 'SHIPPED',
     slantPublicOrderId: slantOrderId,
-    stripeCheckoutSessionId: 'cs_secret_internal',
-    stripePaymentIntentId: 'pi_secret_internal',
-    stripeEventId: 'evt_internal',
+    squareOrderId: 'cs_secret_internal',
+    squarePaymentId: 'pi_secret_internal',
+    squareEventId: 'evt_internal',
     customerEmail: 'test@example.com',
     totalAmountCents: 3998,
     currency: 'usd',
@@ -141,7 +130,7 @@ describe('Customer Orders API', () => {
       orders: Array<{
         orderNumber: string;
         items: Array<Record<string, unknown>>;
-        stripeCheckoutSessionId?: string;
+        squareOrderId?: string;
       }>;
       pagination: { limit: number; offset: number; count: number };
     };
@@ -156,7 +145,7 @@ describe('Customer Orders API', () => {
     });
     expect(body.orders[0].items[0]).not.toHaveProperty('publicFileServiceId');
     expect(body.orders[0].items[0]).not.toHaveProperty('filamentId');
-    expect(body.orders[0]).not.toHaveProperty('stripeCheckoutSessionId');
+    expect(body.orders[0]).not.toHaveProperty('squareEventId');
   });
 
   test('returns an empty order history for customers without orders', async () => {
@@ -219,7 +208,7 @@ describe('Customer Orders API', () => {
         estimatedArrival: string | null;
         shippedAt: string | null;
       };
-      stripePaymentIntentId?: string;
+      squarePaymentId?: string;
     };
     expect(body.id).toBe(42);
     expect(body).toHaveProperty('accountId','user_123');
@@ -231,7 +220,7 @@ describe('Customer Orders API', () => {
       estimatedArrival: '2026-07-05',
       shippedAt: '2026-07-02T10:00:00.000Z',
     });
-    expect(body).not.toHaveProperty('stripePaymentIntentId');
+    expect(body).not.toHaveProperty('squareEventId');
   });
 
   test.each([

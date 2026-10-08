@@ -23,6 +23,7 @@ export type OrderNotificationStatus =
   | 'delivered'
   | 'canceled';
 export type FailureCategory =
+  | 'refund_failed'
   | 'fulfillment_failed'
   | 'webhook_failed'
   | 'email_delivery_failed';
