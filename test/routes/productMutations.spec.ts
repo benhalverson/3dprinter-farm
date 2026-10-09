@@ -1,4 +1,11 @@
-import { eq, type SQL } from 'drizzle-orm';
+import {
+  Column,
+  getTableColumns,
+  is,
+  Param,
+  SQL,
+  StringChunk,
+} from 'drizzle-orm';
 import { SQLiteSyncDialect } from 'drizzle-orm/sqlite-core';
 import { Hono } from 'hono';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
@@ -34,7 +41,6 @@ type Operation = typeof productMutationOperations.$inferSelect;
 const id = '11111111-1111-4111-8111-111111111111';
 const preparationId = '22222222-2222-4222-8222-222222222222';
 const operationId = '33333333-3333-4333-8333-333333333333';
-const app = new Hono().route('/admin/product-drafts', router);
 const bindings = {
   ...mockEnv(),
   SQUARE_ENVIRONMENT: 'sandbox' as const,
@@ -49,6 +55,8 @@ let failBatch: boolean;
 let product: Record<string, unknown> | undefined;
 let mapping: Record<string, unknown> | undefined;
 let reads: SQL[];
+let rejectedWrites: { table: unknown; values: Record<string, unknown> }[];
+let invocationDatabases: WorkerEnv['Variables']['db'][];
 let writes: { table: unknown; values: Record<string, unknown> }[];
 const dialect = new SQLiteSyncDialect();
 const preparation = {
@@ -168,6 +176,10 @@ function request(
   authenticated = true,
   draftId = id,
 ) {
+  // Each invocation receives a new app, Request and adapter over retained fixture records.
+  boundary.db = mutationDatabase();
+  invocationDatabases.push(boundary.db);
+  const app = new Hono().route('/admin/product-drafts', router);
   return app.request(
     `/admin/product-drafts/${draftId}/${action}`,
     {
@@ -192,6 +204,8 @@ beforeEach(() => {
   memberRole = 'admin';
   reads = [];
   writes = [];
+  rejectedWrites = [];
+  invocationDatabases = [];
   mockBetterAuth.getSession
     .mockReset()
     .mockImplementation(async ({ headers } = {}) =>
@@ -211,96 +225,226 @@ beforeEach(() => {
   vi.mocked(fetch)
     .mockReset()
     .mockRejectedValue(new Error('secret-provider-token: request failed'));
+});
+
+type Row = Record<string, unknown>;
+type RowContext = Map<unknown, Row>;
+type FixtureQuery = {
+  from(table: unknown): FixtureQuery;
+  where(condition: SQL): FixtureQuery;
+  orderBy(): FixtureQuery;
+  innerJoin(table: unknown, condition: SQL): FixtureQuery;
+  getSQL(): SQL;
+  fixtureRows(): RowContext[];
+  projectRows(): Row[];
+  select(source: FixtureQuery): FixtureQuery;
+  get(): Promise<Row | undefined>;
+  all(): Promise<Row[]>;
+  returning(): Promise<Row[]>;
+  then(
+    resolve: (value: unknown) => unknown,
+    reject?: (error: unknown) => unknown,
+  ): Promise<unknown>;
+  onConflictDoNothing(): FixtureQuery;
+};
+/** Bounded predicate model for this fixture only; unsupported expressions fail closed.
+ * It evaluates Drizzle equality/IN/null/AND/EXISTS guards, not SQL or a database.
+ */
+function matches(condition: SQL | undefined, context: RowContext): boolean {
+  if (!condition) return true;
+  const chunks = condition.queryChunks;
+  const text = chunks
+    .filter(chunk => is(chunk, StringChunk))
+    .map(chunk => chunk.value.join(''))
+    .join('')
+    .trim();
+  const operands = chunks.filter(chunk => !is(chunk, StringChunk));
+  const nested = operands.filter(chunk => is(chunk, SQL));
+  if (text === '' || text === '()' || /^\(?(?:and\s*)+\)?$/.test(text))
+    return (
+      nested.length === operands.length &&
+      nested.every(chunk => matches(chunk, context))
+    );
+  const value = (operand: unknown): unknown => {
+    if (is(operand, Param)) return operand.value;
+    if (is(operand, Column)) {
+      const key = Object.entries(getTableColumns(operand.table)).find(
+        ([, column]) => column === operand,
+      )?.[0];
+      if (!key) throw new Error('Unknown fixture column');
+      return context.get(operand.table)?.[key];
+    }
+    if (
+      typeof operand === 'string' ||
+      typeof operand === 'number' ||
+      operand === null
+    )
+      return operand;
+    throw new Error('Unsupported fixture operand');
+  };
+  if (text === '=') {
+    const left = value(operands[0]);
+    const right = value(operands[1]);
+    return left != null && right != null && left === right;
+  }
+  if (text === 'is null') return value(operands[0]) == null;
+  if (text === 'in' && Array.isArray(operands[1])) {
+    const left = value(operands[0]);
+    return left != null && operands[1].some(item => value(item) === left);
+  }
+  if (text === 'exists' || text === 'not exists') {
+    const subquery = operands[0] as { fixtureRows?: () => RowContext[] };
+    if (!subquery.fixtureRows) throw new Error('Unsupported fixture subquery');
+    const found = subquery.fixtureRows().length > 0;
+    return text === 'exists' ? found : !found;
+  }
+  throw new Error(`Unsupported fixture predicate: ${text}`);
+}
+/** Rebuild a mocked Drizzle adapter; only the records above survive requests. */
+function mutationDatabase(): WorkerEnv['Variables']['db'] {
+  const rows = (table: unknown): Row[] => {
+    if (table === organizationTable) return [{ id: 'org_shared_catalog' }];
+    if (table === memberTable)
+      return [
+        {
+          id: 'member',
+          role: memberRole,
+          userId: 'user_123',
+          organizationId: 'org_shared_catalog',
+        },
+      ];
+    if (table === productDrafts)
+      return [{ id, ownerId: 'user_123', revision: 4, status: 'active' }];
+    if (table === productMutationOperations)
+      return operation ? [operation] : [];
+    if (table === productsTable) return product ? [product] : [];
+    if (table === squareCatalogMappings) return mapping ? [mapping] : [];
+    return [];
+  };
   const query = (
     table?: unknown,
-    values?: Record<string, unknown>,
-    kind: 'update' | 'insert' | 'delete' = 'update',
-  ) => {
-    const execute = () => {
-      if (values) {
-        writes.push({ table, values });
-        if (table === productMutationOperations)
-          operation = {
-            ...(operation ?? savedOperation('prepared')),
-            ...values,
-          } as Operation;
-        if (table === productsTable) {
-          if (kind === 'delete') product = undefined;
-          else if (kind === 'insert' && operation)
-            product = {
-              id: 7,
-              name: operation.localName,
-              description: operation.localDescription,
-              price: operation.localPrice,
-              inPersonPrice: operation.localInPersonPrice,
-              squareRevision: operation.localSquareRevision,
-              skuNumber: operation.localSkuNumber,
-              catalogMutationId: operation.id,
-            };
-          else product = { ...product, ...values };
-        }
-        if (table === squareCatalogMappings)
-          mapping = { ...mapping, ...values };
-      }
+    values?: Row,
+    kind: 'select' | 'update' | 'insert' | 'delete' = 'select',
+    selection?: Row,
+  ): FixtureQuery => {
+    let condition: SQL | undefined;
+    let source: FixtureQuery | undefined;
+    const joins: { table: unknown; condition: SQL }[] = [];
+    const contexts = (): RowContext[] => {
+      let contexts = rows(table).map(row => new Map([[table, row]]));
+      for (const join of joins)
+        contexts = contexts.flatMap(context =>
+          rows(join.table)
+            .map(
+              row =>
+                new Map([...context, [join.table, row]] as [unknown, Row][]),
+            )
+            .filter(candidate => matches(join.condition, candidate)),
+        );
+      return contexts.filter(context => matches(condition, context));
     };
-    const result = {
+    const project = (context: RowContext): Row =>
+      selection
+        ? Object.fromEntries(
+            Object.entries(selection).map(([key, value]) => {
+              if (!is(value, Column))
+                throw new Error('Unsupported fixture projection');
+              const sourceKey = Object.entries(
+                getTableColumns(value.table),
+              ).find(([, column]) => column === value)?.[0];
+              return [
+                key,
+                sourceKey ? context.get(value.table)?.[sourceKey] : undefined,
+              ];
+            }),
+          )
+        : context.get(table)!;
+    const execute = (): Row[] => {
+      if (kind === 'select') return contexts().map(project);
+      if (kind !== 'insert' && !contexts().length) {
+        rejectedWrites.push({ table, values: values ?? {} });
+        return [];
+      }
+      if (source && !source.fixtureRows().length) return [];
+      const next = source ? source.projectRows()[0] : (values ?? {});
+      writes.push({ table, values: next });
+      if (table === productMutationOperations)
+        operation = {
+          ...(operation ?? savedOperation('prepared')),
+          ...next,
+        } as Operation;
+      if (table === productsTable) {
+        if (kind === 'delete') product = undefined;
+        else if (kind === 'insert') product = { ...next, id: next.id ?? 7 };
+        else product = { ...product, ...next };
+      }
+      if (table === squareCatalogMappings) mapping = { ...mapping, ...next };
+      return rows(table);
+    };
+    const result: FixtureQuery = {
       from(next: unknown) {
-        return query(next, values, kind);
+        table = next;
+        return result;
       },
-      where(condition: SQL) {
-        if (table === productMutationOperations) reads.push(condition);
+      where(next: SQL) {
+        condition = next;
+        if (table === productMutationOperations) reads.push(next);
         return result;
       },
       orderBy() {
         return result;
       },
-      innerJoin() {
+      innerJoin(table: unknown, condition: SQL) {
+        joins.push({ table, condition });
         return result;
       },
-      getSQL: () => eq(productsTable.id, 1),
-      get: async () => {
-        if (table === organizationTable) return { id: 'org_shared_catalog' };
-        if (table === memberTable) return { id: 'member', role: memberRole };
-        if (table === productMutationOperations) return operation;
-        if (table === productDrafts)
-          return { id, ownerId: 'user_123', revision: 4, status: 'active' };
-        if (table === productsTable) return product;
-        if (table === squareCatalogMappings) return mapping;
-        return undefined;
+      // Only required as a SQLWrapper marker; predicates use fixtureRows above.
+      getSQL: (): SQL => {
+        throw new Error('Unexpected compilation of fixture subquery');
       },
-      returning: async () => {
-        execute();
-        return operation ? [operation] : [];
+      fixtureRows: contexts,
+      projectRows: () => contexts().map(project),
+      select(next: FixtureQuery) {
+        source = next;
+        return result;
       },
-      // biome-ignore lint/suspicious/noThenProperty: Drizzle queries are awaitable at this scripted boundary.
-      then: (resolve: (value: unknown) => unknown) => {
-        execute();
-        return Promise.resolve(resolve(undefined));
-      },
+      get: async () => structuredClone(execute()[0]),
+      all: async () => structuredClone(execute()),
+      returning: async () => structuredClone(execute()),
+      // biome-ignore lint/suspicious/noThenProperty: Drizzle queries are awaitable at this mocked boundary.
+      then: (
+        resolve: (value: unknown) => unknown,
+        reject?: (error: unknown) => unknown,
+      ) =>
+        Promise.resolve()
+          .then(() => structuredClone(execute()))
+          .then(resolve, reject),
       onConflictDoNothing() {
         return result;
       },
     };
     return result;
   };
-  boundary.db = {
-    select: () => query(),
+  return {
+    select: (selection?: Row) =>
+      query(undefined, undefined, 'select', selection),
     insert: (table: unknown) => ({
-      values: (values: Record<string, unknown>) =>
-        query(table, values, 'insert'),
-      select: () => query(table, {}, 'insert'),
+      values: (values: Row) => query(table, values, 'insert'),
+      select: (source: FixtureQuery) =>
+        query(table, {}, 'insert').select(source),
     }),
     delete: (table: unknown) => query(table, {}, 'delete'),
     batch: async (queries: PromiseLike<unknown>[]) => {
+      // Inject an unavailable boundary before any batch statement; this does not simulate rollback.
       if (failBatch) throw new Error('simulated database unavailable');
       for (const statement of queries) await statement;
       return [];
     },
     update: (table: unknown) => ({
-      set: (values: Record<string, unknown>) => query(table, values),
+      set: (values: Row) => query(table, values, 'update'),
     }),
   } as unknown as WorkerEnv['Variables']['db'];
-});
+}
 
 describe('Product mutation HTTP with scripted Drizzle and mocked Square', () => {
   test('requires an authenticated catalog administrator for every operation route', async () => {
@@ -777,5 +921,460 @@ describe('Product mutation HTTP with scripted Drizzle and mocked Square', () => 
     });
     expect(fetch).not.toHaveBeenCalled();
     expect(writes.some(write => write.table === productsTable)).toBe(false);
+  });
+});
+
+type MutationAction = Operation['action'];
+/** Prepare a current card while retaining a distinct catalog/mapping for existing items. */
+function beginAction(action: MutationAction) {
+  operation = undefined;
+  product =
+    action === 'create'
+      ? undefined
+      : {
+          id: 7,
+          squareRevision: 3,
+          name: 'Previous catalog name',
+          description: 'Previous copy',
+          price: 2,
+          inPersonPrice: 350,
+          skuNumber: 'existing-sku',
+          image: 'old-photo',
+          stl: 'old-file',
+          publicFileServiceId: 'old-slant-file',
+        };
+  mapping =
+    action === 'create'
+      ? undefined
+      : {
+          id: 'mapping',
+          productId: 7,
+          catalogId: 7,
+          itemId: 'square-item',
+          variationId: 'square-variation',
+          generation: 3,
+          published: 1,
+          publishedSnapshot: 'previous-publication',
+          environment: 'sandbox',
+          merchantId: 'merchant',
+          locationId: 'location',
+        };
+  vi.mocked(readCurrentPreparation).mockResolvedValue({
+    ...preparation,
+    snapshot: {
+      ...preparation.snapshot,
+      action,
+      target:
+        action === 'create'
+          ? { kind: 'new' }
+          : { kind: 'existing', productId: 7 },
+      productRevision: action === 'create' ? null : 3,
+    },
+  });
+  return structuredClone({ product, mapping });
+}
+/** Model Square's read and write HTTP contracts; all responses are synthetic. */
+function squareResponses(
+  write: (payload: string) => Promise<Response> | Response,
+) {
+  vi.mocked(fetch).mockImplementation(async (url, init) => {
+    if (String(url).endsWith('/locations/location'))
+      return Response.json({
+        location: {
+          id: 'location',
+          merchant_id: 'merchant',
+          currency: 'USD',
+          status: 'ACTIVE',
+        },
+      });
+    if (init?.method === 'GET')
+      return confirmedSquareResponse(savedOperation().payload);
+    expect(String(url)).toContain('/catalog/object');
+    expect(init?.method).toBe('POST');
+    return write(String(init?.body));
+  });
+}
+function confirmedSquareResponse(payload: string) {
+  const sent = JSON.parse(payload).object;
+  return Response.json({
+    catalog_object: {
+      ...sent,
+      id: 'square-item',
+      version: 4,
+      item_data: {
+        ...sent.item_data,
+        variations: sent.item_data.variations.map(
+          (variation: Record<string, unknown>) => ({
+            ...variation,
+            id: 'square-variation',
+            version: 4,
+            item_variation_data: {
+              ...(variation.item_variation_data as Record<string, unknown>),
+              item_id: 'square-item',
+            },
+          }),
+        ),
+      },
+    },
+  });
+}
+function definitiveRejection() {
+  return Response.json(
+    {
+      errors: [
+        {
+          detail: 'private seller data secret-provider-token',
+          code: 'INVALID_VALUE',
+        },
+      ],
+    },
+    { status: 400 },
+  );
+}
+/** Discard object identities as if only serialized fixture records remain for the next invocation. */
+function retainRecordsOnly() {
+  operation = structuredClone(operation);
+  product = structuredClone(product);
+  mapping = structuredClone(mapping);
+  boundary.db = undefined as unknown as WorkerEnv['Variables']['db'];
+}
+function retainedOperation() {
+  if (!operation) throw new Error('Expected saved operation');
+  return operation;
+}
+function localWrites() {
+  return writes.filter(
+    write =>
+      write.table === productsTable || write.table === squareCatalogMappings,
+  );
+}
+function assertFreshInvocations() {
+  expect(invocationDatabases.length).toBeGreaterThan(1);
+  expect(new Set(invocationDatabases).size).toBe(invocationDatabases.length);
+}
+function assertCompleted(action: MutationAction) {
+  expect(retainedOperation().state).toBe('succeeded');
+  if (action === 'delete') {
+    expect(product).toBeUndefined();
+    expect(mapping).toMatchObject({ published: 0, generation: 4 });
+  } else {
+    expect(product).toMatchObject({
+      id: 7,
+      name: 'Bracket',
+      description: 'A bracket',
+      price: 5,
+      inPersonPrice: 725,
+    });
+    expect(mapping).toMatchObject({
+      productId: 7,
+      published: 1,
+      generation: action === 'create' ? 0 : 4,
+    });
+  }
+}
+
+// Companion evidence for luluspeedworks#33 / luluspeedworks#70. These are mocked
+// invocation boundaries, not a claim of actual Worker restarts or database atomicity.
+describe.each([
+  'create',
+  'update',
+  'delete',
+] as const)('%s recovery across fresh mocked app invocations', action => {
+  test('first definitive Square rejection is terminal, sanitized and unchanged on read/reconcile', async () => {
+    const before = beginAction(action);
+    squareResponses(() => definitiveRejection());
+    const submitted = await request('submit', { ...input, action });
+    expect(submitted.status).toBe(200);
+    const response = await submitted.json();
+    expect(response).toMatchObject({
+      operation: {
+        action,
+        state: 'failed',
+        retryable: false,
+        error: 'square_request_rejected',
+      },
+    });
+    expect(JSON.stringify(response)).not.toMatch(
+      /private seller|secret-provider-token|INVALID_VALUE/,
+    );
+    const saved = structuredClone(retainedOperation());
+    expect(saved).toMatchObject({
+      state: 'failed',
+      replayed: 0,
+      error: 'square_request_rejected',
+    });
+    expect({ product, mapping }).toEqual(before);
+    expect(localWrites()).toEqual([]);
+    // The error-only write for pending/item_confirmed must not match a failed row.
+    expect(rejectedWrites).toContainEqual(
+      expect.objectContaining({
+        table: productMutationOperations,
+        values: expect.objectContaining({ error: 'square_request_rejected' }),
+      }),
+    );
+    vi.mocked(fetch).mockClear();
+    for (const endpoint of ['operation', 'reconcile']) {
+      retainRecordsOnly();
+      const recovered = await request(endpoint, { operationId: saved.id });
+      expect(recovered.status).toBe(200);
+      expect(await recovered.json()).toMatchObject({
+        operation: {
+          id: saved.id,
+          state: 'failed',
+          retryable: false,
+          error: 'square_request_rejected',
+        },
+      });
+    }
+    expect(retainedOperation().payload).toBe(saved.payload);
+    expect({ product, mapping }).toEqual(before);
+    expect(localWrites()).toEqual([]);
+    expect(fetch).not.toHaveBeenCalled();
+    assertFreshInvocations();
+  });
+
+  test('rejection after an unknown outcome remains pending with the exact immutable replay payload', async () => {
+    const before = beginAction(action);
+    const payloads: string[] = [];
+    squareResponses(payload => {
+      payloads.push(payload);
+      throw new Error('lost provider response secret-provider-token');
+    });
+    const first = await request('submit', { ...input, action });
+    expect(await first.json()).toMatchObject({
+      operation: {
+        action,
+        state: 'pending',
+        retryable: true,
+        error: 'square_outcome_unknown',
+      },
+    });
+    const saved = structuredClone(retainedOperation());
+    expect({ product, mapping }).toEqual(before);
+    for (let retry = 0; retry < 2; retry++) {
+      retainRecordsOnly();
+      squareResponses(payload => {
+        payloads.push(payload);
+        return definitiveRejection();
+      });
+      const response = await request('reconcile', { operationId: saved.id });
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      expect(body).toMatchObject({
+        operation: {
+          id: saved.id,
+          state: 'pending',
+          retryable: true,
+          error: 'square_request_rejected',
+        },
+      });
+      expect(JSON.stringify(body)).not.toContain('secret-provider-token');
+      expect({ product, mapping }).toEqual(before);
+    }
+    expect(retainedOperation()).toMatchObject({
+      id: saved.id,
+      replayed: 1,
+      payload: saved.payload,
+    });
+    expect(payloads).toEqual([saved.payload, saved.payload, saved.payload]);
+    expect(localWrites()).toEqual([]);
+    assertFreshInvocations();
+  });
+
+  test('an overlapping replay prevents the original late rejection from retiring the operation', async () => {
+    const before = beginAction(action);
+    let rejectFirst!: (response: Response) => void;
+    let rejectReplay!: (response: Response) => void;
+    let firstDispatched!: () => void;
+    let replayDispatched!: () => void;
+    const firstStarted = new Promise<void>(resolve => {
+      firstDispatched = resolve;
+    });
+    const replayStarted = new Promise<void>(resolve => {
+      replayDispatched = resolve;
+    });
+    const payloads: string[] = [];
+    squareResponses(payload => {
+      payloads.push(payload);
+      if (payloads.length === 1)
+        return new Promise<Response>(resolve => {
+          rejectFirst = resolve;
+          firstDispatched();
+        });
+      return new Promise<Response>(resolve => {
+        rejectReplay = resolve;
+        replayDispatched();
+      });
+    });
+    const original = request('submit', { ...input, action });
+    await firstStarted;
+    const saved = structuredClone(retainedOperation());
+    const replay = request('reconcile', { operationId: saved.id });
+    await replayStarted;
+    expect(retainedOperation().replayed).toBe(1);
+    rejectFirst(definitiveRejection());
+    expect(await (await original).json()).toMatchObject({
+      operation: { id: saved.id, state: 'pending', retryable: true },
+    });
+    expect(rejectedWrites).toContainEqual(
+      expect.objectContaining({
+        table: productMutationOperations,
+        values: expect.objectContaining({ state: 'failed' }),
+      }),
+    );
+    rejectReplay(definitiveRejection());
+    expect(await (await replay).json()).toMatchObject({
+      operation: { id: saved.id, state: 'pending', retryable: true },
+    });
+    expect(payloads).toEqual([saved.payload, saved.payload]);
+    expect({ product, mapping }).toEqual(before);
+    expect(localWrites()).toEqual([]);
+    assertFreshInvocations();
+  });
+
+  test('unknown provider outcome recovers once, with later terminal reads/replays requiring no provider or catalog mutation', async () => {
+    const before = beginAction(action);
+    squareResponses(() => {
+      throw new Error('response lost');
+    });
+    await request('submit', { ...input, action });
+    const saved = structuredClone(retainedOperation());
+    expect({ product, mapping }).toEqual(before);
+    expect(localWrites()).toEqual([]);
+    retainRecordsOnly();
+    squareResponses(payload => {
+      expect(payload).toBe(saved.payload);
+      expect({ product, mapping }).toEqual(before);
+      return confirmedSquareResponse(payload);
+    });
+    const recovered = await request('reconcile', { operationId: saved.id });
+    expect(recovered.status).toBe(200);
+    expect(await recovered.json()).toMatchObject({
+      operation: { id: saved.id, state: 'succeeded', retryable: false },
+    });
+    assertCompleted(action);
+    const completed = structuredClone({ product, mapping });
+    const productWriteCount = writes.filter(
+      write => write.table === productsTable,
+    ).length;
+    expect(productWriteCount).toBe(1);
+    const catalogWrites = localWrites().length;
+    vi.mocked(fetch).mockClear();
+    for (const endpoint of ['operation', 'reconcile', 'reconcile']) {
+      retainRecordsOnly();
+      expect(
+        await (await request(endpoint, { operationId: saved.id })).json(),
+      ).toMatchObject({
+        operation: { id: saved.id, state: 'succeeded', retryable: false },
+        storefrontVisible: action !== 'delete',
+      });
+    }
+    expect({ product, mapping }).toEqual(completed);
+    expect(localWrites()).toHaveLength(catalogWrites);
+    expect(fetch).not.toHaveBeenCalled();
+    assertFreshInvocations();
+  });
+
+  test('confirmed Square success survives repeated local completion failures and resumes only the retained local work', async () => {
+    const before = beginAction(action);
+    failBatch = true;
+    squareResponses(payload => confirmedSquareResponse(payload));
+    const first = await request('submit', { ...input, action });
+    expect(await first.json()).toMatchObject({
+      operation: {
+        state: 'repair_required',
+        retryable: true,
+        error: 'local_completion_failed',
+      },
+    });
+    const saved = structuredClone(retainedOperation());
+    expect(saved.squareResult).not.toBeNull();
+    expect({ product, mapping }).toEqual(before);
+    expect(localWrites()).toEqual([]);
+    vi.mocked(fetch).mockClear();
+    for (let retry = 0; retry < 2; retry++) {
+      retainRecordsOnly();
+      expect(
+        await (await request('reconcile', { operationId: saved.id })).json(),
+      ).toMatchObject({
+        operation: {
+          id: saved.id,
+          state: 'repair_required',
+          retryable: true,
+          error: 'local_completion_failed',
+        },
+      });
+      expect({ product, mapping }).toEqual(before);
+      expect(localWrites()).toEqual([]);
+      expect(retainedOperation().payload).toBe(saved.payload);
+    }
+    failBatch = false;
+    retainRecordsOnly();
+    expect(
+      await (await request('reconcile', { operationId: saved.id })).json(),
+    ).toMatchObject({
+      operation: { id: saved.id, state: 'succeeded', retryable: false },
+      storefrontVisible: action !== 'delete',
+    });
+    assertCompleted(action);
+    expect(writes.filter(write => write.table === productsTable)).toHaveLength(
+      1,
+    );
+    expect(fetch).not.toHaveBeenCalled();
+    assertFreshInvocations();
+  });
+});
+
+describe.each([
+  'update',
+  'delete',
+] as const)('%s guarded local recovery', action => {
+  test.each([
+    'product',
+    'mapping',
+  ] as const)('keeps newer %s state intact through repeated repair attempts', async changed => {
+    beginAction(action);
+    failBatch = true;
+    squareResponses(payload => confirmedSquareResponse(payload));
+    await request('submit', { ...input, action });
+    const saved = structuredClone(retainedOperation());
+    expect(saved.state).toBe('repair_required');
+    failBatch = false;
+    if (changed === 'product')
+      product = { ...product, squareRevision: 4, name: 'Newer editor value' };
+    else
+      mapping = {
+        ...mapping,
+        generation: 4,
+        publishedSnapshot: 'newer-publication',
+      };
+    const newer = structuredClone({ product, mapping });
+    vi.mocked(fetch).mockClear();
+    for (let retry = 0; retry < 2; retry++) {
+      retainRecordsOnly();
+      expect(
+        await (await request('reconcile', { operationId: saved.id })).json(),
+      ).toMatchObject({
+        operation: {
+          id: saved.id,
+          state: 'repair_required',
+          retryable: true,
+          error: 'local_completion_conflict',
+        },
+      });
+      expect({ product, mapping }).toEqual(newer);
+      expect(retainedOperation().payload).toBe(saved.payload);
+      expect(localWrites()).toEqual([]);
+    }
+    expect(rejectedWrites).toContainEqual(
+      expect.objectContaining({
+        table: productMutationOperations,
+        values: expect.objectContaining({
+          completionToken: expect.any(String),
+        }),
+      }),
+    );
+    expect(fetch).not.toHaveBeenCalled();
+    assertFreshInvocations();
   });
 });
