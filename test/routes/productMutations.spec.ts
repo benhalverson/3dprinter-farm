@@ -1472,9 +1472,9 @@ function photoSquareResponses() {
         },
       });
     if (init?.method === 'GET') {
-      const response = await confirmedSquareResponse(
+      const response = (await confirmedSquareResponse(
         itemPayloads.at(-1) ?? savedOperation().payload,
-      ).json();
+      ).json()) as { catalog_object: { item_data: Row } };
       if (itemPayloads.length) {
         expect(localWrites()).toEqual([]);
         response.catalog_object.item_data.image_ids = controls.imageIds;
