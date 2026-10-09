@@ -1,5 +1,5 @@
 import {clearCartLines} from './cartMutations';
-import { and, eq, inArray } from 'drizzle-orm';
+import { and, eq, inArray, isNull } from 'drizzle-orm';
 import { slantDraft, slantDraftResponse, slantProcessResponse, slantGetResponse, slantLocalStatus } from './slantOrderContracts';
 import { BASE_URL_V2 } from '../constants';
 import { cart, orderEventsTable, ordersTable } from '../db/schema';
@@ -36,7 +36,13 @@ async function slantRequest(env: Environment, path: string, payload?: unknown) {
   }
   return response.json();
 }
-/** Owns durable stage claims. An abandoned claim is ambiguous and never authorizes a second effect. */
+/**
+ * Bind the request's database and provider credentials to the paid-order lifecycle
+ * shared by checkout completion and admin recovery. Persisted stage claims, not
+ * this returned object, own progress and prevent a second external effect after
+ * an uncertain response. Payment verification belongs to the caller; each method
+ * also checks the stored paid Slant order before advancing it.
+ */
 export function createPaidOrderFulfillment(deps: {
   db: Database;
   env: Environment;
@@ -176,8 +182,17 @@ export function createPaidOrderFulfillment(deps: {
           );
       }
     },
-    /** Reconciles only retained process identities; never repeats ambiguous draft creation or manufacture. */
-    async reconcilePaidOrder(orderId: number, recoveredDraftId?: string) {
+    /**
+     * Recover an interrupted order from a Slant GET using the retained identity,
+     * or an admin-supplied draft ID verified against checkout/payment metadata.
+     * Unlike fulfillPaidOrder, this path never creates or processes a provider
+     * order: confirmed evidence advances local state and resumes cart cleanup.
+     *
+     * Admin reconciliation opts into refreshProcessed to refresh an already
+     * processed order. Both stored lifecycle fields constrain that update, and
+     * its WHERE guard preserves concurrent status or payment/fulfillment changes.
+     */
+    async reconcilePaidOrder(orderId: number, recoveredDraftId?: string, refreshProcessed = false) {
       const [order] = await db
         .select()
         .from(ordersTable)
@@ -189,6 +204,43 @@ export function createPaidOrderFulfillment(deps: {
         order.fulfillmentType !== 'slant'
       )
         return;
+      if (order.fulfillmentState === 'processed' && refreshProcessed && order.slantPublicOrderId) {
+        const response = slantGetResponse.parse(await slantRequest(
+          env, `/${encodeURIComponent(order.slantPublicOrderId)}`,
+        ));
+        const remote = response.data.order;
+        if (remote.publicId !== order.slantPublicOrderId ||
+            !order.checkoutAttemptId || !order.squarePaymentId ||
+            remote.metadata?.checkoutAttemptId !== order.checkoutAttemptId ||
+            remote.metadata?.squarePaymentId !== order.squarePaymentId)
+          throw new Error('Slant association mismatch');
+        const next = remote.status === 'CANCELED' ? 'canceled' : slantLocalStatus(remote.status);
+        if (!next) throw new Error('Unrecognized Slant lifecycle evidence');
+        // Both stored lifecycle fields constrain recovery if legacy values disagree.
+        const canAdvance = [order.status, order.slantStatus].every(value => {
+          const prior = value?.toUpperCase();
+          if (prior === 'DELIVERED') return next === 'delivered';
+          if (prior === 'SHIPPED') return ['shipped', 'delivered'].includes(next);
+          if (prior === 'CANCELED') return next === 'canceled';
+          return true;
+        });
+        if (canAdvance && (next.toUpperCase() !== order.slantStatus || next !== order.status)) {
+          const now = new Date().toISOString();
+          await db.update(ordersTable).set({
+            status: next, slantStatus: next.toUpperCase(), updatedAt: now,
+            ...(next === 'shipped' ? { shippedAt: order.shippedAt || now } : {}),
+            ...(next === 'delivered' ? { deliveredAt: order.deliveredAt || now } : {}),
+            ...(next === 'canceled' ? { canceledAt: order.canceledAt || now, fulfillmentState: 'canceled' } : {}),
+          }).where(and(
+            eq(ordersTable.id, order.id),
+            eq(ordersTable.paymentStatus, 'paid'),
+            eq(ordersTable.fulfillmentState, 'processed'),
+            eq(ordersTable.slantPublicOrderId, order.slantPublicOrderId),
+            order.slantStatus === null ? isNull(ordersTable.slantStatus) : eq(ordersTable.slantStatus, order.slantStatus),
+            order.status === null ? isNull(ordersTable.status) : eq(ordersTable.status, order.status),
+          ));
+        }
+      }
       if (order.fulfillmentState === 'processed')
         return finalizePaidOrder(db, orderId);
       const draftRecovery = ['drafting', 'draft_unknown'].includes(

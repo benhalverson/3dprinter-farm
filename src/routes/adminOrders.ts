@@ -1,3 +1,4 @@
+import { reconcileSquareOrder } from '../modules/squareOrderReconciliation';
 import {clearCartLines} from '../modules/cartMutations';
 import { refundInput, refundSale } from '../modules/squareRefunds';
 import { eq } from 'drizzle-orm';
@@ -98,9 +99,16 @@ const orderEventSchema = z.object({
   createdAt: z.string(),
 });
 
+/**
+ * Shared response for legacy and Square admin reconciliation. resultStatus keeps
+ * the existing fulfillment meaning; the optional audit fields identify a Square
+ * attempt and its diagnostic outcome without changing legacy callers' contract.
+ */
 const reconcileResponseSchema = z.object({
   success: z.boolean(),
   orderId: z.number(),
+  attemptId: z.number().optional(),
+  reconciliationStatus: z.enum(['no_action', 'reported', 'recovered']).optional(),
   resultStatus: z.string(),
   detectedIssues: z.array(z.string()),
   actionsTaken: z.array(z.string()),
@@ -422,7 +430,7 @@ const adminOrders = factory
     requireCatalogMutationRole,
     describeRoute({
       description:
-        'Reconcile a local order with Slant3D (admin only). For Square, optionally supply slantPublicOrderId to recover a lost draft ID; retrieved orderNumber must match. Ambiguous process is read-only and never re-manufactured.',
+        'Reconcile a local order with Slant3D (admin only). For Square, optionally supply slantPublicOrderId to recover a lost draft ID; retrieved checkout/payment metadata must match. Attempts and diagnostics are persisted, processed orders refresh lifecycle status monotonically, and ambiguous process is read-only and never re-manufactured.',
       requestBody: {
         required: false,
         content: {
@@ -491,44 +499,11 @@ const adminOrders = factory
         const [operation] = await c.var.db.select().from(squareRefundOperations).where(eq(squareRefundOperations.orderId,order.id));
         if(operation) return c.json(await refundSale(c.var.db,c.env,order.id,c.var.jwtPayload!.id!,{reason:operation.reason??undefined,override:operation.override}));
       }
-      if (order.fulfillmentType === 'in_person') {
-        return c.json({success:true,orderId:order.id,resultStatus:order.fulfillmentState,localStatus:order.status,slantStatus:null,detectedIssues:[],actionsTaken:[],recommendedAction:null,order});
-      }
-
-      if (order.squarePaymentId) {
-        const fulfillment = createPaidOrderFulfillment({
-          db: c.var.db,
-          env: c.env,
-        });
-        const recovery = z
-          .object({ slantPublicOrderId: z.string().min(1).optional() })
-          .strict()
-          .safeParse(await c.req.json().catch(() => ({})));
-        if (!recovery.success)
-          return c.json({ error: 'Invalid recovery input' }, 400);
-        await fulfillment.reconcilePaidOrder(
-          order.id,
-          recovery.data.slantPublicOrderId,
-        );
-        await tryReconcileSquareNotifications(c.var.db, c.env, order.id);
-        const [current] = await c.var.db
-          .select()
-          .from(ordersTable)
-          .where(eq(ordersTable.id, order.id));
-        return c.json({
-          success: true,
-          orderId: order.id,
-          resultStatus: current.fulfillmentState,
-          localStatus: current.status,
-          slantStatus: current.slantStatus,
-          detectedIssues: [],
-          actionsTaken: [],
-          recommendedAction:
-            current.fulfillmentState === 'processed'
-              ? null
-              : 'Inspect Slant by immutable orderNumber; do not resubmit ambiguous draft or process',
-          order: current,
-        });
+      if (order.squarePaymentId || order.fulfillmentType === 'in_person') {
+        const recovery = z.object({ slantPublicOrderId: z.string().min(1).optional() })
+          .strict().safeParse(await c.req.json().catch(() => ({})));
+        if (!recovery.success) return c.json({ error: 'Invalid recovery input' }, 400);
+        return c.json(await reconcileSquareOrder(c.var.db, c.env, order, recovery.data.slantPublicOrderId));
       }
       const detectedIssues: string[] = [];
       const actionsTaken: string[] = [];
