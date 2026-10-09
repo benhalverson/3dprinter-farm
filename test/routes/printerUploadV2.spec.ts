@@ -4,6 +4,11 @@ import app from '../../src/app';
 import * as schema from '../../src/db/schema';
 import { mockEnv } from '../mocks/env';
 
+/**
+ * Run the mounted app through the real Drizzle adapter with an inert D1 binding.
+ * Retired routes must stop before persistence, so an attempted query throws and
+ * the binding/storage spies expose effects without starting a database runtime.
+ */
 const { drizzle: actualDrizzle } =
   await vi.importActual<typeof import('drizzle-orm/d1')>('drizzle-orm/d1');
 const prepare = vi.fn(() => {
