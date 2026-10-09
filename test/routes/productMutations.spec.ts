@@ -176,6 +176,12 @@ function savedOperation(state: Operation['state'] = 'pending'): Operation {
     localNull: null,
   };
 }
+/**
+ * Exercise the mounted mutation routes with a fresh app and Drizzle adapter per
+ * request, so recovery must read retained fixture records instead of reusing a
+ * previous handler. Authentication, storage and provider I/O stay mocked; this
+ * models invocation separation, not actual Worker restart durability.
+ */
 function request(
   action = 'submit',
   body: unknown = input,
@@ -256,8 +262,12 @@ type FixtureQuery = {
   ): Promise<unknown>;
   onConflictDoNothing(): FixtureQuery;
 };
-/** Bounded predicate model for this fixture only; unsupported expressions fail closed.
- * It evaluates Drizzle equality/IN/null/AND/EXISTS guards, not SQL or a database.
+/**
+ * Evaluate the small Drizzle predicate subset used by mutation guards against
+ * retained fixture rows. Returning every scripted write as successful would hide
+ * stale-revision and late-response bugs, so the adapter uses this to reject
+ * nonmatching writes. Unsupported expressions throw; no SQL is executed and no
+ * database isolation, constraint enforcement or general SQL semantics are modeled.
  */
 function matches(condition: SQL | undefined, context: RowContext): boolean {
   if (!condition) return true;
@@ -309,7 +319,16 @@ function matches(condition: SQL | undefined, context: RowContext): boolean {
   }
   throw new Error(`Unsupported fixture predicate: ${text}`);
 }
-/** Rebuild a mocked Drizzle adapter; only the records above survive requests. */
+/**
+ * Adapt the mutation route's Drizzle calls to this test's retained operation,
+ * catalog and asset records. Each request gets new query builders; reads return
+ * copies and writes honor the bounded predicates above, allowing subsequent
+ * requests to observe earlier effects without opening a database.
+ *
+ * Batch failure is injected before any statement. Successful batches run in
+ * sequence, and onConflictDoNothing is a stub: this is not a transaction or
+ * uniqueness simulator. Keep new query behavior explicit and limited to the suite.
+ */
 function mutationDatabase(): WorkerEnv['Variables']['db'] {
   const rows = (table: unknown): Row[] => {
     if (table === organizationTable) return [{ id: 'org_shared_catalog' }];
@@ -946,7 +965,11 @@ describe('Product mutation HTTP with scripted Drizzle and mocked Square', () => 
 });
 
 type MutationAction = Operation['action'];
-/** Prepare a current card while retaining a distinct catalog/mapping for existing items. */
+/**
+ * Start a new submission scenario with a ready mocked preparation and, for
+ * update/delete, an intentionally different prior catalog. Return a detached
+ * baseline so tests can prove provider failures have not published local changes.
+ */
 function beginAction(action: MutationAction) {
   operation = undefined;
   product =
@@ -994,7 +1017,12 @@ function beginAction(action: MutationAction) {
   });
   return structuredClone({ product, mapping });
 }
-/** Model Square's read and write HTTP contracts; all responses are synthetic. */
+/**
+ * Supply location/item reads to the production Square client while each test
+ * controls publication's response or acknowledgement timing. Centralizing the
+ * HTTP boundary lets recovery tests compare exact serialized replay payloads
+ * without replacing the mutation state machine or calling Square.
+ */
 function squareResponses(
   write: (payload: string) => Promise<Response> | Response,
 ) {
@@ -1015,6 +1043,11 @@ function squareResponses(
     return write(String(init?.body));
   });
 }
+/**
+ * Convert a sent catalog item into synthetic Square confirmation with stable
+ * item/variation IDs and versions. Preserve the submitted fields so production
+ * confirmation validation runs against the request rather than an unrelated stub.
+ */
 function confirmedSquareResponse(payload: string) {
   const sent = JSON.parse(payload).object;
   return Response.json({
@@ -1052,7 +1085,11 @@ function definitiveRejection() {
     { status: 400 },
   );
 }
-/** Discard object identities as if only serialized fixture records remain for the next invocation. */
+/**
+ * Detach every retained record and discard the current adapter before a recovery
+ * request. This prevents accidental object-reference continuation in these tests;
+ * the data still lives in memory and does not demonstrate persistence durability.
+ */
 function retainRecordsOnly() {
   operation = structuredClone(operation);
   product = structuredClone(product);
@@ -1402,7 +1439,12 @@ describe.each([
   });
 });
 
-/** Real encryption/client serialization, with storage, auth, preparation and DB mocked. */
+/**
+ * Extend a create/update scenario with two reserved-photo candidates whose primary
+ * is the second gallery entry. The mocked bucket serves locally encrypted fixture
+ * bytes only for that selected asset, letting the real decrypt/upload path expose
+ * accidental first-gallery selection without real storage or preparation calls.
+ */
 async function beginPhotoAction(action: 'create' | 'update') {
   const before = beginAction(action);
   const prepared = {
@@ -1453,6 +1495,12 @@ async function beginPhotoAction(action: 'create' | 'update') {
   bindings.PHOTO_BUCKET = { get: bucketGet } as unknown as R2Bucket;
   return { before, bytes, gallery, bucketGet };
 }
+/**
+ * Model item publication, multipart image upload and later primary-link reads as
+ * separate HTTP outcomes. Returned controls let tests lose an upload response or
+ * delay the link independently, proving recovery reuses saved image identity
+ * without republishing the item. Capture bytes/metadata at the real client boundary.
+ */
 function photoSquareResponses() {
   const uploads: { metadata: string; bytes: Uint8Array; type: string }[] = [];
   const itemPayloads: string[] = [];
@@ -1511,6 +1559,11 @@ function photoSquareResponses() {
   });
   return { uploads, itemPayloads, controls };
 }
+/**
+ * Check the cross-boundary invariant after recovery: Square received the chosen
+ * asset and saved operation key, while the local primary and gallery order remain
+ * independent. Shared by immediate success, lost acknowledgement and link repair.
+ */
 function assertSelectedPhoto(
   photo: Awaited<ReturnType<typeof beginPhotoAction>>,
   square: ReturnType<typeof photoSquareResponses>,
