@@ -12,15 +12,19 @@ import { beforeEach, describe, expect, test, vi } from 'vitest';
 import {
   memberTable,
   organizationTable,
+  productAssetReferenceAttempts,
+  productAssets,
   productDrafts,
   productMutationOperations,
   productsTable,
   squareCatalogMappings,
 } from '../../src/db/schema';
 import type { WorkerEnv } from '../../src/factory';
+import { encryptPhoto } from '../../src/modules/productPhotoBytes';
 import { readCurrentPreparation } from '../../src/modules/productPreparation';
 import type { ProductPreparation } from '../../src/modules/productPreparationContracts';
 import router from '../../src/routes/productDrafts';
+import { productPhotoBase64 } from '../fixtures/productPhotoBytes';
 import { mockBetterAuth } from '../mocks/auth';
 import { mockEnv } from '../mocks/env';
 
@@ -50,6 +54,8 @@ const bindings = {
 };
 const input = { expectedRevision: 4, preparationId, action: 'create' };
 let operation: Operation | undefined;
+let assets: Row[];
+let referenceAttempts: Row[];
 let memberRole: string;
 let failBatch: boolean;
 let product: Record<string, unknown> | undefined;
@@ -200,6 +206,9 @@ beforeEach(() => {
   operation = savedOperation();
   product = undefined;
   mapping = undefined;
+  assets = [];
+  referenceAttempts = [];
+  bindings.PHOTO_BUCKET = mockEnv().PHOTO_BUCKET;
   failBatch = false;
   memberRole = 'admin';
   reads = [];
@@ -317,6 +326,8 @@ function mutationDatabase(): WorkerEnv['Variables']['db'] {
       return [{ id, ownerId: 'user_123', revision: 4, status: 'active' }];
     if (table === productMutationOperations)
       return operation ? [operation] : [];
+    if (table === productAssets) return assets;
+    if (table === productAssetReferenceAttempts) return referenceAttempts;
     if (table === productsTable) return product ? [product] : [];
     if (table === squareCatalogMappings) return mapping ? [mapping] : [];
     return [];
@@ -361,7 +372,8 @@ function mutationDatabase(): WorkerEnv['Variables']['db'] {
         : context.get(table)!;
     const execute = (): Row[] => {
       if (kind === 'select') return contexts().map(project);
-      if (kind !== 'insert' && !contexts().length) {
+      const matched = contexts().map(context => context.get(table)!);
+      if (kind !== 'insert' && !matched.length) {
         rejectedWrites.push({ table, values: values ?? {} });
         return [];
       }
@@ -379,6 +391,15 @@ function mutationDatabase(): WorkerEnv['Variables']['db'] {
         else product = { ...product, ...next };
       }
       if (table === squareCatalogMappings) mapping = { ...mapping, ...next };
+      if (table === productAssets || table === productAssetReferenceAttempts) {
+        const records = rows(table);
+        if (kind === 'insert') {
+          records.push({ ...next });
+          return [records.at(-1)!];
+        }
+        for (const record of matched) Object.assign(record, next);
+        return matched;
+      }
       return rows(table);
     };
     const result: FixtureQuery = {
@@ -1036,6 +1057,8 @@ function retainRecordsOnly() {
   operation = structuredClone(operation);
   product = structuredClone(product);
   mapping = structuredClone(mapping);
+  assets = structuredClone(assets);
+  referenceAttempts = structuredClone(referenceAttempts);
   boundary.db = undefined as unknown as WorkerEnv['Variables']['db'];
 }
 function retainedOperation() {
@@ -1375,6 +1398,218 @@ describe.each([
       }),
     );
     expect(fetch).not.toHaveBeenCalled();
+    assertFreshInvocations();
+  });
+});
+
+/** Real encryption/client serialization, with storage, auth, preparation and DB mocked. */
+async function beginPhotoAction(action: 'create' | 'update') {
+  const before = beginAction(action);
+  const prepared = {
+    ...preparation,
+    snapshot: {
+      ...preparation.snapshot,
+      action,
+      target:
+        action === 'create'
+          ? { kind: 'new' as const }
+          : { kind: 'existing' as const, productId: 7 },
+      productRevision: action === 'create' ? null : 3,
+    },
+  };
+  const primaryId = 'selected-primary';
+  const galleryIds = ['first-gallery', primaryId];
+  const gallery = galleryIds.map(id => `/catalog/assets/${id}/image`);
+  const bytes = Uint8Array.from(atob(productPhotoBase64['image/png']), c =>
+    c.charCodeAt(0),
+  );
+  const encryptionKey = 'ab'.repeat(32);
+  const encrypted = await encryptPhoto(bytes, encryptionKey, primaryId);
+  assets = galleryIds.map(assetId => ({
+    id: assetId,
+    kind: 'photo',
+    status: 'active',
+    revision: 1,
+    references: [`draft:${id}`],
+    objectKey: `photos/${assetId}`,
+    encryptionKey,
+    contentType: assetId === primaryId ? 'image/png' : 'image/jpeg',
+  }));
+  vi.mocked(readCurrentPreparation).mockResolvedValue({
+    ...prepared,
+    snapshot: {
+      ...prepared.snapshot,
+      image: gallery[1],
+      imageGallery: gallery,
+      primaryPhotoAssetId: primaryId,
+      assetIds: galleryIds,
+      assetRevisions: galleryIds.map(id => ({ id, revision: 1 })),
+    },
+  });
+  const bucketGet = vi.fn(async (key: string) => {
+    expect(key).toBe(`photos/${primaryId}`);
+    return { arrayBuffer: async () => encrypted.buffer };
+  });
+  bindings.PHOTO_BUCKET = { get: bucketGet } as unknown as R2Bucket;
+  return { before, bytes, gallery, bucketGet };
+}
+function photoSquareResponses() {
+  const uploads: { metadata: string; bytes: Uint8Array; type: string }[] = [];
+  const itemPayloads: string[] = [];
+  const controls = {
+    loseAcknowledgement: false,
+    imageIds: ['square-selected-image'] as string[] | undefined,
+  };
+  vi.mocked(fetch).mockImplementation(async (url, init) => {
+    const path = String(url);
+    if (path.endsWith('/locations/location'))
+      return Response.json({
+        location: {
+          id: 'location',
+          merchant_id: 'merchant',
+          currency: 'USD',
+          status: 'ACTIVE',
+        },
+      });
+    if (init?.method === 'GET') {
+      const response = await confirmedSquareResponse(
+        itemPayloads.at(-1) ?? savedOperation().payload,
+      ).json();
+      if (itemPayloads.length) {
+        expect(localWrites()).toEqual([]);
+        response.catalog_object.item_data.image_ids = controls.imageIds;
+      }
+      return Response.json(response);
+    }
+    expect(init?.method).toBe('POST');
+    expect(localWrites()).toEqual([]);
+    if (path.endsWith('/catalog/images')) {
+      expect(init?.body).toBeInstanceOf(FormData);
+      const form = init?.body as FormData;
+      const file = form.get('file') as File;
+      uploads.push({
+        metadata: String(form.get('request')),
+        bytes: new Uint8Array(await file.arrayBuffer()),
+        type: file.type,
+      });
+      if (controls.loseAcknowledgement) {
+        controls.loseAcknowledgement = false;
+        throw new Error('simulated lost image acknowledgement');
+      }
+      return Response.json({
+        image: {
+          id: 'square-selected-image',
+          type: 'IMAGE',
+          version: 1,
+          image_data: { url: 'https://images.example/primary.png' },
+        },
+      });
+    }
+    expect(path.endsWith('/catalog/object')).toBe(true);
+    itemPayloads.push(String(init?.body));
+    return confirmedSquareResponse(String(init?.body));
+  });
+  return { uploads, itemPayloads, controls };
+}
+function assertSelectedPhoto(
+  photo: Awaited<ReturnType<typeof beginPhotoAction>>,
+  square: ReturnType<typeof photoSquareResponses>,
+) {
+  expect(square.itemPayloads).toHaveLength(1);
+  for (const upload of square.uploads) {
+    expect(upload.bytes).toEqual(photo.bytes);
+    expect(upload.type).toBe('image/png');
+    expect(upload.metadata).toBe(retainedOperation().imagePayload);
+    expect(JSON.parse(upload.metadata)).toEqual({
+      idempotency_key: `${retainedOperation().id}:primary-image`,
+      object_id: 'square-item',
+      is_primary: true,
+      image: {
+        id: '#primary-image',
+        type: 'IMAGE',
+        image_data: { caption: 'Bracket' },
+      },
+    });
+  }
+  expect(product).toMatchObject({
+    image: photo.gallery[1],
+    imageGallery: JSON.stringify(photo.gallery),
+  });
+}
+describe.each([
+  'create',
+  'update',
+] as const)('%s selected primary photo through the mutation endpoint', action => {
+  test('publishes the selected second gallery asset bytes and verifies its primary link before local completion', async () => {
+    const photo = await beginPhotoAction(action);
+    const square = photoSquareResponses();
+    expect((await request('submit', { ...input, action })).status).toBe(200);
+    assertCompleted(action);
+    expect(square.uploads).toHaveLength(1);
+    expect(photo.bucketGet).toHaveBeenCalledTimes(1);
+    assertSelectedPhoto(photo, square);
+  });
+  test('reuses the exact saved image payload and bytes after lost acknowledgement without republishing the item', async () => {
+    const photo = await beginPhotoAction(action);
+    const square = photoSquareResponses();
+    square.controls.loseAcknowledgement = true;
+    expect((await request('submit', { ...input, action })).status).toBe(200);
+    expect(retainedOperation()).toMatchObject({
+      state: 'item_confirmed',
+      resultImageId: null,
+    });
+    expect({ product, mapping }).toEqual(photo.before);
+    expect(localWrites()).toEqual([]);
+    const saved = structuredClone(retainedOperation());
+    retainRecordsOnly();
+    expect((await request('reconcile', { operationId: saved.id })).status).toBe(
+      200,
+    );
+    assertCompleted(action);
+    expect(retainedOperation().id).toBe(saved.id);
+    expect(square.uploads).toHaveLength(2);
+    expect(square.uploads[1]).toEqual(square.uploads[0]);
+    expect(photo.bucketGet).toHaveBeenCalledTimes(2);
+    assertSelectedPhoto(photo, square);
+    assertFreshInvocations();
+  });
+  test.each([
+    'missing',
+    'wrong',
+  ] as const)('retains prior catalog for a %s primary link, then completes without reupload', async link => {
+    const photo = await beginPhotoAction(action);
+    const square = photoSquareResponses();
+    square.controls.imageIds =
+      link === 'missing'
+        ? undefined
+        : ['another-image', 'square-selected-image'];
+    const submitted = await request('submit', { ...input, action });
+    expect(submitted.status).toBe(200);
+    expect(await submitted.json()).toMatchObject({
+      operation: {
+        state: 'item_confirmed',
+        retryable: true,
+        error: 'square_publication_response_mismatch',
+      },
+    });
+    expect(retainedOperation().resultImageId).toBe('square-selected-image');
+    expect({ product, mapping }).toEqual(photo.before);
+    expect(localWrites()).toEqual([]);
+    const savedId = retainedOperation().id;
+    retainRecordsOnly();
+    const calls = vi.mocked(fetch).mock.calls.length;
+    expect((await request('operation')).status).toBe(200);
+    expect(fetch).toHaveBeenCalledTimes(calls);
+    expect({ product, mapping }).toEqual(photo.before);
+    square.controls.imageIds = ['square-selected-image'];
+    retainRecordsOnly();
+    expect((await request('reconcile', { operationId: savedId })).status).toBe(
+      200,
+    );
+    assertCompleted(action);
+    expect(square.uploads).toHaveLength(1);
+    expect(photo.bucketGet).toHaveBeenCalledTimes(1);
+    assertSelectedPhoto(photo, square);
     assertFreshInvocations();
   });
 });
