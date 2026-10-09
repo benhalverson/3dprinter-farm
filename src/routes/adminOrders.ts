@@ -99,6 +99,11 @@ const orderEventSchema = z.object({
   createdAt: z.string(),
 });
 
+/**
+ * Shared response for legacy and Square admin reconciliation. resultStatus keeps
+ * the existing fulfillment meaning; the optional audit fields identify a Square
+ * attempt and its diagnostic outcome without changing legacy callers' contract.
+ */
 const reconcileResponseSchema = z.object({
   success: z.boolean(),
   orderId: z.number(),

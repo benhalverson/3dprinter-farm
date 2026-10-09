@@ -9,7 +9,16 @@ import { createPaidOrderFulfillment } from './paidOrderFulfillment';
 type Order = typeof ordersTable.$inferSelect;
 type Database = WorkerEnv['Variables']['db'];
 
-/** Audit admin recovery without creating payment or manufacturing effects. */
+/**
+ * Turn an authorized admin reconciliation request into a persisted attempt and
+ * diagnostics for the response. The route handles access and refund holds; this
+ * coordinator reserves the audit before calling fulfillment recovery, compares
+ * the resulting local evidence, and retries eligible notifications.
+ *
+ * Keeping the audit here leaves provider state transitions in paidOrderFulfillment.
+ * In-person orders record a no-op; Slant recovery never submits manufacture.
+ * A lost invocation can leave its attempt running, rather than claim completion.
+ */
 export async function reconcileSquareOrder(
   db: Database,
   env: WorkerEnv['Bindings'],
@@ -32,7 +41,11 @@ export async function reconcileSquareOrder(
   }).returning({ id: orderReconciliationAttemptsTable.id });
   if (!attempt) throw new Error('Reconciliation attempt was not saved');
 
-  /** Finish only this attempt; interrupted attempts remain visibly running. */
+  /**
+   * Persist this invocation's diagnostics before logging its outcome. The captured
+   * attempt ID keeps concurrent admin requests' audit records separate; a failed
+   * write propagates instead of reporting a completed audit.
+   */
   const finish = async (resultStatus: string, errorMessage: string | null = null) => {
     await db.update(orderReconciliationAttemptsTable).set({
       resultStatus, errorMessage,
@@ -62,7 +75,11 @@ export async function reconcileSquareOrder(
       if (['drafting', 'draft_unknown', 'processing', 'process_unknown'].includes(order.fulfillmentState || ''))
         detectedIssues.push('fulfillment_outcome_unknown');
 
-      // Compare exact paid lines, never treat later cart additions as leftover order items.
+      /**
+       * Read cart rows still matching this owner's immutable paid snapshot before
+       * and after fulfillment finalization. These observations describe cleanup;
+       * they neither delete rows nor classify later additions as paid leftovers.
+       */
       const matchingCartRows = async () => {
         if (!order.cartId || !lines.success) return [];
         const rows = await db.select().from(cart).where(eq(cart.cartId, order.cartId));

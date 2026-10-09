@@ -36,7 +36,13 @@ async function slantRequest(env: Environment, path: string, payload?: unknown) {
   }
   return response.json();
 }
-/** Owns durable stage claims. An abandoned claim is ambiguous and never authorizes a second effect. */
+/**
+ * Bind the request's database and provider credentials to the paid-order lifecycle
+ * shared by checkout completion and admin recovery. Persisted stage claims, not
+ * this returned object, own progress and prevent a second external effect after
+ * an uncertain response. Payment verification belongs to the caller; each method
+ * also checks the stored paid Slant order before advancing it.
+ */
 export function createPaidOrderFulfillment(deps: {
   db: Database;
   env: Environment;
@@ -176,7 +182,16 @@ export function createPaidOrderFulfillment(deps: {
           );
       }
     },
-    /** Reconciles only retained process identities; never repeats ambiguous draft creation or manufacture. */
+    /**
+     * Recover an interrupted order from a Slant GET using the retained identity,
+     * or an admin-supplied draft ID verified against checkout/payment metadata.
+     * Unlike fulfillPaidOrder, this path never creates or processes a provider
+     * order: confirmed evidence advances local state and resumes cart cleanup.
+     *
+     * Admin reconciliation opts into refreshProcessed to refresh an already
+     * processed order. Both stored lifecycle fields constrain that update, and
+     * its WHERE guard preserves concurrent status or payment/fulfillment changes.
+     */
     async reconcilePaidOrder(orderId: number, recoveredDraftId?: string, refreshProcessed = false) {
       const [order] = await db
         .select()

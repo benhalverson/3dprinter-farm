@@ -25,6 +25,11 @@ const request = (body: object = {}) => app.request('/admin/orders/1/reconcile', 
   method: 'POST', headers: { cookie: 'fixture', 'content-type': 'application/json' },
   body: JSON.stringify(body),
 }, mockEnv());
+/**
+ * Install ordered Drizzle replies for the real admin route while fulfillment and
+ * notifications remain mocked. This fixture observes audit calls and failures;
+ * it does not execute SQL or model concurrent database writes.
+ */
 function database(...replies: unknown[]) {
   const fixture = scriptedDatabase(...replies);
   vi.mocked(drizzle).mockReturnValue(fixture.db);
