@@ -1,8 +1,8 @@
-import type { CommerceTools } from './commerce';
 import { type Event, EventType } from '@ag-ui/core';
 import { EventEncoder } from '@ag-ui/encoder';
 import { z } from 'zod';
 import type { CatalogItem, CatalogQuery } from './catalog';
+import type { CommerceTools } from './commerce';
 import {
   boundedBody,
   digest,
@@ -281,7 +281,7 @@ export class SessionHandler {
           },
         });
         if (!closed) {
-          custom('lulu.a2ui.v1', result);
+          custom(input.uiContract ?? 'lulu.a2ui.v1', result);
           finish();
         }
       } catch (error) {

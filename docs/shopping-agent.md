@@ -17,7 +17,7 @@ usage reporting and cancellation must be evaluated before enabling it.
 - Workers AI model `@cf/zai-org/glm-5.3-flash`; non-streaming OpenAI-style
   `choices[].message`/`usage` response. Provider output stays server-side until
   fully validated. SSE streams lifecycle/progress, never provider JSON or reasoning.
-- `lulu.a2ui.v1`, `lulu.progress.v1`, and `lulu.fallback.v1` are **application
+- `lulu.a2ui.v1`, opt-in `lulu.a2ui.v2`, `lulu.progress.v1`, and `lulu.fallback.v1` are **application
   extensions**, not a standardized binding between AG-UI and A2UI.
 
 ## HTTP contract
@@ -69,6 +69,14 @@ each `user` or `assistant` with at most 8,192 code units. No other roles or fiel
 are accepted. The total byte ceiling still applies. Context is request-scoped and
 is never persisted as conversation history.
 
+The optional `uiContract: "lulu.a2ui.v2"` requests the public-catalog binding
+contract below. Omitting it retains the original literal-only `lulu.a2ui.v1`
+batch. Unknown contract values return `400 invalid_request` before admission or
+inference. This is an application payload version; both use A2UI `v0.9.1` and the
+same component catalog. Current cart/selection request fields and commerce tools
+remain supported; see [cart](shopping-cart-agent.md) and
+[checkout](shopping-checkout-agent.md) contracts.
+
 A new run returns `200 text/event-stream`. Repeating a run ID returns `200
 application/json` with its original revision and known status; it never retries
 inference or replays a surface:
@@ -104,7 +112,8 @@ Each SSE frame is `data: <one AG-UI JSON event>\n\n`:
 1. `RUN_STARTED` with `threadId=sessionId`, `runId`, and `metadata.uiRevision`.
 2. `CUSTOM lulu.progress.v1` with `{runId, uiRevision, stage:"admission", invocation:0}`.
 3. Zero to three inference progress events with `stage:"inference"`, invocation 1–3.
-4. Exactly one validated `lulu.a2ui.v1` batch **or** `lulu.fallback.v1`.
+4. Exactly one validated `lulu.a2ui.v1` batch (or `lulu.a2ui.v2` when requested)
+   **or** `lulu.fallback.v1`.
 5. `RUN_FINISHED`, with run/thread IDs and `result: {uiRevision,status,reason}`.
 
 Disconnected clients cannot receive terminal events; inspect duplicate-run status
@@ -172,6 +181,81 @@ links and fit text from catalog DTOs. The current database has no structured fit
 field, so compatibility is explicitly unknown. Policy answers are also explicit
 limitations. There is no free-form generated factual prose. Existing catalog text
 is untrusted context, never privileged model instructions.
+
+### Opt-in public catalog bindings (`lulu.a2ui.v2`)
+
+Existing v1 clients strictly accept one component update and literal values, so
+the server never sends bindings unless the run requests v2. A v2-capable client
+must also retain v1 handling while the companion changes roll out. Persist the
+original request body for uncertain-run recovery; never change its version or
+identity on retry. Duplicate-run status remains metadata only, regardless of the
+version in a later request.
+
+The model selects and orders the same approved components, but replaces each
+`productId` with a record binding:
+
+```json
+{
+  "id": "agent-mount",
+  "component": "ProductEntry",
+  "product": { "path": "/agentCatalog/products/42" }
+}
+```
+
+`ProductFocus.product` may be `null` for ambiguity or absent matches. Otherwise
+the focus and its optional `DetailImage` must select the same public product.
+Only canonical positive safe-integer IDs present in the server's catalog results
+are allowed. Relative paths, field paths, encoded paths, other namespaces,
+model-supplied facts, extra fields, and actions are rejected. No model output can
+read private state, change configuration, or redefine payment controls.
+
+The compiler supplies one complete `CUSTOM lulu.a2ui.v2` value with the same
+`runId`, `uiRevision`, `catalogId`, and `limitations` envelope as v1. Its `messages`
+contains exactly these two A2UI `v0.9.1` messages, in order:
+
+1. `updateDataModel: { surfaceId: "storefront", path: "/agentCatalog", value: { products } }`.
+   This replaces the namespace with only the referenced public records keyed by
+   their numeric ID strings. Each record has exactly `id`, `name`, `description`,
+   `image`, formatted USD `price`, `sku`, local `href`, and `compatibility`.
+2. `updateComponents: { surfaceId: "storefront", components }` with the validated
+   graph. Each bound value is exactly `{ path: "/agentCatalog/products/<id>/<field>" }`.
+
+The field allowlist is fixed by the compiler:
+
+| Component | Component field → public record field |
+| --- | --- |
+| ProductEntry | name → name; description → description; image → image; price → price; href → href |
+| ProductFocus | selectedTitle → name; selectedDescription → description; price → price; sku → sku; href → href; compatibility → compatibility |
+| DetailImage | src → image; name → name |
+
+All bound fields on one component must use the same record. The remaining fields
+retain the trusted v1 literals and actions; the client still restores direct
+category controls. Public records are derived only from validated catalog DTOs,
+never copied from model values or unprojected database rows. Missing fit remains
+explicitly unknown. Image URLs are HTTPS or empty. A record name is at most 512
+characters, description 4,096, image 2,048, price 128, and SKU/compatibility 8,192.
+The graph permits at most 16 nodes, 12 rail entries, one focus and one image;
+there can be at most 13 distinct product records. The compiled batch is at most
+32 KiB of UTF-8 before the run/revision envelope. Invalid or oversized output
+emits only the normal fallback;
+no partial data or component update is streamed.
+
+The client must validate both messages, every record, exact field paths, matching
+record IDs/product links, graph reachability and focus/image consistency before
+calling the renderer. Do not render the data message as it arrives: wait for the
+matching successful terminal event and clean stream EOF, recheck the active
+run/revision, then apply both messages together. A failed validation or stale run
+preserves the entire prior surface. The shapes above match the installed
+`@a2ui/web_core@0.11.0` v0.9 schema's `UpdateDataModelMessageSchema` and
+`DynamicStringSchema`; the namespace and path allowlist are Lulu restrictions.
+
+`test/shopping/composition-bindings.spec.ts` and transport tests exercise synthetic
+tool holders, pit stands, 1/10 mounts, MBX8 mounts and B6.4/B7 shrouds, plus ambiguous
+and unsupported-fit arrangements, hostile paths, private-field exclusion,
+cancellation and fallback. These verify controlled contracts and authoritative
+hydration, not model selection quality or production catalog/fit claims. The
+Lulu consumer and its renderer tests are a required companion before enabling v2
+in the storefront. Live model evaluation and deployment remain separate gates.
 
 ## Inference and durable budget
 

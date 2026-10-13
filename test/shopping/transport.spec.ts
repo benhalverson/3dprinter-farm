@@ -3,11 +3,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 import app from '../../src/app';
 import { BudgetLedger } from '../../src/shopping/budget';
+import type { CatalogItem } from '../../src/shopping/catalog';
 import { IDLE_MS, LIFE_MS } from '../../src/shopping/contracts';
 import { MONTHLY_CAP, PRICE, RESERVATION } from '../../src/shopping/pricing';
 import { SessionHandler } from '../../src/shopping/session';
 import { mockEnv } from '../mocks/env';
-import { catalog, completion } from './fixtures';
+import {
+  bindingPlan,
+  catalog,
+  completion,
+  initialAssortment,
+} from './fixtures';
 import { MemoryBudgetStorage, MemorySessionStorage } from './storage';
 
 vi.mock('agents', () => ({
@@ -31,7 +37,12 @@ const pending = new Set<Promise<void>>();
 /** Wire the real Hono/session boundary to controlled storage and provider behavior. */
 function createFixture() {
   const storage = new MemorySessionStorage();
-  const controls = { mode: 'valid' as Mode, invocations: 0 };
+  const controls: {
+    mode: Mode;
+    invocations: number;
+    items: CatalogItem[];
+    composition?: string;
+  } = { mode: 'valid', invocations: 0, items: catalog };
   const handler = new SessionHandler(storage, {
     enabled: () => controls.mode !== 'disabled',
     priceVersion: PRICE.version,
@@ -45,7 +56,7 @@ function createFixture() {
       },
       settle: async (...args) => budget.settle(...args),
     }),
-    read: async () => catalog,
+    read: async () => controls.items,
     /** Return controlled provider results without spending inference budget externally. */
     infer: async (_payload, signal) => {
       controls.invocations++;
@@ -56,7 +67,7 @@ function createFixture() {
           signal.addEventListener('abort', () => resolve(), { once: true });
         });
       const result = completion(
-        controls.mode === 'malformed' ? '{' : undefined,
+        controls.mode === 'malformed' ? '{' : controls.composition,
       );
       return controls.mode === 'missing_usage'
         ? { ...result, usage: undefined }
@@ -119,7 +130,12 @@ const create = async (ip = crypto.randomUUID()) => {
   expect(res.headers.get('cache-control')).toBe('private, no-store');
   return sessionSchema.parse(await res.json());
 };
-const start = (session: Session, runId = crypto.randomUUID(), uiRevision = 7) =>
+const start = (
+  session: Session,
+  runId = crypto.randomUUID(),
+  uiRevision = 7,
+  uiContract?: string,
+) =>
   app.request(
     `/agent/sessions/${session.sessionId}/runs`,
     {
@@ -133,6 +149,7 @@ const start = (session: Session, runId = crypto.randomUUID(), uiRevision = 7) =>
         uiRevision,
         message: 'Show pit tools',
         context: [],
+        ...(uiContract ? { uiContract } : {}),
       }),
     },
     testEnv(),
@@ -195,6 +212,132 @@ describe('anonymous shopping transport with mocked persistence', () => {
     ]);
     expect(persisted).not.toContain('Show pit tools');
     expect(persisted).not.toContain(session.capability);
+  });
+
+  it.each(
+    initialAssortment,
+  )('delivers opted-in public bindings for $name through Hono and real admission', async item => {
+    const session = await create();
+    const controls = fixture(session.sessionId).controls;
+    controls.items = initialAssortment;
+    controls.composition = JSON.stringify(bindingPlan(item.id));
+    const runId = crypto.randomUUID();
+    const output = await events(
+      await start(session, runId, 42, 'lulu.a2ui.v2'),
+    );
+    expect(output.map(event => event.name ?? event.type)).toEqual([
+      'RUN_STARTED',
+      'lulu.progress.v1',
+      'lulu.progress.v1',
+      'lulu.a2ui.v2',
+      'RUN_FINISHED',
+    ]);
+    const batch = output.find(event => event.name === 'lulu.a2ui.v2');
+    expect(batch?.value).toMatchObject({
+      runId,
+      uiRevision: 42,
+      messages: [
+        {
+          version: 'v0.9.1',
+          updateDataModel: {
+            surfaceId: 'storefront',
+            path: '/agentCatalog',
+            value: {
+              products: { [item.id]: { id: item.id, name: item.name } },
+            },
+          },
+        },
+        {
+          version: 'v0.9.1',
+          updateComponents: {
+            surfaceId: 'storefront',
+            components: expect.arrayContaining([
+              {
+                id: 'agent-item',
+                component: 'ProductEntry',
+                name: { path: `/agentCatalog/products/${item.id}/name` },
+                description: {
+                  path: `/agentCatalog/products/${item.id}/description`,
+                },
+                price: { path: `/agentCatalog/products/${item.id}/price` },
+                image: { path: `/agentCatalog/products/${item.id}/image` },
+                href: { path: `/agentCatalog/products/${item.id}/href` },
+              },
+            ]),
+          },
+        },
+      ],
+    });
+    expect(await calls(session)).toBe(1);
+    const reservation = [...budgetStorage.reservations.values()].find(
+      value => value.runId === runId,
+    );
+    expect(reservation?.status).toBe('settled');
+    expect(await (await start(session, runId, 43)).json()).toMatchObject({
+      status: 'completed',
+      runId,
+      uiRevision: 42,
+    });
+    expect(await calls(session)).toBe(1);
+  });
+
+  it('rejects unsupported UI negotiation before admission or inference', async () => {
+    const session = await create();
+    expect(
+      (await start(session, crypto.randomUUID(), 1, 'lulu.a2ui.v3')).status,
+    ).toBe(400);
+    expect(await calls(session)).toBe(0);
+    expect(budgetStorage.reservations.size).toBe(0);
+  });
+
+  it('emits only fallback when a binding attempts to override an unrelated product price', async () => {
+    const session = await create();
+    const controls = fixture(session.sessionId).controls;
+    controls.items = initialAssortment;
+    const selected = bindingPlan();
+    Object.assign(selected.components[1], {
+      price: { path: '/agentCatalog/products/102/price' },
+    });
+    controls.composition = JSON.stringify(selected);
+    const output = await events(
+      await start(session, crypto.randomUUID(), 1, 'lulu.a2ui.v2'),
+    );
+    expect(output.some(event => event.name?.startsWith('lulu.a2ui.'))).toBe(
+      false,
+    );
+    expect(
+      output.find(event => event.name === 'lulu.fallback.v1')?.value,
+    ).toMatchObject({
+      reason: 'invalid_output',
+      uiRevision: 1,
+    });
+    expect(await calls(session)).toBe(1);
+    expect((await app.request('/categories', {}, testEnv())).status).toBe(200);
+  });
+
+  it('suppresses a cancelled binding batch and retains the original run identity', async () => {
+    const session = await create();
+    const controls = fixture(session.sessionId).controls;
+    controls.items = initialAssortment;
+    controls.composition = JSON.stringify(bindingPlan());
+    await mode(session, 'wait');
+    const runId = crypto.randomUUID();
+    const response = await start(session, runId, 17, 'lulu.a2ui.v2');
+    await vi.waitFor(async () => expect(await calls(session)).toBe(1));
+    await cancel(session, runId);
+    const output = await events(response);
+    expect(output.some(event => event.name?.startsWith('lulu.a2ui.'))).toBe(
+      false,
+    );
+    expect(
+      await (await start(session, runId, 18, 'lulu.a2ui.v2')).json(),
+    ).toMatchObject({
+      runId,
+      uiRevision: 17,
+      status: 'fallback',
+      reason: 'cancelled',
+    });
+    expect(await calls(session)).toBe(1);
   });
 
   it('isolates capabilities, rejects URL transport and exposes no generic SDK surface', async () => {
@@ -285,9 +428,9 @@ describe('anonymous shopping transport with mocked persistence', () => {
     expect(cors.headers.get('access-control-allow-origin')).toBe(
       'https://luluspeedworks.com',
     );
-    expect(cors.headers.get('access-control-allow-headers')?.toLowerCase()).toContain(
-      'authorization',
-    );
+    expect(
+      cors.headers.get('access-control-allow-headers')?.toLowerCase(),
+    ).toContain('authorization');
     const blocked = await app.request(
       url,
       { method: 'OPTIONS', headers: { Origin: 'https://untrusted.example' } },

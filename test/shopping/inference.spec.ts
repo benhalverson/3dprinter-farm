@@ -6,7 +6,12 @@ import {
   modelContext,
   runInference,
 } from '../../src/shopping/inference';
-import { catalog, completion } from './fixtures';
+import {
+  bindingPlan,
+  catalog,
+  completion,
+  initialAssortment,
+} from './fixtures';
 
 const input = (): RunInput => ({
   runId: crypto.randomUUID(),
@@ -33,6 +38,41 @@ function dependencies() {
   };
 }
 describe('bounded read-only inference', () => {
+  it('uses record bindings only for opted-in runs and preserves current commerce tools', async () => {
+    const run: RunInput = { ...input(), uiContract: 'lulu.a2ui.v2' };
+    const commerce = {
+      context: { selection: { productId: 101 } },
+      execute: vi.fn(async () => ({ status: 'selected' })),
+    };
+    const request = modelContext(run, initialAssortment, [], commerce);
+    expect(request.messages[0].content).toContain(
+      '"path":"/agentCatalog/products/1"',
+    );
+    expect(request.messages[0].content).toContain('explicit confirmation');
+    expect(request.tools.map(tool => tool.function.name)).toContain(
+      'selection_options',
+    );
+    expect(modelContext(input(), catalog).messages[0].content).toContain(
+      '"productId":1',
+    );
+    expect(modelContext(input(), catalog).messages[0].content).not.toContain(
+      '/agentCatalog',
+    );
+    const deps = dependencies();
+    deps.read = vi.fn(async () => initialAssortment);
+    deps.infer = vi.fn(async () => completion(JSON.stringify(bindingPlan())));
+    const batch = await runInference(run, 'session', { ...deps, commerce });
+    expect(batch.messages[0]).toMatchObject({
+      updateDataModel: {
+        path: '/agentCatalog',
+        value: { products: { 101: { name: 'Tool holder' } } },
+      },
+    });
+    expect(deps.accounting.reserve).toHaveBeenCalledOnce();
+    expect(deps.accounting.settle).toHaveBeenCalledOnce();
+    expect(commerce.execute).not.toHaveBeenCalled();
+  });
+
   it('separates the current request from prior requests and untrusted catalog context', () => {
     const request = modelContext(
       {

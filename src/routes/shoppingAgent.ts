@@ -76,11 +76,11 @@ shopping.post(
     tags: ['Shopping agent'],
     security: [{ agentCapability: [] }],
     description:
-      'Run catalog guidance; AG-UI SSE or JSON status for duplicate run IDs. Body: runId UUID, uiRevision integer, message string, context array. See docs/shopping-agent.md.',
+      'Run catalog guidance; AG-UI SSE or JSON status for duplicate run IDs. Body: runId UUID, uiRevision integer, message string, context array; optional uiContract lulu.a2ui.v2 enables public catalog bindings. See docs/shopping-agent.md.',
     responses: {
       200: {
         description:
-          'AG-UI SSE with lulu.a2ui.v1 or lulu.fallback.v1; duplicate status JSON',
+          'AG-UI SSE with lulu.a2ui.v1 (default), opted-in lulu.a2ui.v2, or lulu.fallback.v1; duplicate status JSON',
         content: {
           'text/event-stream': { schema: { type: 'string' } },
           'application/json': {

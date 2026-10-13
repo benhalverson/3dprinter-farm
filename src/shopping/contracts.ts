@@ -9,6 +9,8 @@ export const runSchema = z
     runId: z.string().uuid(),
     uiRevision: z.number().int().nonnegative().safe(),
     message: z.string().trim().min(1).max(8192),
+    // Omission preserves the literal-only v1 response for existing storefronts.
+    uiContract: z.literal('lulu.a2ui.v2').optional(),
     selection: z
       .object({
         productId: z.number().int().positive().safe(),
