@@ -4,6 +4,35 @@ The API owns the Catalog Item. Saving it never publishes to Square. Square publi
 
 ## Prices and local catalog routes
 
+`GET /products?page=1&limit=100`, `GET /products/search?q=...`, and ordinary
+`GET /product/:id` read catalog metadata and category membership exclusively from
+D1. List and search include ordered `categories: [{ categoryId, categoryName }]`
+on every item, including `[]` when uncategorized. Lulu should build its catalog
+category membership from those page records without fetching every detail.
+Paginated reads have a maximum limit of 100 and order by product ID. Category
+order matches detail: ascending stored position (legacy null positions first),
+then category ID. Online `price` and nullable `inPersonPrice` remain USD amounts.
+Page envelopes and the legacy unpaginated `/products` array remain compatible;
+the legacy array is still unbounded, so new consumers should request pages.
+Pages are separate reads, not a transactionally frozen catalog snapshot.
+
+For items with `publicFileServiceId`, the compatibility `stl` field is the stable
+absolute `/product/:id/print-file` URL. The original store can continue passing
+it directly to `useLoader(STLLoader, product.stl)`. Only loading that URL contacts
+Slant: one GET with a five-second abort deadline (including the response body),
+at most four concurrent lookups per Worker isolate, and no waiting queue.
+Success returns a `302` HTTPS redirect with `Cache-Control: no-store`; unavailable
+previews return `502`, excess concurrent work `503`, and absent products/files
+`404`. Failures do not change catalog metadata or block other browsing requests.
+This admission cap is per isolate, not a deployment-wide provider rate limit.
+The final asset host still owns its browser CORS policy. Temporary provider URLs
+are never written back to D1; the Slant File ID remains the durable identity.
+Legacy items without that identity retain their stored `stl` compatibility value.
+
+Browsing is not checkout authorization. Checkout readiness, fresh filament
+availability, shipping estimates, and paid fulfillment retain their existing
+server-side validation paths.
+
 `POST /add-product` and `POST /v2/add-product` require `inPersonPrice` in USD. `price` remains the deprecated alias for the **markup percentage** on creation; `markupPercentage` takes precedence. Manufacturing estimates still determine the stored Online Price. V2 still requires the confirmed durable `publicFileServiceId`.
 
 `PUT /update-product` and `PUT /v2/update-product` retain its required catalog fields and accepts `inPersonPrice`. Positive numeric USD amounts up to 99,999,999.99 with at most two decimal places are accepted. Storage uses integer cents. Existing records may return `inPersonPrice: null` until explicitly priced. Both prices are required on full update; omitted or null prices are rejected. In-Person Price cannot be cleared. There is no fallback to Online Price. `price` on update/read remains Online Price in USD. Create/read responses return `inPersonPrice` as USD, including list, pagination, search, and individual reads.

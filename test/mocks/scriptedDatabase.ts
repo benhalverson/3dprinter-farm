@@ -19,6 +19,7 @@ export function scriptedDatabase(...responses: unknown[]) {
       'from',
       'where',
       'limit',
+      'offset',
       'orderBy',
       'values',
       'set',
