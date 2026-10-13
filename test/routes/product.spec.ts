@@ -266,15 +266,17 @@ describe('Product Routes', () => {
     mockWhere.mockReturnValueOnce({
       limit: () => ({
         offset: () => ({
-          all: vi.fn().mockResolvedValueOnce([
-            {
-              id: 1,
-              name: 'Hydrated Product',
-              imageGallery: null,
-              stl: 'file_123',
-              publicFileServiceId: 'file_123',
-            },
-          ]),
+          orderBy: () => ({
+            all: vi.fn().mockResolvedValueOnce([
+              {
+                id: 1,
+                name: 'Hydrated Product',
+                imageGallery: null,
+                stl: 'file_123',
+                publicFileServiceId: 'file_123',
+              },
+            ]),
+          }),
         }),
       }),
     });

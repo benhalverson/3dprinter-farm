@@ -67,22 +67,49 @@ function parseImageGallery(imageGallery: string | null): string[] {
 }
 
 /** Stable preview URL keeps existing STL consumers working without eager provider IO. */
-function withPreview<T extends { id: number; stl?: string | null; publicFileServiceId?: string | null }>(requestURL: string, product: T): T {
-  return product.publicFileServiceId ? { ...product, stl: new URL(`/product/${product.id}/print-file`, requestURL).href } : product;
+function withPreview<
+  T extends { id: number; stl?: string | null; publicFileServiceId?: string | null },
+>(requestURL: string, product: T): T {
+  return product.publicFileServiceId
+    ? { ...product, stl: new URL(`/product/${product.id}/print-file`, requestURL).href }
+    : product;
 }
+// Isolate-local admission count only; never share request-owned I/O objects.
 let activePreviewResolutions = 0;
 
 /** Load category membership in one D1 query for the current page. */
 async function withCategories<T extends { id: number }>(db: WorkerEnv['Variables']['db'], products: T[]) {
   if (!products.length) return [];
-  const links: Array<{ productId: number; categoryId: number; categoryName: string; orderIndex: number | null }> = [];
+  type CategoryLink = { productId: number; categoryId: number; categoryName: string; orderIndex: number | null };
+  const byProduct = new Map<number, CategoryLink[]>();
   // Paginated callers need one query; legacy array callers stay below D1's bind limit.
   for (let offset = 0; offset < products.length; offset += 100) {
-    links.push(...await db.select({ productId: productsToCategories.productId, categoryId: categoryTable.categoryId, categoryName: categoryTable.categoryName, orderIndex: productsToCategories.orderIndex })
-      .from(productsToCategories).innerJoin(categoryTable, eq(productsToCategories.categoryId, categoryTable.categoryId))
-      .where(inArray(productsToCategories.productId, products.slice(offset, offset + 100).map(product => product.id))).all());
+    const links = await db
+      .select({ productId: productsToCategories.productId, categoryId: categoryTable.categoryId, categoryName: categoryTable.categoryName, orderIndex: productsToCategories.orderIndex })
+      .from(productsToCategories)
+      .innerJoin(categoryTable, eq(productsToCategories.categoryId, categoryTable.categoryId))
+      .where(inArray(productsToCategories.productId, products.slice(offset, offset + 100).map(product => product.id)))
+      .all();
+    for (const link of links) {
+      const categories = byProduct.get(link.productId) ?? [];
+      categories.push(link);
+      byProduct.set(link.productId, categories);
+    }
   }
-  return products.map(product => ({ ...product, categories: links.filter(link => link.productId === product.id).sort((a, b) => (a.orderIndex ?? 0) - (b.orderIndex ?? 0)).map(({ categoryId, categoryName }) => ({ categoryId, categoryName })) }));
+  return products.map(product => ({
+    ...product,
+    categories: (byProduct.get(product.id) ?? [])
+      .sort((a, b) => {
+        // Match detail's ascending D1 order, including legacy null positions.
+        if (a.orderIndex !== b.orderIndex) {
+          if (a.orderIndex === null) return -1;
+          if (b.orderIndex === null) return 1;
+          return a.orderIndex - b.orderIndex;
+        }
+        return a.categoryId - b.categoryId;
+      })
+      .map(({ categoryId, categoryName }) => ({ categoryId, categoryName })),
+  }));
 }
 
 const product = factory
@@ -90,7 +117,7 @@ const product = factory
   .get(
     '/products',
     describeRoute({
-      description: 'Get all products with pagination',
+      description: 'Read catalog metadata and ordered category membership from D1 without provider requests. Pagination is capped at 100 items; omit page and limit for the legacy array response.',
       tags: ['Products'],
       responses: {
         200: {
@@ -115,7 +142,7 @@ const product = factory
                         stl: {
                           type: 'string',
                           description:
-                            'Deprecated compatibility field. Product reads return a fresh Slant3D fileURL when publicFileServiceId is present; do not persist this value.',
+                            'Compatibility preview URL. When publicFileServiceId is present, points to the on-demand /product/{id}/print-file resolver. No provider request occurs until this URL is loaded.',
                         },
                         publicFileServiceId: { type: 'string' },
                         price: { type: 'number' },
@@ -127,6 +154,18 @@ const product = factory
                         filamentType: { type: 'string' },
                         skuNumber: { type: 'string' },
                         color: { type: 'string' },
+                        categories: {
+                          type: 'array',
+                          items: {
+                            type: 'object',
+                            required: ['categoryId', 'categoryName'],
+                            properties: {
+                              categoryId: { type: 'number' },
+                              categoryName: { type: 'string' },
+                            },
+                          },
+                          description: 'Ordered D1 category membership; no detail requests are needed to categorize listings.',
+                        },
                       },
                     },
                   },
@@ -209,7 +248,7 @@ const product = factory
         const offset = (page - 1) * limit;
 
         // Validate pagination parameters
-        if (Number.isNaN(page) || Number.isNaN(limit)) {
+        if (!Number.isSafeInteger(page) || !Number.isSafeInteger(limit) || !Number.isSafeInteger(offset)) {
           return c.json(
             {
               error:
@@ -247,6 +286,7 @@ const product = factory
           .from(productsTable)
           .limit(limit)
           .offset(offset)
+          .orderBy(productsTable.id)
           .all();
 
         // Parse imageGallery safely
@@ -303,7 +343,7 @@ const product = factory
                         stl: {
                           type: 'string',
                           description:
-                            'Deprecated compatibility field. Product reads return a fresh Slant3D fileURL when publicFileServiceId is present; do not persist this value.',
+                            'Compatibility preview URL. When publicFileServiceId is present, points to the on-demand /product/{id}/print-file resolver. No provider request occurs until this URL is loaded.',
                         },
                         publicFileServiceId: { type: 'string' },
                         price: { type: 'number' },
@@ -315,6 +355,18 @@ const product = factory
                         filamentType: { type: 'string' },
                         skuNumber: { type: 'string' },
                         color: { type: 'string' },
+                        categories: {
+                          type: 'array',
+                          items: {
+                            type: 'object',
+                            required: ['categoryId', 'categoryName'],
+                            properties: {
+                              categoryId: { type: 'number' },
+                              categoryName: { type: 'string' },
+                            },
+                          },
+                          description: 'Ordered D1 category membership; no detail requests are needed to categorize listings.',
+                        },
                       },
                     },
                   },
@@ -374,7 +426,7 @@ const product = factory
       const offset = (page - 1) * limit;
 
       // Validate pagination parameters
-      if (Number.isNaN(page) || Number.isNaN(limit)) {
+      if (!Number.isSafeInteger(page) || !Number.isSafeInteger(limit) || !Number.isSafeInteger(offset)) {
         return c.json(
           {
             error:
@@ -420,6 +472,7 @@ const product = factory
           .where(whereClause)
           .limit(limit)
           .offset(offset)
+          .orderBy(productsTable.id)
           .all();
 
         // Parse imageGallery safely
@@ -812,7 +865,7 @@ const product = factory
           eq(productsToCategories.categoryId, categoryTable.categoryId),
         )
         .where(eq(productsToCategories.productId, parsedData.id))
-        .orderBy(productsToCategories.orderIndex)
+        .orderBy(productsToCategories.orderIndex, categoryTable.categoryId)
         .all();
 
       // Parse imageGallery safely for individual product
