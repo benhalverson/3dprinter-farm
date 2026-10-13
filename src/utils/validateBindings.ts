@@ -1,5 +1,5 @@
 import { authConfiguration } from '../config/auth';
-import { squareConfig, squareWebhookConfig } from '../lib/square';
+import { squareConfig } from '../lib/square';
 import type { Bindings } from '../types';
 
 const CORE = ['DB', 'BUCKET', 'PHOTO_BUCKET', 'COLOR_CACHE', 'RATE_LIMIT_KV', 'AUTH_BASE_URL', 'ENCRYPTION_PASSPHRASE', 'R2_PUBLIC_BASE_URL', 'R2_PHOTO_BASE_URL'] as const;
@@ -11,9 +11,17 @@ export function featureReadiness(env: Record<string, unknown>) {
     if (!keys.every(key => configured(env[key]))) return 'unready';
     try { validate?.(); return 'ready'; } catch { return 'unready'; }
   };
+  const square = feature([
+    'SQUARE_ENVIRONMENT',
+    'SQUARE_ACCESS_TOKEN',
+    'SQUARE_MERCHANT_ID',
+    'SQUARE_LOCATION_ID',
+    'SQUARE_WEBHOOK_SIGNATURE_KEY',
+    'SQUARE_WEBHOOK_NOTIFICATION_URL',
+  ], () => squareConfig(env as unknown as Bindings));
   return {
-    square: feature(['SQUARE_ENVIRONMENT', 'SQUARE_ACCESS_TOKEN', 'SQUARE_MERCHANT_ID', 'SQUARE_LOCATION_ID'], () => squareConfig(env as unknown as Bindings)),
-    squareWebhook: feature(['SQUARE_WEBHOOK_SIGNATURE_KEY', 'SQUARE_WEBHOOK_NOTIFICATION_URL'], () => squareWebhookConfig(env as unknown as Bindings)),
+    square,
+    squareWebhook: square,
     slant: feature(['SLANT_API_V2', 'SLANT_PLATFORM_ID']),
     slantWebhook: configured(env.SLANT_WEBHOOK_SECRET) ? (configured(env.SLANT_PLATFORM_ID) ? 'ready' : 'unready') : 'disabled',
   };

@@ -34,11 +34,15 @@ const configSchema = z.object({
   SQUARE_ACCESS_TOKEN: z.string().trim().min(1),
   SQUARE_MERCHANT_ID: z.string().trim().min(1),
   SQUARE_LOCATION_ID: z.string().trim().min(1),
+  // Webhook verification must use the configured strings without normalization.
+  SQUARE_WEBHOOK_SIGNATURE_KEY: z.string().refine(value => value.trim().length > 0),
+  SQUARE_WEBHOOK_NOTIFICATION_URL: z.string().url(),
 });
-/** Requires explicit environment, credentials, merchant, and location configuration. */
+/** Requires environment, access token, merchant ID, location ID, webhook signature key, and notification URL. */
 export function squareConfig(env: Bindings) {
   const result = configSchema.safeParse(env);
   if (!result.success) throw squareFailure('square_configuration_required');
+  squareWebhookConfig(env);
   return result.data;
 }
 export type SquareConfig = ReturnType<typeof squareConfig>;
@@ -372,11 +376,11 @@ export function squareClient(config: SquareConfig) {
 
 /** Side-effect-free webhook configuration shared with readiness. */
 export function squareWebhookConfig(env: Bindings) {
-  const key = env.SQUARE_WEBHOOK_SIGNATURE_KEY?.trim();
-  const notificationURL = env.SQUARE_WEBHOOK_NOTIFICATION_URL?.trim();
+  const key = env.SQUARE_WEBHOOK_SIGNATURE_KEY;
+  const notificationURL = env.SQUARE_WEBHOOK_NOTIFICATION_URL;
   let url: URL;
   try { url = new URL(notificationURL || ''); } catch { throw squareFailure('square_configuration_required'); }
-  if (!key || url.protocol !== 'https:' || url.username || url.password || url.hash)
+  if (!key?.trim() || url.protocol !== 'https:' || url.username || url.password || url.hash)
     throw squareFailure('square_configuration_required');
   return { key, notificationURL: notificationURL as string };
 }
@@ -387,11 +391,11 @@ export async function verifySquareSignature(
   signature: string | undefined,
   env: Bindings,
 ) {
-  const config = squareWebhookConfig(env);
+  const config = squareConfig(env);
   if (!signature || !/^[A-Za-z0-9+/]{43}=$/.test(signature)) return false;
   const key = await crypto.subtle.importKey(
     'raw',
-    new TextEncoder().encode(config.key),
+    new TextEncoder().encode(config.SQUARE_WEBHOOK_SIGNATURE_KEY),
     { name: 'HMAC', hash: 'SHA-256' },
     false,
     ['verify'],
@@ -401,6 +405,6 @@ export async function verifySquareSignature(
     'HMAC',
     key,
     bytes,
-    new TextEncoder().encode(config.notificationURL + body),
+    new TextEncoder().encode(config.SQUARE_WEBHOOK_NOTIFICATION_URL + body),
   );
 }
