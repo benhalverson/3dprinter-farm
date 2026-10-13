@@ -1,15 +1,12 @@
 import { beforeEach, expect, test, vi } from 'vitest';
 import app from '../../src/app';
+import { BROWSER_ORIGINS } from '../../src/config/browserOrigins';
 import { mockBetterAuth } from '../mocks/auth';
 import { mockEnv } from '../mocks/env';
 
 const admin = 'https://rc-admin.benhalverson.workers.dev';
 const api = 'https://3dprinter-web-api.benhalverson.workers.dev';
-const origins = [
-  'http://localhost:3000', 'http://localhost:4200', 'http://localhost:8787',
-  'https://rc-store.benhalverson.dev', 'https://rc-admin.pages.dev',
-  'https://api.benhalverson.dev', 'https://luluspeedworks.com', admin,
-];
+const origins = BROWSER_ORIGINS;
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -83,6 +80,8 @@ test.each([
   'https://evil-rc-admin.benhalverson.workers.dev',
   'http://rc-admin.benhalverson.workers.dev',
   'https://untrusted.workers.dev', 'null',
+  'https://luluspeedworks.com.evil.example', 'https://www.luluspeedworks.com',
+  'http://luluspeedworks.com', 'https://luluspeedworks.com:444',
 ])('does not grant browser access to %s', async origin => {
   const preflight = await request('/auth/signin', origin, {
     method: 'OPTIONS', headers: { 'Access-Control-Request-Method': 'POST', 'Access-Control-Request-Headers': 'content-type' },

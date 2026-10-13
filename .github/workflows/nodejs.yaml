@@ -31,6 +31,10 @@ jobs:
         run: pnpm run test:ci
       - name: Run project notes tests
         run: pnpm test:project-notes
+      - name: Install authentication acceptance browsers
+        run: pnpm exec playwright install --with-deps chromium webkit
+      - name: Verify Lulu browser authentication
+        run: pnpm test:auth-browser
 
   deploy:
     needs: build
