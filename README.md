@@ -91,6 +91,19 @@ Both engines exercise the mounted production routes, Better Auth configuration, 
 
 This is browser/API integration with mocked persistence, not deployment or D1 validation. The loopback certificate is ephemeral and trusted only by the test browser's TLS-error override. DNS, public TLS, Worker routing and deployed browser acceptance still require the separately provisioned environment described in [password-reset verification](docs/password-reset.md#browser-acceptance-still-required). No real accounts, emails or provider requests are used.
 
+The companion cart suite covers [Lulu issue #4](https://github.com/benhalverson/luluspeedworks/issues/4) using the production UI from [storefront PR #74](https://github.com/benhalverson/luluspeedworks/pull/74), pinned to `dba226387e9a58a441be13a19c1c7ed02bea2c5f`. With Node 24.18.0 and the browsers above installed:
+
+```sh
+git clone https://github.com/benhalverson/luluspeedworks.git .generated/lulu-client
+git -C .generated/lulu-client checkout --detach dba226387e9a58a441be13a19c1c7ed02bea2c5f
+pnpm --dir .generated/lulu-client install --frozen-lockfile
+LULU_CLIENT_DIR=.generated/lulu-client pnpm test:lulu-browser
+```
+
+The client's package manager is pinned to pnpm 10.23.0. The runner requires that clean commit and rebuilds its assets before serving them through the loopback HTTPS proxy. Every API request reaches the production Hono and Better Auth handlers; there is no browser route interception. Synthetic guest cart creation/addition uses native browser requests, and the returned capability seeds only the browser's saved-cart pointer. Signup, signin, claiming, quantity changes, expiry recovery and signout then use the real UI. The same browser switches accounts and attempts forged cart reads/mutations and reuse of the revoked guest capability. Both Chromium and WebKit check the retained bag, host-only cookies, preflights and private cache headers.
+
+Auth persistence uses Better Auth's memory adapter. Cart persistence scripts D1 responses per request while real Drizzle generates authorization predicates and writes; denied requests must not write. Catalog rows, color availability and rate-limit storage are controlled fixtures. This proves the pinned UI/API integration at those mocked boundaries, not database execution, transaction durability, public hosting, provider outcomes or deployment. CI checks out the immutable client revision rather than its mutable `main` branch.
+
 ### Route auth policy
 
 The API uses the following route protection rules:

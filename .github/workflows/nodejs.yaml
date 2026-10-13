@@ -35,6 +35,22 @@ jobs:
         run: pnpm exec playwright install --with-deps chromium webkit
       - name: Verify Lulu browser authentication
         run: pnpm test:auth-browser
+      - name: Check out the reviewed Lulu cart handoff
+        uses: actions/checkout@v4
+        with:
+          repository: benhalverson/luluspeedworks
+          ref: dba226387e9a58a441be13a19c1c7ed02bea2c5f
+          path: .generated/lulu-client
+      - name: Use the pinned Lulu Node version
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24.18.0
+      - name: Install the pinned Lulu dependencies
+        run: pnpm --dir .generated/lulu-client install --frozen-lockfile
+      - name: Verify the Lulu UI and native API cart handoff
+        run: pnpm test:lulu-browser
+        env:
+          LULU_CLIENT_DIR: .generated/lulu-client
 
   deploy:
     needs: build
