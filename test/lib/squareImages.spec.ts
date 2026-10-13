@@ -7,6 +7,8 @@ const config = {
   SQUARE_ACCESS_TOKEN: 'test-token',
   SQUARE_MERCHANT_ID: 'merchant',
   SQUARE_LOCATION_ID: 'location',
+  SQUARE_WEBHOOK_SIGNATURE_KEY: 'test-signature-key',
+  SQUARE_WEBHOOK_NOTIFICATION_URL: 'https://api.example/webhook/square',
 };
 const image = {
   type: 'IMAGE',

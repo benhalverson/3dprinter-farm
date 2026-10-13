@@ -34,8 +34,11 @@ const configSchema = z.object({
   SQUARE_ACCESS_TOKEN: z.string().trim().min(1),
   SQUARE_MERCHANT_ID: z.string().trim().min(1),
   SQUARE_LOCATION_ID: z.string().trim().min(1),
+  // Webhook verification must use the configured strings without normalization.
+  SQUARE_WEBHOOK_SIGNATURE_KEY: z.string().refine(value => value.trim().length > 0),
+  SQUARE_WEBHOOK_NOTIFICATION_URL: z.string().url(),
 });
-/** Requires explicit environment, credentials, merchant, and location configuration. */
+/** Requires environment, access token, merchant ID, location ID, webhook signature key, and notification URL. */
 export function squareConfig(env: Bindings) {
   const result = configSchema.safeParse(env);
   if (!result.success) throw squareFailure('square_configuration_required');
@@ -327,12 +330,11 @@ export async function verifySquareSignature(
   signature: string | undefined,
   env: Bindings,
 ) {
-  if (!env.SQUARE_WEBHOOK_SIGNATURE_KEY || !env.SQUARE_WEBHOOK_NOTIFICATION_URL)
-    throw squareFailure('square_configuration_required');
+  const config = squareConfig(env);
   if (!signature || !/^[A-Za-z0-9+/]{43}=$/.test(signature)) return false;
   const key = await crypto.subtle.importKey(
     'raw',
-    new TextEncoder().encode(env.SQUARE_WEBHOOK_SIGNATURE_KEY),
+    new TextEncoder().encode(config.SQUARE_WEBHOOK_SIGNATURE_KEY),
     { name: 'HMAC', hash: 'SHA-256' },
     false,
     ['verify'],
@@ -342,6 +344,6 @@ export async function verifySquareSignature(
     'HMAC',
     key,
     bytes,
-    new TextEncoder().encode(env.SQUARE_WEBHOOK_NOTIFICATION_URL + body),
+    new TextEncoder().encode(config.SQUARE_WEBHOOK_NOTIFICATION_URL + body),
   );
 }

@@ -276,10 +276,14 @@ describe('Square catalog HTTP with mocked Drizzle and fetch', () => {
     expect((await request('publish')).status).toBe(404);
     expect(fetch).not.toHaveBeenCalled();
   });
-  test('missing configuration is sanitized', async () => {
+  test.each([
+    { SQUARE_ACCESS_TOKEN: '' },
+    { SQUARE_WEBHOOK_SIGNATURE_KEY: undefined },
+    { SQUARE_WEBHOOK_NOTIFICATION_URL: undefined },
+  ])('missing configuration %j is sanitized', async overrides => {
     const response = await request('publish', '1', {
       ...bindings,
-      SQUARE_ACCESS_TOKEN: '',
+      ...overrides,
     });
     expect(response.status).toBe(503);
     expect(await response.json()).toEqual({

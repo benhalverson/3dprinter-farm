@@ -169,6 +169,8 @@ function runtime(storage: string) {
       SQUARE_ACCESS_TOKEN: 'local-test-placeholder',
       SQUARE_MERCHANT_ID: 'merchant',
       SQUARE_LOCATION_ID: 'location',
+      SQUARE_WEBHOOK_SIGNATURE_KEY: 'test-signature-key',
+      SQUARE_WEBHOOK_NOTIFICATION_URL: 'https://api.example/webhook/square',
     },
     outboundService: () => {
       throw new Error('External network forbidden in persistence test');
