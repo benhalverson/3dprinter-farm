@@ -210,7 +210,8 @@ includes relative/absolute draft URLs, draft object keys, and identities resolvi
 to draft photos. Draft photos remain private; public promotion and repair of
 existing catalog images are outside this feature.
 
-The original `/add-product` and `/update-product` keep their base-branch behavior.
+The original `POST /add-product` is [retired](legacy-route-disposition.md) and
+returns 404. `PUT /update-product` remains supported.
 Existing catalog/order references still protect retained assets, but unmodified
 legacy writers do not participate in the V2 reservation protocol; this change
 does not claim concurrency protection for those writers. No frontend catalog-write

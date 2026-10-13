@@ -6,7 +6,6 @@ export function mockEnv(): Bindings {
     AUTH_BASE_URL: 'http://localhost:8787',
     JWT_SECRET: 'test-secret',
     BETTER_AUTH_SECRET: 'test-secret-key-minimum-32-characters-long',
-    SLANT_API: 'fake-api-key',
     SLANT_API_V2: 'fake-api-key-v2',
     SLANT_PLATFORM_ID: 'test-platform-id',
     SLANT_WEBHOOK_SECRET: 'test-slant-webhook-secret',

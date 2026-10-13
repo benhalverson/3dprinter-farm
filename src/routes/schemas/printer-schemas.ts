@@ -2,34 +2,6 @@ import { z } from 'zod';
 
 export type OpenAPISchema = Record<string, unknown>;
 
-// File upload validation schema
-export const FileUploadSchema = z.object({
-  file: z
-    .instanceof(File)
-    .refine(
-      file =>
-        file.type === 'model/stl' || file.name.toLowerCase().endsWith('.stl'),
-      {
-        message: 'File must be a .stl file',
-      },
-    )
-    .refine(file => file.size > 0, {
-      message: 'File is empty',
-    })
-    .refine(file => file.size < 100 * 1024 * 1024, {
-      message: 'File is too large (max 100MB)',
-    })
-    .describe('STL file to upload'),
-});
-
-export type FileUpload = z.infer<typeof FileUploadSchema>;
-
-export const FilamentTypeSchema = z.enum(['PLA', 'PETG'], {
-  errorMap: () => ({
-    message: 'Accepted values are "PLA" and "PETG".',
-  }),
-});
-
 // OpenAPI Schemas - using Zod for validation and documentation
 export const ListItemSchema = z.object({
   stl: z.string().describe('The STL file name'),
@@ -45,17 +17,6 @@ export const UploadResponseSchema = z.object({
   message: z.string(),
   key: z.string(),
   url: z.string(),
-});
-
-export const ColorSchema = z.object({
-  filament: z.string(),
-  hexColor: z.string(),
-  colorTag: z.string(),
-});
-
-export const ColorErrorSchema = z.object({
-  error: z.string(),
-  message: z.string(),
 });
 
 export const FilamentV2DataSchema = z.object({
@@ -142,53 +103,4 @@ export const ConfirmUploadResponseSchema = z.object({
     fileURL: z.string().describe('Presigned download URL (1 hour expiry)'),
     STLMetrics: STLMetricsSchema.optional(),
   }),
-});
-
-export const V2UploadResponseSchema = z.object({
-  success: z.boolean(),
-  message: z.string(),
-  data: z.object({
-    local: z.object({
-      key: z.string().describe('File key in R2 bucket'),
-      url: z.string().describe('R2 public URL'),
-      name: z.string(),
-    }),
-    slant3D: z.object({
-      publicFileServiceId: z.string().describe('UUID for use in orders'),
-      name: z.string(),
-      fileURL: z.string().describe('Slant3D file download URL'),
-      STLMetrics: STLMetricsSchema.optional(),
-    }),
-  }),
-});
-// Uploaded file schema for GET endpoint
-export const UploadedFileSchema = z.object({
-  id: z.number().describe('Database record ID'),
-  publicFileServiceId: z.string().describe('Slant3D file UUID'),
-  fileName: z.string().describe('Original file name'),
-  fileURL: z.string().describe('Slant3D file URL'),
-  dimensionX: z.number().nullable().describe('Width in mm'),
-  dimensionY: z.number().nullable().describe('Depth in mm'),
-  dimensionZ: z.number().nullable().describe('Height in mm'),
-  volume: z.number().nullable().describe('Volume in cubic cm'),
-  weight: z.number().nullable().describe('Weight in grams'),
-  surfaceArea: z.number().nullable().describe('Surface area in sq mm'),
-  defaultFilamentId: z.string().describe('Default filament ID'),
-  estimatedCost: z.number().nullable().describe('Estimated cost in USD'),
-  estimatedQuantity: z.number().describe('Quantity for estimate'),
-  createdAt: z.number().describe('Unix timestamp'),
-  updatedAt: z.number().describe('Unix timestamp'),
-});
-
-export const UploadedFileResponseSchema = z.object({
-  success: z.boolean(),
-  message: z.string(),
-  data: UploadedFileSchema,
-});
-
-export const UploadedFilesListResponseSchema = z.object({
-  success: z.boolean(),
-  message: z.string(),
-  data: z.array(UploadedFileSchema),
-  count: z.number(),
 });

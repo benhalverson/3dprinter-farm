@@ -1,6 +1,3 @@
-import type { z } from 'zod';
-import type { orderSchema } from './db/schema';
-
 /**
  * Runtime environment bindings for the Cloudflare Worker.
  *
@@ -81,13 +78,6 @@ export type Bindings = {
   R2_PHOTO_BASE_URL: string;
 };
 
-export interface SliceResponse {
-  message: string;
-  data: {
-    price: number;
-  };
-}
-
 export interface ErrorResponse {
   error: string;
   details: Details;
@@ -101,17 +91,6 @@ export interface Details {
 export interface Error {
   message: string;
   status: number;
-}
-
-export interface FilamentColorsResponse {
-  filaments: Filament[];
-}
-
-export interface Filament {
-  filament: FilamentType;
-  hexColor: string;
-  colorTag: string;
-  profile: string;
 }
 
 // V2 API Filament Types
@@ -169,25 +148,12 @@ export interface Slant3DFileResponse {
 // 	error: string;
 // }
 
-enum FilamentType {
-  PLA = 'PLA',
-  PETG = 'PETG',
-}
-
 export interface ListResponse {
   stl: string;
   key?: string;
   size: number;
   version: string;
 }
-
-export type OrderData = z.infer<typeof orderSchema>;
-
-export type OrderResponse = {
-  totalPrice: number;
-  shippingCost: number;
-  printingCost: number;
-};
 
 export interface CartItemWithProduct {
   id: number;

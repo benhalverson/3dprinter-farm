@@ -764,60 +764,6 @@ export const idSchema = z.object({
   id: z.number().int(),
 });
 
-export const orderSchema = z
-  .object({
-    email: z
-      .string()
-      .email({
-        message: 'Invalid email format',
-      })
-      .email()
-      .min(5)
-      .trim(),
-    phone: z
-      .string({
-        required_error: 'Phone number is required',
-        invalid_type_error: 'Phone number should be a string',
-      })
-      .trim()
-      .toLowerCase(),
-    name: z
-      .string({
-        required_error: 'Name is required',
-      })
-      .trim(),
-    orderNumber: z
-      .string({
-        required_error: 'Order number is required',
-      })
-      .trim(),
-    filename: z.string().trim(),
-    fileURL: z.string().trim().url(),
-    bill_to_street_1: z.string().trim(),
-    bill_to_street_2: z.string().trim().optional(),
-    bill_to_street_3: z.string().trim().optional(),
-    bill_to_city: z.string().trim(),
-    bill_to_state: z.string().trim(),
-    bill_to_zip: z.string().trim(),
-    bill_to_country_as_iso: z.string(),
-    bill_to_is_US_residential: z.string(),
-    ship_to_name: z.string(),
-    ship_to_street_1: z.string(),
-    ship_to_street_2: z.string().optional(),
-    ship_to_street_3: z.string().optional(),
-    ship_to_city: z.string(),
-    ship_to_state: z.string(),
-    ship_to_zip: z.string(),
-    ship_to_country_as_iso: z.string(),
-    ship_to_is_US_residential: z.string(),
-    order_item_name: z.string(),
-    order_quantity: z.string(),
-    order_image_url: z.string().url().optional(),
-    order_sku: z.string(),
-    order_item_color: z.string().optional(),
-  })
-  .strict();
-
 const markupPercentageSchema = z
   .number()
   .positive('Markup percentage must be greater than 0');
@@ -868,14 +814,6 @@ const addProductV2BaseSchema = addProductBaseSchema.extend({
       'Deprecated compatibility field. Use publicFileServiceId as the durable Slant3D print file reference.',
     ),
 });
-
-export const addProductSchema = addProductBaseSchema.refine(
-  requiresMarkupPercentage,
-  {
-    message: 'Either price or markupPercentage is required',
-    path: ['markupPercentage'],
-  },
-);
 
 export const addProductV2Schema = addProductV2BaseSchema
   .extend({
