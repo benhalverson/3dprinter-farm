@@ -179,7 +179,8 @@ At most three invocations, sequential tools, low reasoning effort, 2,048 complet
 32-KiB assembled request, and a 30-second run deadline. History is truncated oldest
 first, then catalog results from the end, deterministically. Tool results are
 bounded to 4 KiB each. No provider retry, repair call, mutation tool, web browsing,
-customer order, payment, cart mutation or alert email exists in this slice.
+customer order, payment or cart mutation exists in this slice. Budget alert
+delivery runs separately from inference through the ledger's durable outbox.
 
 The private `ShoppingLedger` instance named `deployment-account` coordinates this
 deployment's UTC monthly buckets. All reads/writes use Drizzle; admission and
@@ -204,7 +205,16 @@ persist identity, session/run/invocation, month, model, price version/rates, max
 reported usage and settlement status. Valid usage settles once and releases excess.
 Missing/invalid usage and uncertain provider failures retain the maximum reservation.
 Session expiry never releases it. Late settlement applies to the originating month.
-Reconciliation, record retention policy and email alerts remain #193.
+Reconciliation preserves the first valid usage report and its original price and
+month. Reservations and alert rows are retained across month boundaries; no
+automatic deletion of these records is implemented.
+
+The ledger atomically queues one logical alert per UTC month at 50%, 75% and 100%
+of the USD 20 allowance ($10/$15/$20). The 100% alert also records exhausted
+admission capacity when the next full reservation cannot fit, even if accounted
+usage is below $20. A single update can enqueue all crossed thresholds. Later
+usage reconciliation never erases a threshold crossing or its delivery state.
+These admission controls are not a provider billing guarantee.
 
 The same ledger atomically admits six starts per rolling minute and 60 per rolling
 day for the visit's HMAC network identity. A new session cannot reset that allowance.
@@ -218,15 +228,101 @@ ordinary commerce endpoints remain available. Leave `AGENT_ENABLED=false` until
 the separate live evaluation/release gate is satisfied. Configure the HMAC secret
 through the existing secret provisioning process, never source control.
 
+## Budget email configuration and recovery (#193)
+
+The accounting and outbox implementation is merged. [Issue #193](https://github.com/benhalverson/3dprinter-farm/issues/193)
+remains open for verified sender/owner configuration and actual delivery evidence.
+Passing local tests or a Worker build does not establish either.
+
+| Setting | Required value |
+| --- | --- |
+| `BUDGET_EMAIL` | Cloudflare `send_email` binding on the Worker hosting `SHOPPING_LEDGER`. |
+| `AGENT_BUDGET_FROM` | Sender email address on a domain onboarded to Cloudflare Email Service. |
+| `AGENT_BUDGET_TO` | Explicitly authorized owner email address, verified in the Cloudflare account and permitted by the binding. |
+
+There are no default addresses. The application validates address syntax; it
+cannot verify domain onboarding, destination verification or mailbox ownership.
+Provision both address values for the selected Worker through the normal secure
+configuration process. `.dev.vars` supplies local values only. The checked-in
+Wrangler file declares only the top-level Worker, with no named nonproduction
+environment; do not assume a staging environment exists.
+
+Match the binding's `allowed_sender_addresses` and
+`allowed_destination_addresses` to those approved addresses. Restrictions do not
+onboard the sender domain or verify the recipient. Named Wrangler environments
+must declare their own `send_email` bindings and configuration; bindings are not
+inherited. Regenerate binding types with `pnpm cf-typegen` after configuration
+changes. See Cloudflare's [send binding configuration](https://developers.cloudflare.com/email-service/configuration/send-bindings/)
+and [Wrangler environment rules](https://developers.cloudflare.com/workers/wrangler/environments/).
+
+`remote = false` on `BUDGET_EMAIL` keeps `wrangler dev` delivery simulated. It is
+not a deployed email kill switch. Setting it to `true` sends real email during
+local development. `AGENT_ENABLED=false` prevents new inference but does not stop
+alarms from delivering already queued alerts. See [local email behavior](https://developers.cloudflare.com/email-service/local-development/sending/).
+
+Alerts pin both addresses at the first attempt with syntactically valid
+configuration, even if the binding is missing or the send fails. Changing
+environment values later does not retarget a pinned alert. If addresses were
+missing or invalid, the row remains unpinned and can adopt valid configuration on
+a later attempt. Confirm the intended addresses before allowing pending alerts
+to run; fixing a mistakenly pinned address needs a separately reviewed data
+correction through Drizzle, not an outbox reset.
+
+Each attempt persists a lease and its next retry time before sending. Retry
+delays are 1, 2, 4, 8, 16 and 32 minutes, then one hour, without an attempt limit.
+A send times out after 15 seconds; an alarm drains at most ten due alerts and
+schedules the next pending attempt. Missing configuration, provider rejection,
+timeout or failure to persist acknowledgement retains the logical alert and
+spend. Recovery re-arms pending alerts when the ledger activates.
+
+The `shopping_budget_alert` log event exposes only month, threshold, status
+(`retry` or `accepted`) and latency. Provider errors and addresses are omitted.
+For repeated retries, check sender onboarding, recipient verification, binding
+restrictions and Cloudflare delivery logs through authorized account access.
+Restore valid configuration and let the existing alarm retry. Do not delete
+reservations, recreate the ledger or clear alerts to retry delivery.
+
+A nonempty provider `messageId` plus successful local acknowledgement ends
+application retries. This records provider acceptance, not owner receipt; later
+bounces need investigation in Cloudflare's email logs. A timeout or crash after
+provider acceptance can produce a duplicate physical email on retry. The body
+and `X-Lulu-Budget-Alert` header carry the stable logical alert reference
+`lulu-inference-YYYY-MM-50`, `-75` or `-100` for correlation.
+
+### Remaining operational acceptance
+
+Before a live run, select the nonproduction Worker/ledger, verified sender and
+authorized owner recipient, and obtain authorization for actual email delivery.
+Use isolated accounting state and controlled inference; no paid model call is
+needed to exercise budget alerts. There is no public alert-trigger endpoint.
+An operator harness for the selected environment must drive the existing
+reservation/coordinator path without exposing the private ledger over HTTP.
+
+Verify a threshold crossing reaches the owner's mailbox with the expected
+sender, recipient and logical reference. Exercise an approved transient delivery
+failure, restore delivery, and confirm the same logical alert is retried without
+changing spend or creating a second logical row. Confirm acknowledgement stops
+further application attempts. Record the target Worker/version, UTC time,
+threshold/reference, provider delivery result, owner receipt and retry outcome
+in #193, without credentials or private email content. Keep the issue open until
+that evidence exists; mocked sends, simulated local email and provider acceptance
+alone do not satisfy owner receipt. Production release remains separate scope.
+
 ## Verification and maintenance
 
+Focused budget checks use mocked storage, runtime scheduling and email delivery:
+
 ```sh
-pnpm test:ci
+pnpm exec vitest run test/shopping/budget-alerts.spec.ts test/shopping/budget-coordinator.spec.ts test/shopping/ledger.spec.ts
 pnpm exec tsc --noEmit
 pnpm test:project-notes
 pnpm cf-typegen
 pnpm exec wrangler deploy --dry-run
 ```
+
+`pnpm test:ci` also invokes real database suites through `test:database` and
+`test:quotes`; it is not a mocked-only budget check. Run those suites only when
+real database testing is authorized.
 
 For any schema change, use only `pnpm run db:generate` and
 `pnpm run db:migrate:local`. Keep shopping schema changes in their own generated
@@ -252,9 +348,10 @@ exercise the real budget rules against storage mocks. Migration imports and
 Drizzle initialization remain directly in the production Durable Objects, and budget
 operations retain synchronous SQLite transactions.
 
-Tests load no migration files and configure no shopping Durable Objects or remote
-AI bindings. Vitest runs in Node with explicit provider and Durable Object mocks.
-Unexpected network requests fail immediately. These tests verify application behavior; they do not verify
+The focused budget tests load no migration files and configure no shopping
+Durable Objects or remote AI bindings. They run in Node with explicit storage,
+runtime and provider mocks. Unexpected network requests fail immediately.
+These tests verify application behavior; they do not verify
 SQLite atomicity, durable restart recovery, migration execution, or real model
 quality and latency. The production Worker dry run checks bundling separately.
 
