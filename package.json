@@ -13,6 +13,7 @@
     "start": "wrangler dev",
     "test": "vitest",
     "test:auth-browser": "vitest run --config test/browser/vitest.config.ts",
+    "test:lulu-browser": "vitest run --config test/browser/lulu.config.ts",
     "test:ci": "pnpm test:boundaries && drizzle-kit generate --config test/quotes.drizzle.config.ts && vitest run && pnpm run test:database && pnpm test:quotes",
     "test:project-notes": "node --test --disable-warning=ExperimentalWarning --experimental-strip-types test/project-notes/*.spec.ts",
     "check:biome": "biome lint .",
