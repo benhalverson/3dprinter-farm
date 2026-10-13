@@ -86,9 +86,8 @@ describe('shipping estimate contract', () => {
     expect(String(url)).toBe('https://slant3dapi.com/v2/api/orders');
     expect(options?.method).toBe('POST');
     expect(JSON.parse(String(options?.body))).toEqual({
-      platformId: env.SLANT_PLATFORM_ID,
-      ownerId: 'user_123',
       customer: {
+        platformId: env.SLANT_PLATFORM_ID,
         details: {
           email: 'owner@example.com',
           address: {

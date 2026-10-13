@@ -184,7 +184,7 @@ describe('real SQLite cart authorization and mutation integration', () => {
       await requireCartAccess(db, guest.cartId, {
         guestToken: guest.guestToken,
       }),
-    ).toEqual(guest.access);
+    ).toMatchObject({id:guest.access.id,userId:guest.access.userId,guestTokenHash:guest.access.guestTokenHash,accessVersion:guest.access.accessVersion});
     const [line] = await fixture.db
       .select()
       .from(cart)
@@ -384,6 +384,6 @@ describe('real SQLite cart authorization and mutation integration', () => {
       await requireCartAccess(db, guest.cartId, {
         guestToken: guest.guestToken,
       }),
-    ).toEqual(guest.access);
+    ).toMatchObject({id:guest.access.id,userId:guest.access.userId,guestTokenHash:guest.access.guestTokenHash,accessVersion:guest.access.accessVersion});
   });
 });

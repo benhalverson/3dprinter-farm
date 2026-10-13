@@ -1,3 +1,4 @@
+import {attemptStatusSchema,readOwnedCheckoutAttempt} from '../modules/checkoutAttemptRead';
 import { describeRoute } from 'hono-openapi';
 import { validator, resolver } from 'hono-openapi/zod';
 import { z } from 'zod';
@@ -88,6 +89,23 @@ router.post(
     }
   },
 );
+for (const [path, key] of [
+  ['/checkout-attempts/:attemptId', 'attemptId'],
+  ['/checkout-attempts/by-request-key/:requestKey', 'requestKey'],
+] as const) {
+  router.get(path, authMiddleware, describeRoute({
+    tags: ['Square payments'], security: [{ cookieAuth: [] }],
+    description: 'Read an owned durable checkout outcome after timeout or reload, even after cart cleanup. Read-only: redirects never prove payment and this route never creates payments or manufacture. Unknown outcomes must retain the original request key.',
+    responses: { 200: { description: 'Owned checkout state', content: { 'application/json': { schema: resolver(attemptStatusSchema) } } }, 401: { description: 'Sign in required' }, 404: { description: 'Owned attempt not found' } },
+  }), async c => {
+    c.header('Cache-Control', 'no-store');
+    const value = c.req.param(key);
+    if (!z.string().uuid().safeParse(value).success) return c.json({ error: 'Attempt not found' }, 404);
+    const result=await readOwnedCheckoutAttempt(c.var.db,c.var.userId||'',key,value);
+    return result ? c.json(result) : c.json({error:'Attempt not found'},404);
+  });
+}
+
 router.post(
   '/webhook/square',
   describeRoute({

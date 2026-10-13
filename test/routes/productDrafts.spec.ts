@@ -1,3 +1,4 @@
+import { emptyAttachments } from '../../src/modules/productAttachmentState';
 import { and, eq, type SQL } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/d1';
 import { SQLiteSyncDialect } from 'drizzle-orm/sqlite-core';
@@ -118,7 +119,6 @@ function authorize(role = 'admin', ownerId = 'user_123') {
       role: 'admin',
     },
   });
-  get({ id: 'org_shared_catalog' });
   get({
     id: 'member',
     userId: ownerId,
@@ -244,6 +244,7 @@ describe('private admin product draft endpoints', () => {
         ownerId: 'user_123',
         target: body.target,
         state: inputState,
+        attachments: {...emptyAttachments(),catalogHydrated:true},
         revision: 1,
         createdAt: body.createdAt,
         updatedAt: body.updatedAt,

@@ -5,7 +5,7 @@ The backend uses Better Auth's existing Drizzle verification records. No product
 ## API contract
 
 - `POST /api/auth/request-password-reset`: JSON `{ "email": "customer@example.com", "redirectTo": "https://luluspeedworks.com/reset-password" }`. `redirectTo` is optional, but browser clients should supply it. Successful sends and unknown addresses receive the same `200` body: `{ "status": true, "message": "If this email exists in our system, check your email for the reset link" }`. For registered addresses, the request awaits delivery; provider failures propagate through Better Auth as an error response instead of returning success.
-- The email links to `GET https://api.benhalverson.dev/api/auth/reset-password/:token?callbackURL=...`. A valid token redirects to `https://luluspeedworks.com/reset-password?token=...`. An expired or invalid token redirects to `https://luluspeedworks.com/reset-password?error=INVALID_TOKEN`. Opening a valid link does not consume the token.
+- The email links to `GET https://api.luluspeedworks.com/api/auth/reset-password/:token?callbackURL=...`. A valid token redirects to `https://luluspeedworks.com/reset-password?token=...`. An expired or invalid token redirects to `https://luluspeedworks.com/reset-password?error=INVALID_TOKEN`. Opening a valid link does not consume the token.
 - `POST /api/auth/reset-password`: JSON `{ "token": "...", "newPassword": "..." }`. Success returns `{ "status": true }`. Invalid, expired, or previously consumed tokens and invalid passwords return `400`.
 
 Tokens expire after one hour. Better Auth checks trusted origins on both the initial request and callback; untrusted destinations return `403`. Without `redirectTo`, Better Auth's email callback redirects to `/api/auth/error?error=INVALID_TOKEN`; clients can still submit the token directly. The storefront callback screen is a separate requirement and is not implemented here.
@@ -20,13 +20,24 @@ Application request logs exclude password-reset routes, including token-bearing 
 
 Better Auth 1.6.16 catches errors in its default `runInBackgroundOrAwait` helper even without background tasks configured. A before hook replaces that helper only in the password-reset request's context with a direct await, allowing sanitized delivery failures to become HTTP `500` responses. Other auth endpoints keep their default behavior.
 
-`AUTH_BASE_URL=https://api.benhalverson.dev` is the canonical API origin. Existing `DOMAIN`, `RP_ID`, and `PASSKEY_ORIGIN` settings retain their storefront/passkey purposes. Copy the `AUTH_BASE_URL=http://localhost:8787` override from `.dev.vars.example` into local configuration. `AUTH_EMAIL` has `remote=false`, so ordinary local development uses local email simulation and does not deliver real email. Do not enable remote bindings for automated tests.
+`AUTH_BASE_URL=https://api.luluspeedworks.com` is the configured canonical API origin in `wrangler.toml`; reset links use this value. Provision its routing, DNS and TLS before enabling the flow. Lulu browser requests must use this same-site HTTPS API host with credentials included. Preserve `api.benhalverson.dev` for existing RC clients, but do not use it as a Lulu fallback: third-party-cookie restrictions can prevent sessions there. Cookies remain host-only, so moving between API hostnames requires a new sign-in. Existing `DOMAIN`, `RP_ID`, and `PASSKEY_ORIGIN` settings retain their RC storefront/passkey purposes; changing the API host does not migrate RC passkeys to Lulu. Copy the `AUTH_BASE_URL=http://localhost:8787` override from `.dev.vars.example` into local configuration. `AUTH_EMAIL` has `remote=false`, so ordinary local development uses local email simulation and does not deliver real email. Do not enable remote bindings for automated tests.
 
 ## Verification
 
 `pnpm test` and `pnpm test:ci` retain their existing behavior and run the Worker suite. Drizzle and Vitest configuration and package dependencies are unchanged. `test/authEmail.spec.ts` exercises the real auth configuration with mocked Better Auth and Drizzle, verifying the exact plain-text payload, awaited delivery, rejected failures, and sanitized logging. `test/authEmailHandler.spec.ts` uses the real Better Auth handler with mocked persistence and email delivery to verify awaited responses, HTTP `500` on send failure, and generic success for unknown addresses. These tests do not establish end-to-end persistence or inbox delivery.
 
 Run `pnpm test:project-notes` under Node 22 (the CI version; its existing script uses a flag removed in Node 24), `pnpm exec tsc --noEmit`, and `pnpm exec wrangler deploy --dry-run` before release.
+
+## Browser acceptance still required
+
+The API origin policy and mocked handler tests do not prove browser session acceptance. In a separately provisioned non-production HTTPS environment with the same storefront/API site relationship, verify the following in both Chromium and WebKit using synthetic accounts and controlled email delivery:
+
+1. Credentialed preflight, signup and signin from the allowed storefront origin succeed; unrelated and lookalike origins are rejected.
+2. Authenticated profile access works after reload; expiry returns 401, and POST signout prevents subsequent authenticated access.
+3. A reset link uses the configured API host and returns to the allowed storefront callback; successful reset revokes prior sessions, rejects token reuse, and allows a new-password sign-in.
+4. Switching between two synthetic accounts never serves the prior account's profile or cached private response. Verify private responses are not stored by the browser or an intermediary.
+
+Record the tested origins, browser versions and results without account credentials, cookies or reset tokens. This evidence requires the storefront flow and HTTPS environment; it has not been established by the API unit suite. Coordinate this check with storefront issues #4 and #12 and API issue #187 before declaring the browser flow accepted.
 
 ## Rollout steps
 

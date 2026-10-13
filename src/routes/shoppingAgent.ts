@@ -1,3 +1,5 @@
+import { optionalAuthMiddleware } from '../utils/authMiddleware';
+import { requireCartAccess } from '../modules/cartOwnership';
 import { getAgentByName } from 'agents';
 import { bodyLimit } from 'hono/body-limit';
 import { describeRoute } from 'hono-openapi';
@@ -69,6 +71,7 @@ shopping.post(
 );
 shopping.post(
   '/sessions/:id/runs',
+  optionalAuthMiddleware,
   describeRoute({
     tags: ['Shopping agent'],
     security: [{ agentCapability: [] }],
@@ -105,13 +108,28 @@ shopping.post(
       return c.json({ error: 'invalid_session' }, 400);
     if (!c.req.header('authorization')?.startsWith('Bearer '))
       return c.json({ error: 'unauthorized' }, 401);
-    const body = JSON.stringify(c.req.valid('json'));
+    const expected = c.req.header('X-Expected-Account-Id');
+    if (expected !== undefined && expected !== c.var.userId)
+      return c.json({ error: 'account_changed' }, 409);
+    const input = c.req.valid('json');
+    if (input.cart)
+      await requireCartAccess(c.var.db, input.cart.id, {
+        userId: c.var.userId,
+        guestToken: c.req.header('X-Cart-Token'),
+      });
+    const body = JSON.stringify(input);
     const agent = await getAgentByName(c.env.SHOPPING_AGENT, c.req.param('id'));
     return agent.fetch(
       new Request('https://shopping.internal/runs', {
         method: 'POST',
         body,
-        headers: { authorization: c.req.header('authorization') ?? '' },
+        headers: {
+          authorization: c.req.header('authorization') ?? '',
+          ...(c.var.userId ? { 'x-shopping-user': c.var.userId } : {}),
+          ...(c.req.header('X-Cart-Token')
+            ? { 'x-cart-token': c.req.header('X-Cart-Token')! }
+            : {}),
+        },
         signal: c.req.raw.signal,
       }),
     );

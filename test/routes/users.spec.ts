@@ -71,14 +71,6 @@ function mockSharedOrganizationAccess({
 
   mockWhere.mockReturnValueOnce({
     get: vi.fn().mockResolvedValue({
-      id: 'org_shared_catalog',
-      name: '3D Printer Web API',
-      slug: '3dprinter-web-api',
-    }),
-  });
-
-  mockWhere.mockReturnValueOnce({
-    get: vi.fn().mockResolvedValue({
       id: 'member_user_123',
       organizationId: 'org_shared_catalog',
       userId: 'user_123',

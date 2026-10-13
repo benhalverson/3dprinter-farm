@@ -1,3 +1,5 @@
+import { acceptSquarePhoneSale } from './squarePhoneSales';
+import { acceptInPersonPayment } from './inPersonSales';
 import {
   and,
   eq,
@@ -16,6 +18,7 @@ import {
   ordersTable,
   orderEventsTable,
   users,
+  squarePhoneIntake,
 } from '../db/schema';
 import type { WorkerEnv } from '../factory';
 import { squareClient, squareConfig } from '../lib/square';
@@ -256,14 +259,18 @@ export async function acceptSquarePayment(
     throw new HTTPException(400, { message: 'Seller mismatch' });
   const provider = squareClient(config);
   const payment = await provider.retrievePayment(paymentId);
-  if (payment.status !== 'COMPLETED') return { received: true };
+  if (!['COMPLETED', 'FAILED', 'CANCELED'].includes(payment.status)) return { received: true };
   await provider.validateLocation();
+  if (payment.status === 'COMPLETED' && payment.application_details?.square_product === 'SQUARE_POS' && payment.location_id === config.SQUARE_LOCATION_ID) {
+    await db.insert(squarePhoneIntake).values({paymentId:payment.id,squareOrderId:payment.order_id,merchantId,locationId:payment.location_id,state:'pending',error:'awaiting_order_evidence',createdAt:Date.now()}).onConflictDoNothing();
+  }
   const external = await provider.retrieveOrder(payment.order_id);
+  if (external.reference_id.startsWith('qr:')) return acceptInPersonPayment(db, env, merchantId, payment, external);
   const [attempt] = await db
     .select()
     .from(checkoutAttempts)
     .where(eq(checkoutAttempts.id, external.reference_id));
-  if (!attempt) return { received: true };
+  if (!attempt) return payment.status==='COMPLETED'?acceptSquarePhoneSale(db, env, payment, external):{received:true};
   const snapshot = quoteSnapshotSchema.parse(JSON.parse(attempt.snapshot));
   if (
     attempt.merchantId !== merchantId ||
@@ -279,6 +286,12 @@ export async function acceptSquarePayment(
     (attempt.squarePaymentId && attempt.squarePaymentId !== payment.id)
   )
     throw new HTTPException(400, { message: 'Payment association mismatch' });
+  if (payment.status !== 'COMPLETED') {
+    await db.update(checkoutAttempts).set({ state: payment.status === 'CANCELED' ? 'cancelled' : 'failed' }).where(and(
+      eq(checkoutAttempts.id, attempt.id), notInArray(checkoutAttempts.state, ['paid']),
+    ));
+    return { received: true };
+  }
   await db
     .update(checkoutAttempts)
     .set({
@@ -289,7 +302,7 @@ export async function acceptSquarePayment(
     .where(
       and(
         eq(checkoutAttempts.id, attempt.id),
-        eq(checkoutAttempts.state, 'initiating'),
+        notInArray(checkoutAttempts.state, ['paid']),
       ),
     );
   const [confirmed] = await db

@@ -42,6 +42,7 @@ const configSchema = z.object({
 export function squareConfig(env: Bindings) {
   const result = configSchema.safeParse(env);
   if (!result.success) throw squareFailure('square_configuration_required');
+  squareWebhookConfig(env);
   return result.data;
 }
 export type SquareConfig = ReturnType<typeof squareConfig>;
@@ -159,7 +160,31 @@ export function squareClient(config: SquareConfig) {
     }
     return result.data.catalog_object;
   }
+  const refundSchema = z.object({
+    refund: z.object({
+      id: z.string().min(1),
+      payment_id: z.string().min(1),
+      location_id: z.string(),
+      status: z.enum(['PENDING', 'COMPLETED', 'REJECTED', 'FAILED']),
+      amount_money: z.object({
+        amount: z.number().int().safe(),
+        currency: z.string(),
+      }),
+    }),
+  });
   return {
+    async refundPayment(payload: unknown) {
+      return refundSchema.parse(
+        await request('refunds', JSON.stringify(payload)),
+      ).refund;
+    },
+    async retrieveRefund(id: string) {
+      const result = refundSchema.parse(
+        await request(`refunds/${encodeURIComponent(id)}`),
+      ).refund;
+      if (result.id !== id) throw squareFailure('square_invalid_response');
+      return result;
+    },
     /** Creates or replays a hosted checkout with the persisted immutable payload and key. */
     async createPaymentLink(payload: unknown) {
       const result = z
@@ -188,6 +213,9 @@ export function squareClient(config: SquareConfig) {
             order_id: z.string(),
             location_id: z.string(),
             status: z.string(),
+            application_details: z
+              .object({ square_product: z.string().optional() })
+              .optional(),
             amount_money: z.object({
               amount: z.number().int().safe(),
               currency: z.string(),
@@ -209,7 +237,29 @@ export function squareClient(config: SquareConfig) {
         .object({
           order: z.object({
             id: z.string(),
-            reference_id: z.string(),
+            reference_id: z.string().default(''),
+            line_items: z
+              .array(
+                z.object({
+                  uid: z.string().optional(),
+                  catalog_object_id: z.string().optional(),
+                  name: z.string().optional(),
+                  quantity: z.string(),
+                  base_price_money: z
+                    .object({
+                      amount: z.number().int().safe(),
+                      currency: z.string(),
+                    })
+                    .optional(),
+                  total_money: z
+                    .object({
+                      amount: z.number().int().safe(),
+                      currency: z.string(),
+                    })
+                    .optional(),
+                }),
+              )
+              .optional(),
             location_id: z.string(),
             total_money: z.object({
               amount: z.number().int().safe(),
@@ -322,6 +372,17 @@ export function squareClient(config: SquareConfig) {
       return parseItem(await request('catalog/object', payload));
     },
   };
+}
+
+/** Side-effect-free webhook configuration shared with readiness. */
+export function squareWebhookConfig(env: Bindings) {
+  const key = env.SQUARE_WEBHOOK_SIGNATURE_KEY;
+  const notificationURL = env.SQUARE_WEBHOOK_NOTIFICATION_URL;
+  let url: URL;
+  try { url = new URL(notificationURL || ''); } catch { throw squareFailure('square_configuration_required'); }
+  if (!key?.trim() || url.protocol !== 'https:' || url.username || url.password || url.hash)
+    throw squareFailure('square_configuration_required');
+  return { key, notificationURL: notificationURL as string };
 }
 
 /** Verifies Square HMAC over the fixed subscription URL followed by the exact raw body. */

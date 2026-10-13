@@ -8,6 +8,12 @@ import {
   type ShippingDraft,
 } from '../../src/modules/shippingEstimate';
 
+const validDraft: ShippingDraft = {
+  platformId: 'platform', ownerId: 'owner',
+  customer: { details: { email: 'fixture@example.com', address: { name: 'Fixture', line1: '1 Main', line2: '', city: 'Seattle', state: 'WA', zip: '98101', country: 'US' } } },
+  items: [{ type: 'PRINT', publicFileServiceId: 'file', filamentId: 'filament', quantity: 1 }],
+};
+
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.useRealTimers();
@@ -135,7 +141,7 @@ test('owns timeout cancellation for a pending provider request', async () => {
       });
     }),
   );
-  const pending = requestShippingEstimate({} as ShippingDraft, 'test');
+  const pending = requestShippingEstimate(validDraft, 'test');
   const assertion = expect(pending).rejects.toThrow('aborted');
   await vi.advanceTimersByTimeAsync(15_000);
   await assertion;
@@ -151,7 +157,7 @@ test('cancels rejected response bodies and clears the timer', async () => {
     vi.fn().mockResolvedValue(new Response(body, { status: 403 })),
   );
   await expect(
-    requestShippingEstimate({} as ShippingDraft, 'test'),
+    requestShippingEstimate(validDraft, 'test'),
   ).rejects.toThrow('rejected');
   expect(cancel).toHaveBeenCalledOnce();
   expect(vi.getTimerCount()).toBe(0);
@@ -168,11 +174,11 @@ test('clears timeout after success and JSON failure', async () => {
       .mockResolvedValueOnce(new Response('invalid')),
   );
   await expect(
-    requestShippingEstimate({} as ShippingDraft, 'test'),
+    requestShippingEstimate(validDraft, 'test'),
   ).resolves.toEqual({ shippingCost: 0 });
   expect(vi.getTimerCount()).toBe(0);
   await expect(
-    requestShippingEstimate({} as ShippingDraft, 'test'),
+    requestShippingEstimate(validDraft, 'test'),
   ).rejects.toThrow();
   expect(vi.getTimerCount()).toBe(0);
 });

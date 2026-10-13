@@ -23,6 +23,8 @@ export const productDrafts = sqliteTable(
   {
     id: text('id').primaryKey(),
     ownerId: text('owner_id').notNull(),
+    creationRequestKey: text('creation_request_key'),
+    creationInputHash: text('creation_input_hash'),
     target: text('target', { mode: 'json' })
       .$type<ProductDraftTarget>()
       .notNull(),
@@ -45,6 +47,7 @@ export const productDrafts = sqliteTable(
     categoryConfirmationId: integer('category_confirmation_id'),
   },
   table => [
+    uniqueIndex('product_drafts_owner_creation_key').on(table.ownerId, table.creationRequestKey),
     index('product_drafts_owner_updated').on(table.ownerId, table.updatedAt),
   ],
 );
@@ -100,6 +103,15 @@ export const shoppingCarts = sqliteTable('shopping_carts', {
   userId: text('user_id').references(() => users.id, { onDelete: 'cascade' }),
   guestTokenHash: text('guest_token_hash'),
   accessVersion: text('access_version').notNull().unique(),
+  revision: integer('revision').notNull().default(0),
+  mutationToken: text('mutation_token'),
+});
+
+export const cartAgentActions = sqliteTable('cart_agent_actions', {
+  id: text('id').primaryKey(),
+  cartId: text('cart_id').notNull().references(() => shoppingCarts.id, {onDelete:'cascade'}),
+  inputHash: text('input_hash').notNull(),
+  revision: integer('revision').notNull(),
 });
 
 export const cart = sqliteTable(
@@ -581,21 +593,20 @@ export type ProfileData = z.infer<typeof ProfileDataSchema>;
 export const ordersTable = sqliteTable('ordersTable', {
   id: integer('id').primaryKey(),
   userId: text('user_id')
-    .references(() => users.id, { onDelete: 'cascade' })
-    .notNull(), // Preserve existing online ownership; future in-person intake requires its own safe storage migration
+    .references(() => users.id, { onDelete: 'cascade' }),
   orderNumber: text('order_number').notNull().unique(),
   cartId: text('cart_id'),
   filename: text('filename'),
-  fileURL: text('file_url').notNull(),
+  fileURL: text('file_url'),
 
   // Shipping address fields specific to each order
-  shipToName: text('ship_to_name').notNull(),
-  shipToStreet1: text('ship_to_street_1').notNull(),
+  shipToName: text('ship_to_name'),
+  shipToStreet1: text('ship_to_street_1'),
   shipToStreet2: text('ship_to_street_2'),
-  shipToCity: text('ship_to_city').notNull(),
-  shipToState: text('ship_to_state').notNull(),
-  shipToZip: text('ship_to_zip').notNull(),
-  shipToCountryISO: text('ship_to_country_iso').notNull(),
+  shipToCity: text('ship_to_city'),
+  shipToState: text('ship_to_state'),
+  shipToZip: text('ship_to_zip'),
+  shipToCountryISO: text('ship_to_country_iso'),
 
   // Billing address fields (if needed)
   billToStreet1: text('bill_to_street_1'),
@@ -613,6 +624,9 @@ export const ordersTable = sqliteTable('ordersTable', {
   source: text('source').notNull().default('online'),
   fulfillmentType: text('fulfillment_type').notNull().default('slant'),
   paymentStatus: text('payment_status'),
+  refundStatus: text('refund_status'),
+  refundAmountCents: integer('refund_amount_cents'),
+  refundedAt: text('refunded_at'),
   squareOrderId: text('square_order_id').unique(),
   squarePaymentId: text('square_payment_id').unique(),
   checkoutAttemptId: text('checkout_attempt_id').unique(),
@@ -1012,3 +1026,50 @@ export const checkoutAttempts = sqliteTable(
     }),
   ],
 );
+
+/** Immutable seller-created sale; no customer account or shipping identity is fabricated. */
+export const inPersonSales = sqliteTable('in_person_sales', {
+  id: text('id').primaryKey(),
+  requestKey: text('request_key').notNull().unique(),
+  sellerId: text('seller_id').notNull().references(() => users.id),
+  request: text('request').notNull(),
+  snapshot: text('snapshot').notNull(),
+  merchantId: text('merchant_id').notNull(),
+  locationId: text('location_id').notNull(),
+  environment: text('environment').notNull(),
+  state: text('state').notNull().default('pending'),
+  squareOrderId: text('square_order_id').unique(),
+  squarePaymentId: text('square_payment_id').unique(),
+  paymentUrl: text('payment_url'),
+  paymentLinkId: text('payment_link_id'),
+  createdAt: integer('created_at').notNull(),
+});
+
+export const squarePhoneIntake = sqliteTable('square_phone_intake', {
+  paymentId: text('payment_id').primaryKey(),
+  squareOrderId: text('square_order_id').notNull(),
+  merchantId: text('merchant_id').notNull(),
+  locationId: text('location_id').notNull(),
+  state: text('state').notNull().default('pending'),
+  error: text('error'),
+  orderId: integer('order_id').references(() => ordersTable.id),
+  createdAt: integer('created_at').notNull(),
+});
+
+export const squareRefundOperations = sqliteTable('square_refund_operations', {
+  id: text('id').primaryKey(),
+  orderId: integer('order_id').notNull().unique().references(() => ordersTable.id),
+  paymentId: text('payment_id').notNull(),
+  merchantId: text('merchant_id').notNull(),
+  locationId: text('location_id').notNull(),
+  environment: text('environment').notNull(),
+  amountCents: integer('amount_cents').notNull(),
+  fulfillmentBefore: text('fulfillment_before').notNull(),
+  reason: text('reason'),
+  override: integer('override', {mode:'boolean'}).notNull().default(false),
+  state: text('state').notNull().default('preparing'),
+  refundId: text('refund_id').unique(),
+  error: text('error'),
+  actorId: text('actor_id').notNull(),
+  createdAt: integer('created_at').notNull(),
+});

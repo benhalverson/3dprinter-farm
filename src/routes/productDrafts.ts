@@ -24,6 +24,7 @@ import {
 } from '../modules/productDraftContracts';
 import {
   beginProductDraft,
+  readProductDraftByRequestKey,
   listProductDrafts,
   productDraftResponse,
   readProductDraft,
@@ -138,13 +139,28 @@ const router = factory
   .route('/', interpretationRouter)
   .route('/', mutationsRouter)
   .route('/', preparationRouter)
+  .get('/by-request-key/:requestKey', async c =>
+    withDraftErrors(c, 'draft.recover', async ownerId => {
+      const key = z.string().uuid().safeParse(c.req.param('requestKey'));
+      if (!key.success) return c.json({ error: 'Invalid request key' }, 400);
+      const row = await readProductDraftByRequestKey(
+        c.var.db,
+        ownerId,
+        key.data,
+      );
+      if (!row) return c.json({ error: 'Draft not found' }, 404);
+      if (row.status !== 'active')
+        return c.json({ error: 'Draft discarded' }, 410);
+      return c.json(await productDraftResponse(c.var.db, row));
+    }),
+  )
   .post(
     '/',
     describeRoute({
       tags: ['Admin product drafts'],
       summary: 'Begin a separate product conversation',
       description:
-        'Creates revision 1. Target is immutable. Incomplete answers are allowed. Retained until explicit discard.',
+        'Creates revision 1. Optional owner-scoped UUID requestKey supports same-input replay and lookup by request key; changed inputs conflict. Target is immutable.',
       security: [{ cookieAuth: [] }],
       requestBody: jsonBody(beginProductDraftSchema),
       responses: { ...errors, 201: response(productDraftResponseSchema) },

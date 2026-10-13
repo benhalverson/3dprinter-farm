@@ -1,3 +1,7 @@
+import { drizzle as d1 } from 'drizzle-orm/d1';
+import * as schema from '../db/schema';
+import { commerceTools } from './commerce';
+import type { Bindings } from '../types';
 import { Agent } from 'agents';
 import { eq } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/durable-sqlite';
@@ -56,6 +60,19 @@ export class ShoppingAgent extends Agent<ShoppingEnv> {
             env.SHOPPING_LEDGER.idFromName('deployment-account'),
           ),
         read: query => catalogReader(env.DB)(query),
+        commerce: (request, input, sessionId, active, publish) =>
+          commerceTools(
+            d1(env.DB, { schema }),
+            env as unknown as Bindings,
+            {
+              userId: request.headers.get('x-shopping-user') ?? undefined,
+              guestToken: request.headers.get('x-cart-token') ?? undefined,
+            },
+            input,
+            sessionId,
+            active,
+            publish,
+          ),
         infer: env.AI
           ? (payload, signal) => env.AI.run(PRICE.model, payload, { signal })
           : undefined,

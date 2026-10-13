@@ -16,7 +16,11 @@ import {
 } from 'drizzle-kit/api';
 import { drizzle } from 'drizzle-orm/d1';
 import { migrate } from 'drizzle-orm/d1/migrator';
-import { Miniflare } from 'miniflare';
+import { createRequire } from 'node:module';
+// Interactive demo only. Tests use test/integration/adminDemoHarness.ts.
+const require = createRequire(import.meta.url);
+const {Miniflare, convertV4MiniflareOptions} = createRequire(require.resolve('wrangler/package.json'))('miniflare');
+const runtimeOptions = (options: object) => convertV4MiniflareOptions ? convertV4MiniflareOptions(options) : options;
 import { build } from 'vite';
 
 const { createProviderBoundary } = (await import(
@@ -27,7 +31,7 @@ const repository = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 /** Creates isolated production routes backed by real D1/R2 and deterministic provider responses. */
 export async function createDemoRuntime(options: { port?: number } = {}) {
   const root = await mkdtemp(join(tmpdir(), 'lulu-admin-demo-'));
-  let worker: Miniflare | undefined;
+  let worker: InstanceType<typeof Miniflare> | undefined;
   try {
     const journal = JSON.parse(
       await readFile(
@@ -120,7 +124,7 @@ export async function createDemoRuntime(options: { port?: number } = {}) {
     });
     await copyFile(join(root, 'photon.wasm'), join(root, 'bundle/photon.wasm'));
     const providers = createProviderBoundary();
-    worker = new Miniflare({
+    worker = new Miniflare(runtimeOptions({
       modules: true,
       modulesRoot: join(root, 'bundle'),
       scriptPath: join(root, 'bundle/worker.js'),
@@ -132,9 +136,8 @@ export async function createDemoRuntime(options: { port?: number } = {}) {
       compatibilityDate: '2026-04-01',
       compatibilityFlags: ['nodejs_compat'],
       d1Databases: ['DB'],
-      d1Persist: join(root, 'd1'),
+      ...(convertV4MiniflareOptions ? {resourcePersistencePath: join(root, 'storage')} : {d1Persist: join(root, 'd1'), r2Persist: join(root, 'r2')}),
       r2Buckets: ['PHOTO_BUCKET', 'BUCKET'],
-      r2Persist: join(root, 'r2'),
       bindings: {
         SLANT_API_V2: 'local-provider-placeholder',
         SLANT_API: 'local-provider-placeholder',
@@ -150,7 +153,7 @@ export async function createDemoRuntime(options: { port?: number } = {}) {
         BETTER_AUTH_SECRET: 'local-fixture-only-secret-32-characters',
       },
       outboundService: providers.providerFetch,
-    });
+    }));
     await migrate(drizzle(await worker.getD1Database('DB')), {
       migrationsFolder,
     });

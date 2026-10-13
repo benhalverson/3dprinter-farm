@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { squareConfig, verifySquareSignature } from '../../src/lib/square';
+import { squareConfig, squareWebhookConfig, verifySquareSignature } from '../../src/lib/square';
 import { mockEnv } from '../mocks/env';
 
 const config = {
@@ -52,7 +52,14 @@ test.each(['sandbox', 'production'] as const)(
   },
 );
 
-test.each(['not-a-url', '/webhook/square', '//api.example/webhook/square'])(
+test.each([
+  'not-a-url',
+  '/webhook/square',
+  '//api.example/webhook/square',
+  'http://api.example/webhook/square',
+  'https://user:password@api.example/webhook/square',
+  'https://api.example/webhook/square#fragment',
+])(
   'rejects invalid notification URL %s',
   url => {
     expect(() =>
@@ -67,6 +74,10 @@ test('preserves webhook strings while trimming API credentials and identifiers',
     SQUARE_WEBHOOK_NOTIFICATION_URL:
       ' https://API.example:443/webhook/%73quare?value=%2f ',
   };
+  expect(squareWebhookConfig({ ...bindings, ...webhook })).toEqual({
+    key: webhook.SQUARE_WEBHOOK_SIGNATURE_KEY,
+    notificationURL: webhook.SQUARE_WEBHOOK_NOTIFICATION_URL,
+  });
   expect(
     squareConfig({
       ...bindings,

@@ -1,3 +1,6 @@
+import { reconcileSquareOrder } from '../modules/squareOrderReconciliation';
+import {clearCartLines} from '../modules/cartMutations';
+import { refundInput, refundSale } from '../modules/squareRefunds';
 import { eq } from 'drizzle-orm';
 import { describeRoute } from 'hono-openapi';
 import { resolver } from 'hono-openapi/zod';
@@ -6,6 +9,7 @@ import { z } from 'zod';
 import { BASE_URL_V2 } from '../constants';
 import {
   cart,
+  squareRefundOperations,
   orderEventsTable,
   orderReconciliationAttemptsTable,
   ordersTable,
@@ -42,7 +46,7 @@ const orderDetailSchema = z.object({
   orderNumber: z.string(),
   userId: z.string().nullable(),
   filename: z.string().nullable(),
-  fileURL: z.string(),
+  fileURL: z.string().nullable(),
   status: z.string().nullable(),
   slantStatus: z.string().nullable(),
   slantPublicOrderId: z.string().nullable(),
@@ -52,6 +56,12 @@ const orderDetailSchema = z.object({
   squareOrderId: z.string().nullable(),
   squarePaymentId: z.string().nullable(),
   checkoutAttemptId: z.string().nullable(),
+  totalAmountCents: z.number().nullable(),
+  currency: z.string().nullable(),
+  itemSnapshot: z.string().nullable(),
+  refundStatus: z.string().nullable(),
+  refundAmountCents: z.number().nullable(),
+  refundedAt: z.string().nullable(),
   shippingAmountCents: z.number().nullable(),
   fulfillmentState: z.string().nullable(),
   customerEmail: z.string().nullable(),
@@ -89,9 +99,16 @@ const orderEventSchema = z.object({
   createdAt: z.string(),
 });
 
+/**
+ * Shared response for legacy and Square admin reconciliation. resultStatus keeps
+ * the existing fulfillment meaning; the optional audit fields identify a Square
+ * attempt and its diagnostic outcome without changing legacy callers' contract.
+ */
 const reconcileResponseSchema = z.object({
   success: z.boolean(),
   orderId: z.number(),
+  attemptId: z.number().optional(),
+  reconciliationStatus: z.enum(['no_action', 'reported', 'recovered']).optional(),
   resultStatus: z.string(),
   detectedIssues: z.array(z.string()),
   actionsTaken: z.array(z.string()),
@@ -396,28 +413,16 @@ const adminOrders = factory
     '/admin/orders/:id/cancel-refund',
     authMiddleware,
     requireCatalogMutationRole,
-    describeRoute({
-      description:
-        'Retired cancellation/refund operation. Square cancellation/refund support is pending issue181; this endpoint performs no provider or persistence operations.',
-      tags: ['Admin Orders'],
-      responses: {
-        410: {
-          content: { 'application/json': { schema: resolver(errorSchema) } },
-          description: 'Legacy cancellation/refund operation retired',
-        },
-        401: { description: 'Unauthorized' },
-        403: { description: 'Forbidden' },
-      },
-    }),
-    /** Rejects the retired operation without canceling manufacture or refunding payment. */
-    c =>
-      c.json(
-        {
-          error:
-            'Cancellation/refund operation retired; Square support is pending issue181.',
-        },
-        410,
-      ),
+    describeRoute({description:'Request or reconcile one durable full Square refund under the existing cancellation/override policy.',tags:['Admin Orders'],responses:{200:{description:'Refund state; success is true only when completed'},400:{description:'Ineligible order or invalid input'},409:{description:'Reconciliation or explicit override required'},401:{description:'Unauthorized'},403:{description:'Forbidden'}}}),
+    async c => {
+      const orderId=parseOrderId(c.req.param('id'));
+      const actorId=c.var.jwtPayload?.id;
+      if(orderId===null)return c.json({error:'Invalid order ID'},400);
+      if(!actorId)return c.json({error:'Unauthorized'},401);
+      const input=refundInput.safeParse(await c.req.json().catch(()=>({})));
+      if(!input.success)return c.json({error:'Invalid request body'},400);
+      return c.json(await refundSale(c.var.db,c.env,orderId,actorId,input.data));
+    },
   )
   .post(
     '/admin/orders/:id/reconcile',
@@ -425,7 +430,7 @@ const adminOrders = factory
     requireCatalogMutationRole,
     describeRoute({
       description:
-        'Reconcile a local order with Slant3D (admin only). For Square, optionally supply slantPublicOrderId to recover a lost draft ID; retrieved orderNumber must match. Ambiguous process is read-only and never re-manufactured.',
+        'Reconcile a local order with Slant3D (admin only). For Square, optionally supply slantPublicOrderId to recover a lost draft ID; retrieved checkout/payment metadata must match. Attempts and diagnostics are persisted, processed orders refresh lifecycle status monotonically, and ambiguous process is read-only and never re-manufactured.',
       requestBody: {
         required: false,
         content: {
@@ -490,40 +495,15 @@ const adminOrders = factory
         return c.json({ error: 'Order not found' }, 404);
       }
 
-      if (order.squarePaymentId) {
-        const fulfillment = createPaidOrderFulfillment({
-          db: c.var.db,
-          env: c.env,
-        });
-        const recovery = z
-          .object({ slantPublicOrderId: z.string().min(1).optional() })
-          .strict()
-          .safeParse(await c.req.json().catch(() => ({})));
-        if (!recovery.success)
-          return c.json({ error: 'Invalid recovery input' }, 400);
-        await fulfillment.reconcilePaidOrder(
-          order.id,
-          recovery.data.slantPublicOrderId,
-        );
-        await tryReconcileSquareNotifications(c.var.db, c.env, order.id);
-        const [current] = await c.var.db
-          .select()
-          .from(ordersTable)
-          .where(eq(ordersTable.id, order.id));
-        return c.json({
-          success: true,
-          orderId: order.id,
-          resultStatus: current.fulfillmentState,
-          localStatus: current.status,
-          slantStatus: current.slantStatus,
-          detectedIssues: [],
-          actionsTaken: [],
-          recommendedAction:
-            current.fulfillmentState === 'processed'
-              ? null
-              : 'Inspect Slant by immutable orderNumber; do not resubmit ambiguous draft or process',
-          order: current,
-        });
+      if (order.fulfillmentState === 'refund_hold') {
+        const [operation] = await c.var.db.select().from(squareRefundOperations).where(eq(squareRefundOperations.orderId,order.id));
+        if(operation) return c.json(await refundSale(c.var.db,c.env,order.id,c.var.jwtPayload!.id!,{reason:operation.reason??undefined,override:operation.override}));
+      }
+      if (order.squarePaymentId || order.fulfillmentType === 'in_person') {
+        const recovery = z.object({ slantPublicOrderId: z.string().min(1).optional() })
+          .strict().safeParse(await c.req.json().catch(() => ({})));
+        if (!recovery.success) return c.json({ error: 'Invalid recovery input' }, 400);
+        return c.json(await reconcileSquareOrder(c.var.db, c.env, order, recovery.data.slantPublicOrderId));
       }
       const detectedIssues: string[] = [];
       const actionsTaken: string[] = [];
@@ -551,7 +531,7 @@ const adminOrders = factory
         SLANT_TERMINAL_OR_ACTIVE_STATUSES.has(order.slantStatus)
       ) {
         detectedIssues.push('cart_not_cleared_after_fulfillment');
-        await c.var.db.delete(cart).where(eq(cart.cartId, order.cartId ?? ''));
+        await clearCartLines(c.var.db,order.cartId??'',eq(cart.cartId,order.cartId??''));
         actionsTaken.push('cleared_cart');
       }
 

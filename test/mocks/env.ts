@@ -3,6 +3,7 @@ import type { Bindings } from '../../src/types';
 export function mockEnv(): Bindings {
   return {
     DB: {} as D1Database,
+    AUTH_BASE_URL: 'http://localhost:8787',
     JWT_SECRET: 'test-secret',
     BETTER_AUTH_SECRET: 'test-secret-key-minimum-32-characters-long',
     SLANT_API: 'fake-api-key',

@@ -20,10 +20,11 @@ import productDrafts from './routes/productDrafts';
 import productV2 from './routes/productV2';
 import shoppingAgent from './routes/shoppingAgent';
 import shoppingCart from './routes/shoppingCart';
+import inPersonSales from './routes/inPersonSales';
 import squareCatalog from './routes/squareCatalog';
 import userRouter from './routes/users';
 import { requestLogger } from './utils/requestLogger';
-import { validateBindings } from './utils/validateBindings';
+import { validateBindings, featureReadiness } from './utils/validateBindings';
 
 const app = factory
   .createApp()
@@ -53,6 +54,15 @@ const app = factory
   .use(privateResponseCache)
   .use(browserOriginGuard)
   .use(browserCors)
+  .get('/live', c => c.json({ status: 'ok' }))
+  .get('/ready', c => {
+    try {
+      validateBindings(c.env as Record<string, unknown>);
+      return c.json({ status: 'ok', features: featureReadiness(c.env as Record<string, unknown>) });
+    } catch {
+      return c.json({ status: 'error', features: featureReadiness(c.env as Record<string, unknown>) }, 503);
+    }
+  })
   .get('/health', c => {
     try {
       validateBindings(c.env as Record<string, unknown>);
@@ -69,6 +79,7 @@ const app = factory
   .route('/', productV2)
   .route('/', catalogPhotos)
   .route('/', squareCatalog)
+  .route('/', inPersonSales)
   .route('/', userRouter)
   .route('/', printer)
   .route('/', paymentsRouter)

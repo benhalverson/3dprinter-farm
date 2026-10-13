@@ -1,3 +1,5 @@
+import {authoritativeCart} from '../shopping/commerce';
+import {readCartAction} from '../modules/cartMutations';
 import shippingEstimate from './shippingEstimate';
 import { zValidator } from '@hono/zod-validator';
 import { eq } from 'drizzle-orm';
@@ -196,6 +198,13 @@ const shoppingCart = factory
       }
     },
   )
+  .get('/cart/:cartId/agent-state',zValidator('param',cartIdParamSchema),cartAccessMiddleware,async c=>c.json(await authoritativeCart(c.var.db,c.req.param('cartId'),{userId:c.var.userId,guestToken:c.req.header('X-Cart-Token')})))
+  .get('/cart/:cartId/agent-actions/:sessionId/:runId',zValidator('param',z.object({cartId:z.string().uuid(),sessionId:z.string().uuid(),runId:z.string().uuid()})),cartAccessMiddleware,async c=>{
+    const {cartId,sessionId,runId}=c.req.valid('param');
+    const receipt=await readCartAction(c.var.db,c.var.cartAccess,`${cartId}:${sessionId}:${runId}`);
+    if(!receipt)return c.json({error:'No confirmed cart action'},404);
+    return c.json({status:'applied',appliedRevision:receipt.revision,cart:await authoritativeCart(c.var.db,cartId,{userId:c.var.userId,guestToken:c.req.header('X-Cart-Token')})});
+  })
   .route('/', shippingEstimate)
 
   .post(

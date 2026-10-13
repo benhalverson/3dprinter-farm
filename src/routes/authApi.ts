@@ -1,4 +1,5 @@
-import { Hono } from 'hono';
+import factory from '../factory';
+import { authMiddleware, requireCatalogMutationRole } from '../utils/authMiddleware';
 import { type AuthBindings, createAuth } from '../../lib/auth';
 import type { Bindings } from '../types';
 import { rateLimit } from '../utils/rateLimit';
@@ -7,7 +8,8 @@ export type AuthApiEnv = {
   Bindings: AuthBindings & Pick<Bindings, 'DB' | 'RATE_LIMIT_KV'>;
 };
 
-export default new Hono<AuthApiEnv>()
+export default factory.createApp()
+  .use('/organization/*', authMiddleware, requireCatalogMutationRole)
   .post(
     '/request-password-reset',
     rateLimit({

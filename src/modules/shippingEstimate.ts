@@ -1,5 +1,6 @@
 import 'zod-openapi/extend';
 import { z } from 'zod';
+import { slantDraft } from './slantOrderContracts';
 import { BASE_URL_V2 } from '../constants';
 
 // Numeric safety bound, not a store price or shipping policy.
@@ -154,7 +155,7 @@ export async function requestShippingEstimate(
         'Content-Type': 'application/json',
         Authorization: `Bearer ${apiKey}`,
       },
-      body: JSON.stringify(payload),
+      body: JSON.stringify(slantDraft(payload)),
       signal: controller.signal,
     });
     if (!response.ok) {

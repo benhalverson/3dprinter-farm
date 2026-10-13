@@ -1,5 +1,6 @@
-import { and, eq, inArray } from 'drizzle-orm';
-import { z } from 'zod';
+import {clearCartLines} from './cartMutations';
+import { and, eq, inArray, isNull } from 'drizzle-orm';
+import { slantDraft, slantDraftResponse, slantProcessResponse, slantGetResponse, slantLocalStatus } from './slantOrderContracts';
 import { BASE_URL_V2 } from '../constants';
 import { cart, orderEventsTable, ordersTable } from '../db/schema';
 import type { WorkerEnv } from '../factory';
@@ -33,26 +34,15 @@ async function slantRequest(env: Environment, path: string, payload?: unknown) {
       throw new SlantRejection('Slant rejected request');
     throw new Error('Slant outcome requires reconciliation');
   }
-  const parsed = z
-    .object({
-      publicOrderId: z.string().min(1).optional(),
-      orderId: z.string().min(1).optional(),
-      status: z.string().optional(),
-      orderNumber: z.string().optional(),
-      data: z
-        .object({
-          publicOrderId: z.string().min(1).optional(),
-          orderId: z.string().min(1).optional(),
-          id: z.string().min(1).optional(),
-          status: z.string().optional(),
-          orderNumber: z.string().optional(),
-        })
-        .optional(),
-    })
-    .parse(await response.json());
-  return parsed;
+  return response.json();
 }
-/** Owns durable stage claims. An abandoned claim is ambiguous and never authorizes a second effect. */
+/**
+ * Bind the request's database and provider credentials to the paid-order lifecycle
+ * shared by checkout completion and admin recovery. Persisted stage claims, not
+ * this returned object, own progress and prevent a second external effect after
+ * an uncertain response. Payment verification belongs to the caller; each method
+ * also checks the stored paid Slant order before advancing it.
+ */
 export function createPaidOrderFulfillment(deps: {
   db: Database;
   env: Environment;
@@ -111,49 +101,22 @@ export function createPaidOrderFulfillment(deps: {
             };
           };
           const address = customer.shippingAddress;
-          const shippingAddress = {
-            name: address.name,
-            street1: address.line1,
-            street2: address.line2,
-            city: address.city,
-            state: address.state,
-            zipCode: address.zip,
-            country: address.country,
-            isResidential: true,
-          };
           // Holds print references through uncertain provider outcomes; local immutable order remains authoritative.
           await reservePendingOrderAssets(
             db,
             JSON.parse(order.itemSnapshot || 'null'),
             `order-attempt:square-${orderId}`,
           );
-          const draft = await slantRequest(env, '', {
-            orderNumber: order.orderNumber,
+          const draft = slantDraftResponse.parse(await slantRequest(env, '', slantDraft({
             platformId: env.SLANT_PLATFORM_ID,
-            customer: { email: customer.email, name: address.name },
-            shippingAddress,
-            billingAddress: shippingAddress,
-            items: lines.map(line => ({
-              name: line.name,
-              sku: line.skuNumber,
-              quantity: line.quantity,
-              publicFileServiceId: line.publicFileServiceId,
-              filamentId: line.filamentId,
-              color: line.color,
-              profile: line.filamentType,
-            })),
+            customer: { details: { email: customer.email, address } },
+            items: lines,
             metadata: {
-              checkoutAttemptId: order.checkoutAttemptId,
-              squarePaymentId: order.squarePaymentId,
+              checkoutAttemptId: order.checkoutAttemptId || '',
+              squarePaymentId: order.squarePaymentId || '',
             },
-          });
-          const id =
-            draft.publicOrderId ||
-            draft.orderId ||
-            draft.data?.publicOrderId ||
-            draft.data?.orderId ||
-            draft.data?.id;
-          if (!id) throw new Error('Slant draft requires reconciliation');
+          })));
+          const id = draft.data.order.publicId;
           await db
             .update(ordersTable)
             .set({ slantPublicOrderId: id, fulfillmentState: 'drafted' })
@@ -167,7 +130,7 @@ export function createPaidOrderFulfillment(deps: {
         }
         if (!order.slantPublicOrderId)
           throw new Error('Missing retained draft identity');
-        const processed = await slantRequest(
+        const processed = slantProcessResponse.parse(await slantRequest(
           env,
           `/${encodeURIComponent(order.slantPublicOrderId)}`,
           {
@@ -177,20 +140,16 @@ export function createPaidOrderFulfillment(deps: {
               squarePaymentId: order.squarePaymentId,
             },
           },
-        );
-        if (
-          !['PROCESSING', 'SHIPPED', 'DELIVERED'].includes(
-            (processed.status || processed.data?.status || '').toUpperCase(),
-          )
-        )
+        ));
+        if (processed.data.publicId !== order.slantPublicOrderId || !slantLocalStatus(processed.data.status))
           throw new Error('Slant process confirmation requires reconciliation');
         const at = new Date().toISOString();
         await db
           .update(ordersTable)
           .set({
             fulfillmentState: 'processed',
-            status: 'processing',
-            slantStatus: 'PROCESSING',
+            status: slantLocalStatus(processed.data.status),
+            slantStatus: slantLocalStatus(processed.data.status)?.toUpperCase(),
             processedAt: at,
             updatedAt: at,
           })
@@ -223,8 +182,17 @@ export function createPaidOrderFulfillment(deps: {
           );
       }
     },
-    /** Reconciles only retained process identities; never repeats ambiguous draft creation or manufacture. */
-    async reconcilePaidOrder(orderId: number, recoveredDraftId?: string) {
+    /**
+     * Recover an interrupted order from a Slant GET using the retained identity,
+     * or an admin-supplied draft ID verified against checkout/payment metadata.
+     * Unlike fulfillPaidOrder, this path never creates or processes a provider
+     * order: confirmed evidence advances local state and resumes cart cleanup.
+     *
+     * Admin reconciliation opts into refreshProcessed to refresh an already
+     * processed order. Both stored lifecycle fields constrain that update, and
+     * its WHERE guard preserves concurrent status or payment/fulfillment changes.
+     */
+    async reconcilePaidOrder(orderId: number, recoveredDraftId?: string, refreshProcessed = false) {
       const [order] = await db
         .select()
         .from(ordersTable)
@@ -236,6 +204,43 @@ export function createPaidOrderFulfillment(deps: {
         order.fulfillmentType !== 'slant'
       )
         return;
+      if (order.fulfillmentState === 'processed' && refreshProcessed && order.slantPublicOrderId) {
+        const response = slantGetResponse.parse(await slantRequest(
+          env, `/${encodeURIComponent(order.slantPublicOrderId)}`,
+        ));
+        const remote = response.data.order;
+        if (remote.publicId !== order.slantPublicOrderId ||
+            !order.checkoutAttemptId || !order.squarePaymentId ||
+            remote.metadata?.checkoutAttemptId !== order.checkoutAttemptId ||
+            remote.metadata?.squarePaymentId !== order.squarePaymentId)
+          throw new Error('Slant association mismatch');
+        const next = remote.status === 'CANCELED' ? 'canceled' : slantLocalStatus(remote.status);
+        if (!next) throw new Error('Unrecognized Slant lifecycle evidence');
+        // Both stored lifecycle fields constrain recovery if legacy values disagree.
+        const canAdvance = [order.status, order.slantStatus].every(value => {
+          const prior = value?.toUpperCase();
+          if (prior === 'DELIVERED') return next === 'delivered';
+          if (prior === 'SHIPPED') return ['shipped', 'delivered'].includes(next);
+          if (prior === 'CANCELED') return next === 'canceled';
+          return true;
+        });
+        if (canAdvance && (next.toUpperCase() !== order.slantStatus || next !== order.status)) {
+          const now = new Date().toISOString();
+          await db.update(ordersTable).set({
+            status: next, slantStatus: next.toUpperCase(), updatedAt: now,
+            ...(next === 'shipped' ? { shippedAt: order.shippedAt || now } : {}),
+            ...(next === 'delivered' ? { deliveredAt: order.deliveredAt || now } : {}),
+            ...(next === 'canceled' ? { canceledAt: order.canceledAt || now, fulfillmentState: 'canceled' } : {}),
+          }).where(and(
+            eq(ordersTable.id, order.id),
+            eq(ordersTable.paymentStatus, 'paid'),
+            eq(ordersTable.fulfillmentState, 'processed'),
+            eq(ordersTable.slantPublicOrderId, order.slantPublicOrderId),
+            order.slantStatus === null ? isNull(ordersTable.slantStatus) : eq(ordersTable.slantStatus, order.slantStatus),
+            order.status === null ? isNull(ordersTable.status) : eq(ordersTable.status, order.status),
+          ));
+        }
+      }
       if (order.fulfillmentState === 'processed')
         return finalizePaidOrder(db, orderId);
       const draftRecovery = ['drafting', 'draft_unknown'].includes(
@@ -252,16 +257,17 @@ export function createPaidOrderFulfillment(deps: {
         )
       )
         return;
-      const response = await slantRequest(
+      const response = slantGetResponse.parse(await slantRequest(
         env,
         `/${encodeURIComponent(externalId)}`,
-      );
-      if (
-        (response.orderNumber || response.data?.orderNumber) !==
-        order.orderNumber
-      )
+      ));
+      const remote = response.data.order;
+      if (remote.publicId !== externalId ||
+          !order.checkoutAttemptId || !order.squarePaymentId ||
+          remote.metadata?.checkoutAttemptId !== order.checkoutAttemptId ||
+          remote.metadata?.squarePaymentId !== order.squarePaymentId)
         throw new Error('Slant association mismatch');
-      const status = response.status || response.data?.status;
+      const status = remote.status;
       if (draftRecovery && status?.toUpperCase() === 'DRAFT') {
         await db
           .update(ordersTable)
@@ -279,7 +285,7 @@ export function createPaidOrderFulfillment(deps: {
       }
       if (
         !status ||
-        !['PROCESSING', 'SHIPPED', 'DELIVERED'].includes(status.toUpperCase())
+        !slantLocalStatus(status)
       )
         return;
       await db
@@ -287,8 +293,8 @@ export function createPaidOrderFulfillment(deps: {
         .set({
           fulfillmentState: 'processed',
           slantPublicOrderId: externalId,
-          slantStatus: status,
-          status: status.toLowerCase(),
+          slantStatus: slantLocalStatus(status)?.toUpperCase(),
+          status: slantLocalStatus(status),
           processedAt: order.processedAt || new Date().toISOString(),
           updatedAt: new Date().toISOString(),
           ...(status.toUpperCase() === 'SHIPPED'
@@ -326,9 +332,7 @@ async function finalizePaidOrder(db: Database, orderId: number) {
     JSON.parse(order.itemSnapshot || 'null'),
   );
   for (const line of lines)
-    await db
-      .delete(cart)
-      .where(
+    await clearCartLines(db,order.cartId||'',
         and(
           eq(cart.id, line.cartItemId),
           eq(cart.cartId, order.cartId || ''),

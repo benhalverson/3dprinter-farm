@@ -8,7 +8,7 @@ A Cloudflare Workers-based API for managing 3D printer products, built with Hono
 - Search functionality with pagination
 - Authentication middleware
 - Image gallery support
-- Stripe integration for payments
+- Square integration for payments
 - STL file processing and pricing
 - Project notes sync pipeline for `benhalverson-blog`
 
@@ -57,7 +57,7 @@ If `benhalverson-blog` has branch protection or PR restrictions, make sure the t
 - **Database**: Cloudflare D1 (SQLite)
 - **ORM**: Drizzle ORM
 - **Authentication**: Better Auth with session cookies and passkeys/WebAuthn
-- **Payment Processing**: Stripe
+- **Payment Processing**: Square
 - **Validation**: Zod
 - **Testing**: Vitest
 
@@ -168,7 +168,7 @@ The application uses a single shared organization for catalog administration:
 - organization name: `3D Printer Web API`
 - organization slug: `3dprinter-web-api`
 
-Catalog mutation routes check the caller's shared-organization role, not only the legacy `users.role` field.
+Catalog mutation routes require an `admin` or `owner` membership in the shared organization. The legacy `users.role` field does not grant access.
 
 ### First admin bootstrap
 
@@ -180,8 +180,7 @@ For an authorized first-admin bootstrap, use the existing Drizzle schema and que
 2. Ensure the shared organization row exists in `organization`.
 3. Ensure the user has a row in `member` for `org_shared_catalog`.
 4. Set that membership's `role` to `admin`.
-5. For compatibility with the current transitional code, also set `users.role` to `admin`.
-6. Have the user sign out and sign back in so a fresh session is issued.
+5. Have the user sign out and sign back in so a fresh session is issued.
 
 Recommended values:
 
@@ -222,8 +221,7 @@ If Better Auth organization endpoints fail, verify all of the following in the t
 - the `invitation` table exists
 - the `session` table has `active_organization_id`
 - the shared organization row exists
-- the intended admin user has a `member` row for `org_shared_catalog`
-- the intended admin user also has `users.role = 'admin'` during the transition period
+- the intended admin user has a `member` row for `org_shared_catalog` with `role` set to `admin` or `owner`
 
 ### Troubleshooting
 
