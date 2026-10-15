@@ -83,13 +83,23 @@ Keep `DOMAIN=https://rc-store.benhalverson.dev`, `RP_ID=rc-store.benhalverson.de
 
 On a 401 profile/cart response, clients must recover through signin and retain only the local cart/return intent, without serving another account's cached private data. Mocked route tests or local HTTP checks alone do not establish browser acceptance of the HTTPS origin/session topology.
 
+### Non-production browser authentication checks
+
+Run `pnpm exec playwright install --with-deps chromium webkit` once, then `pnpm test:auth-browser` (Node 22+ and OpenSSL required). CI runs the same suite. It uses the exact `https://luluspeedworks.com` and `https://api.luluspeedworks.com` browser origins through a loopback HTTPS proxy; the proxy serves only test responses and never connects to those public hosts. The normal unit suite does not require installed browsers.
+
+Both engines exercise the mounted production routes, Better Auth configuration, password hashing/verification and signed session cookies. Better Auth storage uses its in-memory adapter at the mocked Drizzle adapter boundary; profile rows and rate-limit storage are mocked. The checks cover credentialed signup, signin, profile access, page reload, invalid credentials, server-side session expiry, POST signout, GET signout rejection, account changes, denied unrelated origins, browser-generated preflights and private/no-store cache headers. They also confirm the cookie is host-only, HttpOnly, Secure and SameSite=None and does not authenticate requests to the old API hostname. Browser caching and CORS remain enabled; requests are not intercepted by Playwright.
+
+This is browser/API integration with mocked persistence, not deployment or D1 validation. The loopback certificate is ephemeral and trusted only by the test browser's TLS-error override. DNS, public TLS, Worker routing and deployed browser acceptance still require the separately provisioned environment described in [password-reset verification](docs/password-reset.md#browser-acceptance-still-required). No real accounts, emails or provider requests are used.
+
 ### Route auth policy
 
 The API uses the following route protection rules:
 
 - **Public read routes**: product browsing and read-only catalog endpoints such as `GET /products`, `GET /products/search`, `GET /product/:id`, `GET /categories`, and public printer metadata endpoints.
-- **Authenticated user routes**: profile endpoints, saved upload endpoints, shipping/payment-intent helpers tied to a signed-in user, and product/category mutation routes such as `POST /add-product`, `POST /v2/add-product`, `PUT /update-product`, `DELETE /delete-product/:id`, and `POST /add-category`.
-- **Ownership checks**: authenticated upload lookup endpoints also enforce that a user can only access their own uploaded files.
+- **Authenticated user routes**: profile endpoints, the owner-scoped `GET /list` upload inventory, and shipping/checkout operations tied to a signed-in user.
+- **Catalog mutation routes**: `POST /v2/add-product`, `PUT /update-product`, `DELETE /delete-product/:id`, and `POST /add-category` require an authenticated shared-organization admin or owner.
+
+The Slant V1 routes and the saved upload-record API are retired. See the [route disposition inventory](docs/legacy-route-disposition.md) for the method/path decisions and operator checks required before deployment.
 
 When adding new routes, apply `authMiddleware` directly on the protected route or protected route group before the handler declaration. Do not rely on later middleware registration order.
 
@@ -276,8 +286,8 @@ Notes:
 - `GET /products` - List all products (with optional pagination)
 - `GET /products/search` - Search products (authenticated, with pagination)
 - `GET /product/:id` - Get specific product
-- `POST /add-product` - Add new product (authenticated)
-- `PUT /update-product` - Update product (authenticated)
+- `POST /v2/add-product` - Add a product using a confirmed Slant V2 file ID (catalog admin/owner)
+- `PUT /update-product` - Update product (catalog admin/owner)
 - `POST /auth/signup` - Create a user and issue a session cookie
 - `POST /auth/signin` - Sign in and issue a session cookie
 - `POST /auth/signout` - Clear the current session cookie

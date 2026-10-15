@@ -1,16 +1,19 @@
 import { expect, test, vi } from 'vitest';
 import * as authModule from '../lib/auth';
 import app from '../src/app';
+import { BROWSER_ORIGINS } from '../src/config/browserOrigins';
 import { mockEnv } from './mocks/env';
 
 vi.unmock('../lib/auth');
 
-const admin = 'https://rc-admin.benhalverson.workers.dev';
-
 test.each([
-  { origin: admin, status: 401 },
+  ...BROWSER_ORIGINS.map(origin => ({ origin, status: 401 })),
   { origin: 'https://rc-admin.benhalverson.workers.dev.evil.example', status: 403 },
   { origin: 'https://untrusted.workers.dev', status: 403 },
+  { origin: 'https://luluspeedworks.com.evil.example', status: 403 },
+  { origin: 'https://www.luluspeedworks.com', status: 403 },
+  { origin: 'http://luluspeedworks.com', status: 403 },
+  { origin: 'https://luluspeedworks.com:444', status: 403 },
 ])('real Better Auth origin policy on native mounted route: $origin', async ({ origin, status }) => {
   const env = mockEnv();
   env.AUTH_BASE_URL = 'https://3dprinter-web-api.benhalverson.workers.dev';

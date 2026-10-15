@@ -140,7 +140,6 @@ export async function createDemoRuntime(options: { port?: number } = {}) {
       r2Buckets: ['PHOTO_BUCKET', 'BUCKET'],
       bindings: {
         SLANT_API_V2: 'local-provider-placeholder',
-        SLANT_API: 'local-provider-placeholder',
         SLANT_API_V2_BASE_URL: 'https://slant3dapi.com/v2/api/',
         SLANT_PLATFORM_ID: 'platform-demo',
         SQUARE_ENVIRONMENT: 'sandbox',
