@@ -4,7 +4,7 @@ The API owns the Catalog Item. Saving it never publishes to Square. Square publi
 
 ## Prices and local catalog routes
 
-`POST /add-product` and `POST /v2/add-product` require `inPersonPrice` in USD. `price` remains the deprecated alias for the **markup percentage** on creation; `markupPercentage` takes precedence. Manufacturing estimates still determine the stored Online Price. V2 still requires the confirmed durable `publicFileServiceId`.
+`POST /v2/add-product` requires `inPersonPrice` in USD and the confirmed durable `publicFileServiceId`. `price` remains the deprecated alias for the **markup percentage** on creation; `markupPercentage` takes precedence. Manufacturing estimates still determine the stored Online Price. The Slant V1 `POST /add-product` route is [retired](legacy-route-disposition.md) and returns 404.
 
 `PUT /update-product` and `PUT /v2/update-product` retain its required catalog fields and accepts `inPersonPrice`. Positive numeric USD amounts up to 99,999,999.99 with at most two decimal places are accepted. Storage uses integer cents. Existing records may return `inPersonPrice: null` until explicitly priced. Both prices are required on full update; omitted or null prices are rejected. In-Person Price cannot be cleared. There is no fallback to Online Price. `price` on update/read remains Online Price in USD. Create/read responses return `inPersonPrice` as USD, including list, pagination, search, and individual reads.
 

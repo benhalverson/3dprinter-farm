@@ -96,8 +96,10 @@ This is browser/API integration with mocked persistence, not deployment or D1 va
 The API uses the following route protection rules:
 
 - **Public read routes**: product browsing and read-only catalog endpoints such as `GET /products`, `GET /products/search`, `GET /product/:id`, `GET /categories`, and public printer metadata endpoints.
-- **Authenticated user routes**: profile endpoints, saved upload endpoints, shipping/payment-intent helpers tied to a signed-in user, and product/category mutation routes such as `POST /add-product`, `POST /v2/add-product`, `PUT /update-product`, `DELETE /delete-product/:id`, and `POST /add-category`.
-- **Ownership checks**: authenticated upload lookup endpoints also enforce that a user can only access their own uploaded files.
+- **Authenticated user routes**: profile endpoints, the owner-scoped `GET /list` upload inventory, and shipping/checkout operations tied to a signed-in user.
+- **Catalog mutation routes**: `POST /v2/add-product`, `PUT /update-product`, `DELETE /delete-product/:id`, and `POST /add-category` require an authenticated shared-organization admin or owner.
+
+The Slant V1 routes and the saved upload-record API are retired. See the [route disposition inventory](docs/legacy-route-disposition.md) for the method/path decisions and operator checks required before deployment.
 
 When adding new routes, apply `authMiddleware` directly on the protected route or protected route group before the handler declaration. Do not rely on later middleware registration order.
 
@@ -284,8 +286,8 @@ Notes:
 - `GET /products` - List all products (with optional pagination)
 - `GET /products/search` - Search products (authenticated, with pagination)
 - `GET /product/:id` - Get specific product
-- `POST /add-product` - Add new product (authenticated)
-- `PUT /update-product` - Update product (authenticated)
+- `POST /v2/add-product` - Add a product using a confirmed Slant V2 file ID (catalog admin/owner)
+- `PUT /update-product` - Update product (catalog admin/owner)
 - `POST /auth/signup` - Create a user and issue a session cookie
 - `POST /auth/signin` - Sign in and issue a session cookie
 - `POST /auth/signout` - Clear the current session cookie
