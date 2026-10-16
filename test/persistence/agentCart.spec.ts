@@ -226,8 +226,17 @@ const catalog = [
 const answer = {
   components: [
     { id: 'products', component: 'ProductRail', entries: ['agent-one'] },
-    { id: 'agent-one', component: 'ProductEntry', productId: 1 },
-    { id: 'focus', component: 'ProductFocus', productId: 1, images: [] },
+    {
+      id: 'agent-one',
+      component: 'ProductEntry',
+      product: { path: '/agentCatalog/products/1' },
+    },
+    {
+      id: 'focus',
+      component: 'ProductFocus',
+      product: { path: '/agentCatalog/products/1' },
+      images: [],
+    },
   ],
   answer: 'catalog',
 };

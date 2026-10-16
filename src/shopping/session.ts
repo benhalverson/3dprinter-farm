@@ -1,8 +1,8 @@
-import type { CommerceTools } from './commerce';
 import { type Event, EventType } from '@ag-ui/core';
 import { EventEncoder } from '@ag-ui/encoder';
 import { z } from 'zod';
 import type { CatalogItem, CatalogQuery } from './catalog';
+import type { CommerceTools } from './commerce';
 import {
   boundedBody,
   digest,
@@ -177,7 +177,7 @@ export class SessionHandler {
         reason: reason ?? null,
       });
       if (!disconnected) {
-        if (reason) custom('lulu.fallback.v1', { reason });
+        if (reason) custom('lulu.fallback', { reason });
         send({
           type: EventType.RUN_FINISHED,
           threadId: session.id,
@@ -230,7 +230,7 @@ export class SessionHandler {
       runId: input.runId,
       metadata: { uiRevision: input.uiRevision },
     });
-    custom('lulu.progress.v1', { stage: 'admission', invocation: 0 });
+    custom('lulu.progress', { stage: 'admission', invocation: 0 });
     const execute = async () => {
       try {
         if (!this.deps.enabled()) throw new ShoppingFailure('disabled');
@@ -274,14 +274,14 @@ export class SessionHandler {
           infer: this.deps.infer,
           progress: count => {
             invocationCount = count;
-            custom('lulu.progress.v1', {
+            custom('lulu.progress', {
               stage: 'inference',
               invocation: count,
             });
           },
         });
         if (!closed) {
-          custom('lulu.a2ui.v1', result);
+          custom('lulu.a2ui', result);
           finish();
         }
       } catch (error) {

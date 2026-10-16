@@ -329,7 +329,7 @@ test('ambiguous checkout recovery is read-only and never relabels unknown as pai
 const final = {
   components: [
     { id: 'products', component: 'ProductRail', entries: [] },
-    { id: 'focus', component: 'ProductFocus', productId: null, images: [] },
+    { id: 'focus', component: 'ProductFocus', product: null, images: [] },
   ],
   answer: 'catalog',
 };
@@ -392,7 +392,10 @@ test('budgeted inference prepares trusted review with measured schema/cost evide
     active: () => true,
     progress: vi.fn(),
   });
-  expect(result.messages).toHaveLength(1);
+  expect(result.messages).toHaveLength(2);
+  expect(result.messages[0]).toMatchObject({
+    updateDataModel: { path: '/agentCatalog', value: { products: {} } },
+  });
   expect(accounting.reserve).toHaveBeenCalledTimes(2);
   expect(cost).toBe(13000);
   expect(JSON.stringify(infer.mock.calls)).not.toMatch(
