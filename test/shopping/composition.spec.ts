@@ -1,28 +1,48 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { compose, LIMITATIONS } from '../../src/shopping/composition';
 import { catalog, plan } from './fixtures';
 
 describe('validated A2UI v0.9.1 composition', () => {
+  it('matches the documented complete wire fixture', () => {
+    const { success } = JSON.parse(
+      readFileSync(
+        new URL('../../docs/shopping-agent-fixtures.json', import.meta.url),
+        'utf8',
+      ),
+    );
+    expect(success.name).toBe('lulu.a2ui');
+    expect(success.value).toEqual({
+      ...compose(JSON.stringify(plan), catalog),
+      runId: success.value.runId,
+      uiRevision: success.value.uiRevision,
+    });
+  });
+
   it('hydrates authoritative facts and preserves the trusted shell and configuration', () => {
     const batch = compose(JSON.stringify(plan), catalog);
     expect(batch.catalogId).toBe(
       'https://luluspeedworks.com/catalog/scaffold/v1',
     );
     expect(batch.messages[0].version).toBe('v0.9.1');
-    const components = batch.messages[0].updateComponents.components;
+    const components = batch.messages[1].updateComponents.components;
     expect(components.find(node => node.id === 'agent-one')).toMatchObject({
-      name: 'Pit tray',
-      price: '$12.50',
-      href: '/products/1',
+      name: { path: '/agentCatalog/products/1/name' },
+      price: { path: '/agentCatalog/products/1/price' },
+      href: { path: '/agentCatalog/products/1/href' },
     });
     expect(components.find(node => node.id === 'focus')).toMatchObject({
-      compatibility: LIMITATIONS.fit_unknown,
-      href: '/products/1',
+      compatibility: { path: '/agentCatalog/products/1/compatibility' },
+      href: { path: '/agentCatalog/products/1/href' },
     });
     expect(components.map(node => node.id)).not.toEqual(
       expect.arrayContaining(['root', 'configuration', 'bag']),
     );
-    expect(JSON.stringify(batch)).not.toContain('updateDataModel');
+    expect(batch.messages[0].updateDataModel.value.products[1]).toMatchObject({
+      name: 'Pit tray',
+      price: '$12.50',
+      compatibility: LIMITATIONS.fit_unknown,
+    });
   });
 
   it('supports reordered browse entries and a different focus arrangement', () => {
@@ -35,19 +55,27 @@ describe('validated A2UI v0.9.1 composition', () => {
             component: 'ProductRail',
             entries: ['agent-two', 'agent-one'],
           },
-          { id: 'agent-two', component: 'ProductEntry', productId: 2 },
-          { id: 'agent-one', component: 'ProductEntry', productId: 1 },
+          {
+            id: 'agent-two',
+            component: 'ProductEntry',
+            product: { path: '/agentCatalog/products/2' },
+          },
+          {
+            id: 'agent-one',
+            component: 'ProductEntry',
+            product: { path: '/agentCatalog/products/1' },
+          },
           {
             id: 'focus',
             component: 'ProductFocus',
-            productId: null,
+            product: null,
             images: [],
           },
         ],
       }),
       catalog,
     );
-    expect(result.messages[0].updateComponents.components[0].entries).toEqual([
+    expect(result.messages[1].updateComponents.components[0].entries).toEqual([
       'agent-two',
       'agent-one',
     ]);
@@ -81,7 +109,9 @@ describe('validated A2UI v0.9.1 composition', () => {
     {
       ...plan,
       components: plan.components.map(node =>
-        node.id === 'agent-one' ? { ...node, productId: 999 } : node,
+        node.id === 'agent-one'
+          ? { ...node, product: { path: '/agentCatalog/products/999' } }
+          : node,
       ),
     },
     {
@@ -101,7 +131,11 @@ describe('validated A2UI v0.9.1 composition', () => {
       ...plan,
       components: [
         ...plan.components,
-        { id: 'agent-unused', component: 'ProductEntry', productId: 1 },
+        {
+          id: 'agent-unused',
+          component: 'ProductEntry',
+          product: { path: '/agentCatalog/products/1' },
+        },
       ],
     },
   ])('rejects unsupported fields, actions, components, facts and graph references %#', invalid => {
@@ -117,11 +151,7 @@ describe('validated A2UI v0.9.1 composition', () => {
       { ...catalog[0], image: 'javascript:alert(1)' },
       catalog[1],
     ]);
-    expect(
-      result.messages[0].updateComponents.components.find(
-        node => node.id === 'agent-one',
-      )?.image,
-    ).toBe('');
+    expect(result.messages[0].updateDataModel.value.products[1].image).toBe('');
   });
 });
 
@@ -135,12 +165,20 @@ it.each([
       answer: 'catalog',
       components: [
         { id: 'products', component: 'ProductRail', entries: [] },
-        { id: 'focus', component: 'ProductFocus', productId, images: [] },
+        {
+          id: 'focus',
+          component: 'ProductFocus',
+          product:
+            productId === null
+              ? null
+              : { path: `/agentCatalog/products/${productId}` },
+          images: [],
+        },
       ],
     }),
     catalog,
   );
-  const rail = result.messages[0].updateComponents.components[0];
+  const rail = result.messages[1].updateComponents.components[0];
   expect(String(rail.status).includes('No matching products')).toBe(
     productId === null,
   );

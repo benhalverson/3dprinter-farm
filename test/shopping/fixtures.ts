@@ -29,15 +29,27 @@ export const plan: Composition = {
       component: 'ProductRail',
       entries: ['agent-one', 'agent-two'],
     },
-    { id: 'agent-one', component: 'ProductEntry', productId: 1 },
-    { id: 'agent-two', component: 'ProductEntry', productId: 2 },
+    {
+      id: 'agent-one',
+      component: 'ProductEntry',
+      product: { path: '/agentCatalog/products/1' },
+    },
+    {
+      id: 'agent-two',
+      component: 'ProductEntry',
+      product: { path: '/agentCatalog/products/2' },
+    },
     {
       id: 'focus',
       component: 'ProductFocus',
-      productId: 1,
+      product: { path: '/agentCatalog/products/1' },
       images: ['agent-photo'],
     },
-    { id: 'agent-photo', component: 'DetailImage', productId: 1 },
+    {
+      id: 'agent-photo',
+      component: 'DetailImage',
+      product: { path: '/agentCatalog/products/1' },
+    },
   ],
 };
 export function completion(content = JSON.stringify(plan)) {

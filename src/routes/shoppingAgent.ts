@@ -1,17 +1,17 @@
-import { optionalAuthMiddleware } from '../utils/authMiddleware';
-import { requireCartAccess } from '../modules/cartOwnership';
 import { getAgentByName } from 'agents';
 import { bodyLimit } from 'hono/body-limit';
 import { describeRoute } from 'hono-openapi';
 import { resolver, validator } from 'hono-openapi/zod';
 import { z } from 'zod';
 import factory from '../factory';
+import { requireCartAccess } from '../modules/cartOwnership';
 import {
   digest,
   MAX_BYTES,
   networkKey,
   runSchema,
 } from '../shopping/contracts';
+import { optionalAuthMiddleware } from '../utils/authMiddleware';
 
 const shopping = factory.createApp();
 shopping.use('*', async (c, next) => {
@@ -76,11 +76,11 @@ shopping.post(
     tags: ['Shopping agent'],
     security: [{ agentCapability: [] }],
     description:
-      'Run catalog guidance; AG-UI SSE or JSON status for duplicate run IDs. Body: runId UUID, uiRevision integer, message string, context array; optional uiContract lulu.a2ui.v2 enables public catalog bindings. See docs/shopping-agent.md.',
+      'Run catalog guidance; AG-UI SSE or JSON status for duplicate run IDs. Body: runId UUID, uiRevision integer, message string, context array; public catalog bindings are always used. See docs/shopping-agent.md.',
     responses: {
       200: {
         description:
-          'AG-UI SSE with lulu.a2ui.v1 (default), opted-in lulu.a2ui.v2, or lulu.fallback.v1; duplicate status JSON',
+          'AG-UI SSE with lulu.a2ui or lulu.fallback; duplicate status JSON',
         content: {
           'text/event-stream': { schema: { type: 'string' } },
           'application/json': {

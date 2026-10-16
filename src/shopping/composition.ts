@@ -1,9 +1,17 @@
 import { z } from 'zod';
-import { type CatalogItem, safeImage } from './catalog';
+import { type CatalogItem, catalogItemSchema, safeImage } from './catalog';
 import { bytes, MAX_BYTES, ShoppingFailure } from './contracts';
 
 const id = z.string().regex(/^agent-[a-z0-9-]{1,40}$/);
-const productId = z.number().int().positive().safe();
+const product = z
+  .object({
+    path: z.string().regex(/^\/agentCatalog\/products\/[1-9]\d*$/),
+  })
+  .strict()
+  .transform(value =>
+    Number(value.path.slice('/agentCatalog/products/'.length)),
+  )
+  .pipe(z.number().int().positive().safe());
 const nodeSchema = z.discriminatedUnion('component', [
   z
     .object({
@@ -12,25 +20,26 @@ const nodeSchema = z.discriminatedUnion('component', [
       entries: z.array(id).max(12),
     })
     .strict(),
-  z.object({ id, component: z.literal('ProductEntry'), productId }).strict(),
+  z.object({ id, component: z.literal('ProductEntry'), product }).strict(),
   z
     .object({
       id: z.literal('focus'),
       component: z.literal('ProductFocus'),
-      productId: productId.nullable(),
+      product: product.nullable(),
       images: z.array(id).max(1),
     })
     .strict(),
-  z.object({ id, component: z.literal('DetailImage'), productId }).strict(),
+  z.object({ id, component: z.literal('DetailImage'), product }).strict(),
 ]);
-/** Model-facing composition language: no arbitrary text, actions, URLs or bindings. */
+/** Model-facing composition language: only public record paths, no arbitrary text, actions or URLs. */
 export const compositionSchema = z
   .object({
     components: z.array(nodeSchema).min(2).max(16),
     answer: z.enum(['catalog', 'fit_unknown', 'policy_unknown']),
   })
   .strict();
-export type Composition = z.infer<typeof compositionSchema>;
+export type Composition = z.input<typeof compositionSchema>;
+export const CATALOG_PATH = '/agentCatalog';
 export const CATALOG_ID = 'https://luluspeedworks.com/catalog/scaffold/v1';
 export const LIMITATIONS = {
   fit_unknown:
@@ -40,14 +49,32 @@ export const LIMITATIONS = {
   catalog:
     'Catalog facts are shown below. Compatibility and store policies are not verified.',
 };
+const publicProductSchema = z
+  .object({
+    id: z.number().int().positive().safe(),
+    name: z.string().max(512),
+    description: z.string().max(4096),
+    image: z.string().max(2048),
+    price: z.string().max(128),
+    sku: z.string().max(8192),
+    href: z.string().regex(/^\/products\/[1-9]\d*$/),
+    compatibility: z.string().max(8192),
+  })
+  .strict();
+
 type Component = {
   id: string;
   component: string;
-  [key: string]: string | boolean | string[] | { event: { name: string } };
+  [key: string]:
+    | string
+    | boolean
+    | string[]
+    | { event: { name: string } }
+    | { path: string };
 };
 
 /**
- * Validate a model-selected graph and hydrate only authoritative catalog facts.
+ * Validate a model-selected graph and bind only authoritative public catalog facts.
  * An empty rail can coexist with a focused product; no-match copy requires both
  * to be empty. Invalid references or unsupported output fail closed.
  */
@@ -77,24 +104,36 @@ export function compose(raw: string, catalog: CatalogItem[]) {
       const image = nodes.get(child);
       if (
         image?.component !== 'DetailImage' ||
-        image.productId !== focus.productId ||
+        image.product !== focus.product ||
         referenced.has(child)
       )
         throw new Error('invalid_image');
       referenced.add(child);
     }
     if (referenced.size !== nodes.size) throw new Error('unreachable');
-    const products = new Map(catalog.map(item => [item.id, item]));
+    const records = new Map(catalog.map(item => [item.id, item]));
+    const products: Record<string, z.infer<typeof publicProductSchema>> = {};
     const fact = (key: number) => {
-      const item = products.get(key);
-      if (!item) throw new Error('unknown_product');
-      return item;
+      if (!products[key]) {
+        const item = catalogItemSchema.parse(records.get(key));
+        products[key] = publicProductSchema.parse({
+          id: item.id,
+          name: item.name,
+          description: item.description,
+          image: safeImage(item.image),
+          price: new Intl.NumberFormat('en-US', {
+            style: 'currency',
+            currency: 'USD',
+          }).format(item.price),
+          sku: item.sku,
+          href: `/products/${item.id}`,
+          compatibility: item.fit ?? LIMITATIONS.fit_unknown,
+        });
+      }
+      return (field: string) => ({
+        path: `${CATALOG_PATH}/products/${key}/${field}`,
+      });
     };
-    const price = (item: CatalogItem) =>
-      new Intl.NumberFormat('en-US', {
-        style: 'currency',
-        currency: 'USD',
-      }).format(item.price);
     const components = plan.components.map((node): Component => {
       if (node.component === 'ProductRail')
         return {
@@ -103,7 +142,7 @@ export function compose(raw: string, catalog: CatalogItem[]) {
           controls: [],
           entries: node.entries,
           status:
-            node.entries.length || focus.productId !== null
+            node.entries.length || focus.product !== null
               ? LIMITATIONS[plan.answer]
               : `No matching products were found in the catalog. ${LIMITATIONS[plan.answer]}`,
           paging: '',
@@ -115,52 +154,58 @@ export function compose(raw: string, catalog: CatalogItem[]) {
           retry: { event: { name: 'retry' } },
         };
       if (node.component === 'ProductFocus') {
-        const item = node.productId === null ? null : fact(node.productId);
+        const item = node.product === null ? null : fact(node.product);
         return {
           id: node.id,
           component: node.component,
           title: 'Catalog guidance',
           description: LIMITATIONS[plan.answer],
-          selectedTitle: item?.name ?? '',
-          selectedDescription: item?.description ?? '',
-          href: item ? `/products/${item.id}` : '',
+          selectedTitle: item ? item('name') : '',
+          selectedDescription: item ? item('description') : '',
+          href: item ? item('href') : '',
           active: item !== null,
           ready: item !== null,
-          price: item ? price(item) : '',
-          sku: item?.sku ?? '',
-          compatibility: item?.fit ?? LIMITATIONS.fit_unknown,
+          price: item ? item('price') : '',
+          sku: item ? item('sku') : '',
+          compatibility: item ? item('compatibility') : LIMITATIONS.fit_unknown,
           images: node.images,
           retryVisible: false,
           retry: { event: { name: 'retry-product' } },
         };
       }
-      const item = fact(node.productId);
+      const item = fact(node.product);
       if (node.component === 'DetailImage')
         return {
           id: node.id,
           component: node.component,
-          src: safeImage(item.image),
-          name: item.name,
+          src: item('image'),
+          name: item('name'),
         };
       return {
         id: node.id,
         component: node.component,
-        name: item.name,
-        description: item.description,
-        price: price(item),
-        image: safeImage(item.image),
-        href: `/products/${item.id}`,
+        name: item('name'),
+        description: item('description'),
+        price: item('price'),
+        image: item('image'),
+        href: item('href'),
       };
     });
     const messages = [
       {
         version: 'v0.9.1' as const,
-        updateComponents: { surfaceId: 'storefront', components },
+        updateDataModel: {
+          surfaceId: 'storefront' as const,
+          path: CATALOG_PATH,
+          value: { products },
+        },
       },
-    ];
-    if (bytes(JSON.stringify(messages)) > MAX_BYTES)
-      throw new Error('oversized_batch');
-    return {
+      {
+        version: 'v0.9.1' as const,
+        updateComponents: { surfaceId: 'storefront' as const, components },
+      },
+    ] as const;
+    const batch = {
       catalogId: CATALOG_ID,
       messages,
       limitations: [
@@ -169,6 +214,9 @@ export function compose(raw: string, catalog: CatalogItem[]) {
         LIMITATIONS.policy_unknown,
       ],
     };
+    if (bytes(JSON.stringify(batch)) > MAX_BYTES)
+      throw new Error('oversized_batch');
+    return batch;
   } catch {
     throw new ShoppingFailure('invalid_output');
   }

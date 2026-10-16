@@ -134,7 +134,7 @@ const start = (
   session: Session,
   runId = crypto.randomUUID(),
   uiRevision = 7,
-  uiContract?: string,
+  extra: Record<string, unknown> = {},
 ) =>
   app.request(
     `/agent/sessions/${session.sessionId}/runs`,
@@ -149,7 +149,7 @@ const start = (
         uiRevision,
         message: 'Show pit tools',
         context: [],
-        ...(uiContract ? { uiContract } : {}),
+        ...extra,
       }),
     },
     testEnv(),
@@ -194,9 +194,9 @@ describe('anonymous shopping transport with mocked persistence', () => {
     const output = await events(response);
     expect(output[0]).toMatchObject({ type: 'RUN_STARTED', runId });
     expect(output.at(-1)).toMatchObject({ type: 'RUN_FINISHED', runId });
-    const batch = output.find(event => event.name === 'lulu.a2ui.v1');
+    const batch = output.find(event => event.name === 'lulu.a2ui');
     expect(batch?.value).toMatchObject({ runId, uiRevision: 42 });
-    expect(output.some(event => event.name === 'lulu.fallback.v1')).toBe(false);
+    expect(output.some(event => event.name === 'lulu.fallback')).toBe(false);
     expect(await calls(session)).toBe(1);
     const duplicate = await start(session, runId, 43);
     expect(await duplicate.json()).toMatchObject({
@@ -216,23 +216,21 @@ describe('anonymous shopping transport with mocked persistence', () => {
 
   it.each(
     initialAssortment,
-  )('delivers opted-in public bindings for $name through Hono and real admission', async item => {
+  )('delivers public bindings for $name through Hono and real admission', async item => {
     const session = await create();
     const controls = fixture(session.sessionId).controls;
     controls.items = initialAssortment;
     controls.composition = JSON.stringify(bindingPlan(item.id));
     const runId = crypto.randomUUID();
-    const output = await events(
-      await start(session, runId, 42, 'lulu.a2ui.v2'),
-    );
+    const output = await events(await start(session, runId, 42));
     expect(output.map(event => event.name ?? event.type)).toEqual([
       'RUN_STARTED',
-      'lulu.progress.v1',
-      'lulu.progress.v1',
-      'lulu.a2ui.v2',
+      'lulu.progress',
+      'lulu.progress',
+      'lulu.a2ui',
       'RUN_FINISHED',
     ]);
-    const batch = output.find(event => event.name === 'lulu.a2ui.v2');
+    const batch = output.find(event => event.name === 'lulu.a2ui');
     expect(batch?.value).toMatchObject({
       runId,
       uiRevision: 42,
@@ -281,10 +279,14 @@ describe('anonymous shopping transport with mocked persistence', () => {
     expect(await calls(session)).toBe(1);
   });
 
-  it('rejects unsupported UI negotiation before admission or inference', async () => {
+  it('rejects the removed UI negotiation field before admission or inference', async () => {
     const session = await create();
     expect(
-      (await start(session, crypto.randomUUID(), 1, 'lulu.a2ui.v3')).status,
+      (
+        await start(session, crypto.randomUUID(), 1, {
+          uiContract: 'lulu.a2ui.v2',
+        })
+      ).status,
     ).toBe(400);
     expect(await calls(session)).toBe(0);
     expect(budgetStorage.reservations.size).toBe(0);
@@ -299,14 +301,10 @@ describe('anonymous shopping transport with mocked persistence', () => {
       price: { path: '/agentCatalog/products/102/price' },
     });
     controls.composition = JSON.stringify(selected);
-    const output = await events(
-      await start(session, crypto.randomUUID(), 1, 'lulu.a2ui.v2'),
-    );
-    expect(output.some(event => event.name?.startsWith('lulu.a2ui.'))).toBe(
-      false,
-    );
+    const output = await events(await start(session, crypto.randomUUID(), 1));
+    expect(output.some(event => event.name === 'lulu.a2ui')).toBe(false);
     expect(
-      output.find(event => event.name === 'lulu.fallback.v1')?.value,
+      output.find(event => event.name === 'lulu.fallback')?.value,
     ).toMatchObject({
       reason: 'invalid_output',
       uiRevision: 1,
@@ -322,16 +320,12 @@ describe('anonymous shopping transport with mocked persistence', () => {
     controls.composition = JSON.stringify(bindingPlan());
     await mode(session, 'wait');
     const runId = crypto.randomUUID();
-    const response = await start(session, runId, 17, 'lulu.a2ui.v2');
+    const response = await start(session, runId, 17);
     await vi.waitFor(async () => expect(await calls(session)).toBe(1));
     await cancel(session, runId);
     const output = await events(response);
-    expect(output.some(event => event.name?.startsWith('lulu.a2ui.'))).toBe(
-      false,
-    );
-    expect(
-      await (await start(session, runId, 18, 'lulu.a2ui.v2')).json(),
-    ).toMatchObject({
+    expect(output.some(event => event.name === 'lulu.a2ui')).toBe(false);
+    expect(await (await start(session, runId, 18)).json()).toMatchObject({
       runId,
       uiRevision: 17,
       status: 'fallback',
@@ -463,9 +457,9 @@ describe('anonymous shopping transport with mocked persistence', () => {
     });
     await cancel(session, runId);
     const output = await events(response);
-    expect(output.some(event => event.name === 'lulu.a2ui.v1')).toBe(false);
+    expect(output.some(event => event.name === 'lulu.a2ui')).toBe(false);
     expect(
-      output.find(event => event.name === 'lulu.fallback.v1')?.value?.reason,
+      output.find(event => event.name === 'lulu.fallback')?.value?.reason,
     ).toBe('cancelled');
     expect(await calls(session)).toBe(1);
   });
@@ -479,10 +473,10 @@ describe('anonymous shopping transport with mocked persistence', () => {
     const newer = await start(session, crypto.randomUUID(), 3);
     const oldEvents = await events(older);
     expect(
-      oldEvents.find(event => event.name === 'lulu.fallback.v1')?.value,
+      oldEvents.find(event => event.name === 'lulu.fallback')?.value,
     ).toMatchObject({ reason: 'superseded', uiRevision: 2 });
     expect(
-      (await events(newer)).find(event => event.name === 'lulu.a2ui.v1')?.value
+      (await events(newer)).find(event => event.name === 'lulu.a2ui')?.value
         ?.uiRevision,
     ).toBe(3);
   });
@@ -496,9 +490,9 @@ describe('anonymous shopping transport with mocked persistence', () => {
     await mode(session, value);
     const output = await events(await start(session));
     expect(
-      output.find(event => event.name === 'lulu.fallback.v1')?.value?.reason,
+      output.find(event => event.name === 'lulu.fallback')?.value?.reason,
     ).toBe(reason);
-    expect(output.some(event => event.name === 'lulu.a2ui.v1')).toBe(false);
+    expect(output.some(event => event.name === 'lulu.a2ui')).toBe(false);
     expect((await app.request('/health', {}, testEnv())).status).toBe(200);
     expect(await calls(session)).toBe(value === 'disabled' ? 0 : 1);
   });
@@ -510,12 +504,11 @@ describe('anonymous shopping transport with mocked persistence', () => {
       const output = await events(await start(session));
       if (count === 6) {
         expect(
-          output.find(event => event.name === 'lulu.fallback.v1')?.value
-            ?.reason,
+          output.find(event => event.name === 'lulu.fallback')?.value?.reason,
         ).toBe('rate_limited');
         expect(await calls(session)).toBe(0);
       } else
-        expect(output.some(event => event.name === 'lulu.a2ui.v1')).toBe(true);
+        expect(output.some(event => event.name === 'lulu.a2ui')).toBe(true);
     }
   });
 
@@ -560,9 +553,9 @@ describe('anonymous shopping transport with mocked persistence', () => {
     }
     const output = await events(new Response(stream));
     expect(
-      output.find(event => event.name === 'lulu.fallback.v1')?.value?.reason,
+      output.find(event => event.name === 'lulu.fallback')?.value?.reason,
     ).toBe('timeout');
-    expect(output.some(event => event.name === 'lulu.a2ui.v1')).toBe(false);
+    expect(output.some(event => event.name === 'lulu.a2ui')).toBe(false);
   });
 });
 

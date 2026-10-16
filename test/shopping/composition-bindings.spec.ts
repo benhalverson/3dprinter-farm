@@ -1,14 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { compose, LIMITATIONS } from '../../src/shopping/composition';
-import { composeBindings } from '../../src/shopping/composition-bindings';
 import { bytes, MAX_BYTES } from '../../src/shopping/contracts';
-import { bindingPlan, catalog, initialAssortment, plan } from './fixtures';
+import { bindingPlan, initialAssortment } from './fixtures';
 
 describe('public catalog record bindings', () => {
   it.each(
     initialAssortment,
   )('binds $name to one authoritative public record', item => {
-    const batch = composeBindings(
+    const batch = compose(
       JSON.stringify(bindingPlan(item.id)),
       initialAssortment.map(value => ({
         ...value,
@@ -62,7 +61,7 @@ describe('public catalog record bindings', () => {
     });
     selected.components[2].product = { path: '/agentCatalog/products/103' };
     selected.components[3].product = { path: '/agentCatalog/products/103' };
-    const batch = composeBindings(JSON.stringify(selected), initialAssortment);
+    const batch = compose(JSON.stringify(selected), initialAssortment);
     expect(batch.messages[1].updateComponents.components[0].entries).toEqual([
       'agent-second',
       'agent-item',
@@ -93,9 +92,9 @@ describe('public catalog record bindings', () => {
   ])('rejects an unsanctioned or nonexistent record path %s', path => {
     const selected = bindingPlan();
     selected.components[1].product = { path };
-    expect(() =>
-      composeBindings(JSON.stringify(selected), initialAssortment),
-    ).toThrow('invalid_output');
+    expect(() => compose(JSON.stringify(selected), initialAssortment)).toThrow(
+      'invalid_output',
+    );
   });
 
   it.each([
@@ -107,9 +106,9 @@ describe('public catalog record bindings', () => {
   ])('rejects extra model fields and authority %#', override => {
     const selected = bindingPlan();
     Object.assign(selected.components[1], override);
-    expect(() =>
-      composeBindings(JSON.stringify(selected), initialAssortment),
-    ).toThrow('invalid_output');
+    expect(() => compose(JSON.stringify(selected), initialAssortment)).toThrow(
+      'invalid_output',
+    );
   });
 
   it('rejects mismatched images, dangling references and model-owned snapshots', () => {
@@ -122,9 +121,9 @@ describe('public catalog record bindings', () => {
       dangling,
       { ...bindingPlan(), updateDataModel: { path: '/', value: {} } },
     ])
-      expect(() =>
-        composeBindings(JSON.stringify(value), initialAssortment),
-      ).toThrow('invalid_output');
+      expect(() => compose(JSON.stringify(value), initialAssortment)).toThrow(
+        'invalid_output',
+      );
   });
 
   it.each([
@@ -149,7 +148,7 @@ describe('public catalog record bindings', () => {
           : []),
       ],
     };
-    const batch = composeBindings(JSON.stringify(selected), initialAssortment);
+    const batch = compose(JSON.stringify(selected), initialAssortment);
     expect(batch.messages[1].updateComponents.components[1]).toMatchObject({
       active: false,
       href: '',
@@ -168,7 +167,7 @@ describe('public catalog record bindings', () => {
       description: '<script>pay()</script>',
       image: 'javascript:pay()',
     };
-    const batch = composeBindings(JSON.stringify(bindingPlan()), [item]);
+    const batch = compose(JSON.stringify(bindingPlan()), [item]);
     expect(batch.messages[0].updateDataModel.value.products[101]).toMatchObject(
       {
         name: item.name,
@@ -184,9 +183,7 @@ describe('public catalog record bindings', () => {
 
   it('rejects oversized or malformed plans and snapshots instead of returning partial data', () => {
     for (const value of ['{', ' '.repeat(MAX_BYTES + 1)])
-      expect(() => composeBindings(value, initialAssortment)).toThrow(
-        'invalid_output',
-      );
+      expect(() => compose(value, initialAssortment)).toThrow('invalid_output');
     const oversized = initialAssortment.map(item => ({
       ...item,
       description: '🦊'.repeat(2048),
@@ -207,28 +204,38 @@ describe('public catalog record bindings', () => {
         })),
       ],
     };
-    expect(() => composeBindings(JSON.stringify(selected), oversized)).toThrow(
+    expect(() => compose(JSON.stringify(selected), oversized)).toThrow(
       'invalid_output',
     );
     expect(() =>
-      composeBindings(JSON.stringify(bindingPlan()), [
+      compose(JSON.stringify(bindingPlan()), [
         { ...initialAssortment[0], name: 'x'.repeat(513) },
       ]),
     ).toThrow('invalid_output');
   });
 
-  it('retains the literal-only v1 compiler and rejects cross-version model shapes', () => {
-    const legacy = compose(JSON.stringify(plan), catalog);
-    expect(legacy.messages).toHaveLength(1);
-    expect(legacy.messages[0].updateComponents.components[1].name).toBe(
-      'Pit tray',
-    );
-    expect(JSON.stringify(legacy)).not.toContain('updateDataModel');
-    expect(() => composeBindings(JSON.stringify(plan), catalog)).toThrow(
-      'invalid_output',
-    );
+  it('rejects literal product IDs instead of maintaining another model contract', () => {
     expect(() =>
-      compose(JSON.stringify(bindingPlan()), initialAssortment),
+      compose(
+        JSON.stringify({
+          answer: 'catalog',
+          components: [
+            {
+              id: 'products',
+              component: 'ProductRail',
+              entries: ['agent-item'],
+            },
+            { id: 'agent-item', component: 'ProductEntry', productId: 101 },
+            {
+              id: 'focus',
+              component: 'ProductFocus',
+              productId: null,
+              images: [],
+            },
+          ],
+        }),
+        initialAssortment,
+      ),
     ).toThrow('invalid_output');
   });
 });

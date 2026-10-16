@@ -38,8 +38,8 @@ function dependencies() {
   };
 }
 describe('bounded read-only inference', () => {
-  it('uses record bindings only for opted-in runs and preserves current commerce tools', async () => {
-    const run: RunInput = { ...input(), uiContract: 'lulu.a2ui.v2' };
+  it('uses record bindings for every run and preserves current commerce tools', async () => {
+    const run = input();
     const commerce = {
       context: { selection: { productId: 101 } },
       execute: vi.fn(async () => ({ status: 'selected' })),
@@ -53,9 +53,6 @@ describe('bounded read-only inference', () => {
       'selection_options',
     );
     expect(modelContext(input(), catalog).messages[0].content).toContain(
-      '"productId":1',
-    );
-    expect(modelContext(input(), catalog).messages[0].content).not.toContain(
       '/agentCatalog',
     );
     const deps = dependencies();
