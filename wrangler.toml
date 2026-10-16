@@ -20,6 +20,8 @@ remote = false
 
 [[send_email]]
 name = "BUDGET_EMAIL"
+# Simulates email in local development; deployed alerts can still send real email.
+# Provision AGENT_BUDGET_FROM/TO and address restrictions per docs/shopping-agent.md.
 remote = false
 
 [[kv_namespaces]]
