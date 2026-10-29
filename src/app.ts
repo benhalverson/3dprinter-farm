@@ -1,5 +1,6 @@
 import { Scalar } from '@scalar/hono-api-reference';
-import { openAPISpecs } from 'hono-openapi';
+import { generateSpecs } from 'hono-openapi';
+import { completeReference, referenceDocumentation } from './docs/reference';
 import factory from './factory';
 import {
   browserCors,
@@ -89,25 +90,21 @@ const app = factory
   .route('/', adminOrders)
   .route('/', notifications);
 
-app.get(
-  '/open-api',
-  openAPISpecs(app, {
-    documentation: {
-      components: {
-        securitySchemes: {
-          agentCapability: { type: 'http', scheme: 'bearer' },
-          cookieAuth: {
-            type: 'apiKey',
-            in: 'cookie',
-            name: 'better-auth.session_token',
-          },
-        },
-      },
-      security: [{ cookieAuth: [] }],
-      info: { title: 'Heyo', version: '1.0.0' },
-    },
-  }),
-);
+// Cache only generated documentation; generation never calls auth or provider handlers.
+let reference: ReturnType<typeof generateSpecs> | undefined;
+app.get('/open-api', async c => {
+  reference ??= generateSpecs(app, {
+    includeEmptyPaths: true,
+    exclude: ['/open-api', '/docs'],
+    documentation: referenceDocumentation,
+  })
+    .then(completeReference)
+    .catch(error => {
+      reference = undefined;
+      throw error;
+    });
+  return c.json(await reference);
+});
 app.get(
   '/docs',
   Scalar({
