@@ -365,6 +365,11 @@ const resetErrors = {
 
 /** Supplements fields absent from route annotations; response merging preserves existing schemas. */
 const supplements: Record<string, Partial<Operation>> = {
+  'get /cart/{cartId}/quotes/{quoteId}': {
+    summary: 'Read and revalidate an owned checkout quote',
+    description:
+      'Read the immutable quote and revalidate the current cart, shipping profile, Online Price and filament availability. An observed change permanently marks the quote stale; provider failures fail closed. A valid read is not payment authorization. Submit its id as quoteId to POST /cart/{cartId}/checkout, which validates and consumes the quote.',
+  },
   'get /orders': {
     parameters: [
       query(
