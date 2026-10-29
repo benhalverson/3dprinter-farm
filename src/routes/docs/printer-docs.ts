@@ -16,7 +16,8 @@ import {
 // List 3D models documentation
 export const listModelsDoc = {
   summary: 'List your uploaded 3D models',
-  description: 'Lists STL objects in the authenticated user namespace. Legacy shared keys are excluded.',
+  description:
+    'Lists STL objects in the authenticated user namespace. Legacy shared keys are excluded.',
   tags: ['Printer'],
   responses: {
     200: {
@@ -77,7 +78,7 @@ export const uploadFileDoc = {
         'application/json': {
           schema: resolver(ErrorSchema) as unknown as OpenAPISchema,
           example: {
-            error: 'No file uploaded',
+            error: 'Select a file to upload',
           },
         },
       },
@@ -220,7 +221,7 @@ export const estimateV2Doc = {
               .string()
               .uuid()
               .describe(
-                'UUID of the file returned from /v2/upload or /v2/confirm',
+                'UUID of the file returned from /v2/confirm after upload registration',
               ),
             options: z
               .object({
@@ -324,7 +325,7 @@ export const estimateV2Doc = {
 export const presignedUploadDoc = {
   summary: 'Get presigned URL for direct file upload to Slant3D',
   description:
-    'Generate a presigned URL for direct browser upload to Slant3D S3 storage. This is the recommended method. After uploading the file to the presigned URL, call /v2/confirm to complete registration.',
+    'Generate a presigned URL for direct browser upload to Slant3D S3 storage. This is the recommended method. The owner ID is taken from the authenticated session; omit ownerId from the request. After uploading the file to the presigned URL, call /v2/confirm to complete registration.',
   tags: ['Printer'],
   requestBody: {
     content: {
@@ -332,15 +333,10 @@ export const presignedUploadDoc = {
         schema: resolver(
           z.object({
             fileName: z.string().describe('Name of the STL file to upload'),
-            ownerId: z
-              .string()
-              .optional()
-              .describe('Your application user ID for tracking'),
           }),
         ) as unknown as OpenAPISchema,
         example: {
           fileName: 'dragon-model.stl',
-          ownerId: 'user_123456',
         },
       },
     },
@@ -408,7 +404,7 @@ export const presignedUploadDoc = {
 export const confirmUploadDoc = {
   summary: 'Confirm presigned upload and complete file registration',
   description:
-    'REQUIRED: Call this endpoint after successfully uploading to the presigned URL to trigger file processing and analysis. The filePlaceholder object must be the exact one returned from /v2/upload.',
+    'REQUIRED: Call this endpoint after successfully uploading to the presigned URL to trigger file processing and analysis. The filePlaceholder object must be the exact one returned from /v2/presigned-upload.',
   tags: ['Printer'],
   requestBody: {
     content: {
