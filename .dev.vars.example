@@ -18,5 +18,6 @@ SQUARE_MERCHANT_ID=
 SQUARE_LOCATION_ID=
 
 # Budget alerts: verified sender and authorized owner recipient.
+# Local values only; see docs/shopping-agent.md for binding setup and live acceptance.
 AGENT_BUDGET_FROM=
 AGENT_BUDGET_TO=
